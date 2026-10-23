@@ -28,8 +28,8 @@ from .loading import Catalog
 FILES = {
     "01_schema.sql": ("schema",),
     "03_validate.sql": ("grain", "cardinality", "duplicates", "nulls", "date_range", "orphans"),
-    "04_analysis.sql": ("base", "reconcile", "kpis", "kpi_by_period", "running_total", "top_n", "latest_record", "rfm",
-                        "driver_tree", "drilldown", "cohort"),
+    "04_analysis.sql": ("base", "reconcile", "kpis", "discounts", "kpi_by_period", "running_total", "trend_signals", "top_n",
+                        "pareto", "latest_record", "purchase_gaps", "rfm", "driver_tree", "drilldown", "cohort"),
     "05_performance.sql": ("explain", "null_traps"),
 }
 

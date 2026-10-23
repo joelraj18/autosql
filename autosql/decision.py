@@ -760,15 +760,18 @@ def _choose_indexes(d: Decision) -> None:
         d.indexes.append((d.date[0], (d.date[1],), "date filter"))
 
 
-KPI_CELLS = ("base", "reconcile", "kpis", "kpi_by_period", "running_total", "top_n", "latest_record", "rfm",
-             "driver_tree", "drilldown", "cohort")
+KPI_CELLS = ("base", "reconcile", "kpis", "discounts", "kpi_by_period", "running_total", "trend_signals", "top_n", "pareto",
+             "latest_record", "purchase_gaps", "rfm", "driver_tree", "drilldown", "cohort")
 CELL_TITLES = {
     "base": "Build the analysis views", "reconcile": "Reconcile the totals", "kpis": "Headline KPIs",
     "kpi_by_period": "KPIs per period, with the driver", "running_total": "Running total", "top_n": "Top N per group",
     "latest_record": "Each customer's latest order", "rfm": "RFM segments", "driver_tree": "Driver tree: what moved revenue",
     "drilldown": "Drill down: symptom next to driver", "cohort": "Cohorts", "cardinality": "Join cardinality and fan-out",
-    "orphans": "Orphans", "date_range": "Date ranges and partial periods",
+    "orphans": "Orphans", "date_range": "Date ranges and partial periods", "discounts": "What discounts cost",
+    "trend_signals": "Moving average and unusual periods", "pareto": "Revenue concentration (Pareto / ABC)",
+    "purchase_gaps": "Time between orders, and overdue customers",
 }
+MIN_PERIODS_FOR_SIGNALS = 5   # a trailing average and spread need at least 4 earlier periods
 
 
 def _skip_kpi_cells(d: Decision, reason: str) -> None:
@@ -789,11 +792,16 @@ def _skip_cells(d: Decision) -> None:
     _skip_validation_cells(d)
     complete = len(d.complete_periods)
     if not d.date:
-        for cell in ("kpi_by_period", "running_total", "latest_record", "rfm", "cohort", "driver_tree", "drilldown"):
+        for cell in ("kpi_by_period", "running_total", "trend_signals", "latest_record", "purchase_gaps", "rfm", "cohort",
+                     "driver_tree", "drilldown"):
             d.skipped[cell] = "There is no date column."
     if not d.customer:
-        for cell in ("latest_record", "rfm", "cohort"):
+        for cell in ("latest_record", "purchase_gaps", "rfm", "cohort", "pareto"):
             d.skipped.setdefault(cell, "No column identifies the customer.")
+    if d.date and len(d.periods) < MIN_PERIODS_FOR_SIGNALS:
+        d.skipped.setdefault("trend_signals", f"Fewer than {MIN_PERIODS_FOR_SIGNALS} periods: too few to compare a period with its trailing average.")
+    if not (d.revenue.kind == "price_qty" and d.revenue.discount):
+        d.skipped.setdefault("discounts", "There is no discount column.")
     if d.date and complete < 2:
         d.skipped.setdefault("driver_tree", "There are fewer than two complete periods to compare.")
         d.skipped.setdefault("drilldown", "There are fewer than two complete periods to compare.")
@@ -806,6 +814,7 @@ def _skip_cells(d: Decision) -> None:
     if d.revenue.kind == "count":
         d.skipped.setdefault("rfm", "RFM needs a money measure for the M (monetary) score.")
         d.skipped.setdefault("driver_tree", "Splitting revenue into orders × average order value needs a money measure.")
+        d.skipped.setdefault("pareto", "Revenue concentration needs a money measure.")
     for cell, reason in list(d.skipped.items()):
         if cell in CELL_TITLES:
             d.steps.append(story("skipped_cell", reason=reason, title=CELL_TITLES[cell]))

@@ -1605,7 +1605,7 @@ def _rfm_cell(b: Builder) -> Cell:
                    <<rec>> AS avg_recency_days
             FROM   customer_rfm
             GROUP  BY segment
-            ORDER  BY revenue DESC''', rev=D.round("SUM(monetary)", 2),
+            ORDER  BY revenue DESC, segment''', rev=D.round("SUM(monetary)", 2),
                     pct=D.pct("SUM(monetary)", "(SELECT SUM(monetary) FROM customer_rfm)"), rec=D.round("AVG(recency_days)", 0))
 
     story = Step(
@@ -1685,7 +1685,7 @@ def _driver_tree_cell(b: Builder) -> Cell:
                        <<rc>> AS revenue_change,
                        <<share>> AS share_of_change_pct
                 FROM   by_segment
-                ORDER  BY ABS(revenue_after - revenue_before) DESC''', g=g, b=b.period_where(before), a=b.period_where(after), view=view,
+                ORDER  BY ABS(revenue_after - revenue_before) DESC, <<g>>''', g=g, b=b.period_where(before), a=b.period_where(after), view=view,
                         rb=D.round("revenue_before", 2), ra=D.round("revenue_after", 2), rc=D.round("revenue_after - revenue_before", 2),
                         share=D.pct("(revenue_after - revenue_before)", "SUM(revenue_after - revenue_before) OVER ()"))
         statements.append(stmt(f"by_{dim.alias}", f"Change in revenue by `{dim.alias}` ({lb} → {la})", by_dim))
@@ -1788,7 +1788,7 @@ def _drilldown_cell(b: Builder) -> Cell:
                 WHERE  <<cb>>
                    OR  <<ca>>
                 GROUP  BY <<g>>
-                ORDER  BY ABS(<<m_a>> - <<m_b>>) DESC''', cols=",\n       ".join(cols), cb=cb, ca=ca, g=g, m_a=m_a, m_b=m_b)
+                ORDER  BY ABS(<<m_a>> - <<m_b>>) DESC, <<g>>''', cols=",\n       ".join(cols), cb=cb, ca=ca, g=g, m_a=m_a, m_b=m_b)
         statements.append(stmt("by_segment", f"Symptom and driver per `{seg.alias}`, {d.label(before)} vs {d.label(after)}", by_segment))
     story = Step(
         "drilldown",
@@ -2092,14 +2092,363 @@ def _names(items) -> str:
 
 
 # ═════════════════════════════════════════════════════════════════════════
+# Deeper analyses: discounts, moving average and outliers, concentration, purchase gaps
+# ═════════════════════════════════════════════════════════════════════════
+DISCOUNT_BANDS = ((0.05, "1-5%"), (0.10, "6-10%"), (0.20, "11-20%"))
+
+
+def _discounts_cell(b: Builder) -> Cell:
+    d, rev = b.d, b.d.revenue
+    fact, fa = d.fact, b.alias(d.fact)
+
+    def sql(D: Dialect) -> str:
+        disc = D.col(fa, rev.discount) + (" / 100.0" if rev.discount_scale == 100 else "")
+        gross = f"{D.col(fa, rev.price)} * {D.col(fa, rev.quantity)}"
+        bands = "\n".join(f"                WHEN {disc} <= {limit} THEN {D.literal(label)}" for limit, label in DISCOUNT_BANDS)
+        order = "\n".join(f"                WHEN {disc} <= {limit} THEN {i + 1}" for i, (limit, _) in enumerate(DISCOUNT_BANDS))
+        last = f"over {int(DISCOUNT_BANDS[-1][0] * 100)}%"
+        return fill('''
+            -- Discount bands (the discount is a fraction of the line price); 'no discount' is its own band.
+            WITH banded AS (
+                SELECT CASE WHEN COALESCE(<<disc>>, 0) = 0 THEN 'no discount'
+            <<bands>>
+                            ELSE <<last>>
+                       END AS discount_band,
+                       CASE WHEN COALESCE(<<disc>>, 0) = 0 THEN 0
+            <<order>>
+                            ELSE <<n>>
+                       END AS band_order,
+                       <<gross>> AS gross_revenue,
+                       <<net>> AS net_revenue,
+                       <<qty>> AS quantity
+                FROM   <<src>> <<fa>>
+            )
+            SELECT discount_band,
+                   COUNT(*) AS line_rows,
+                   <<pct_lines>> AS lines_pct,
+                   <<g>> AS gross_revenue,
+                   <<dg>> AS discount_given,
+                   <<dpct>> AS discount_pct_of_gross,
+                   <<avg_q>> AS avg_quantity_per_line
+            FROM   banded
+            GROUP  BY discount_band, band_order
+            ORDER  BY band_order''', disc=disc, bands=bands, order=order, last=D.literal(last), n=len(DISCOUNT_BANDS) + 1,
+                    gross=gross, net=b.line_revenue(D, fa), qty=D.col(fa, rev.quantity), src=b.src(D, fact), fa=fa,
+                    pct_lines=D.pct("COUNT(*)", "SUM(COUNT(*)) OVER ()"), g=D.round("SUM(gross_revenue)", 2),
+                    dg=D.round("SUM(gross_revenue - net_revenue)", 2), dpct=D.pct("SUM(gross_revenue - net_revenue)", "SUM(gross_revenue)"),
+                    avg_q=D.ratio("SUM(quantity)", "COUNT(*)", 2))
+
+    story = Step(
+        "discounts",
+        f"Revenue is net of `{rev.discount}`, so every discount is revenue given away.",
+        "A discount is only worth it if it buys something: more units, bigger orders or a customer kept. Measuring what each discount level "
+        "costs, and whether discounted lines are larger, is the first question of any pricing review.",
+        "We band the lines by discount and compare what each band costs with the quantity it sells, so that discount policy is judged on evidence.",
+        "A CASE expression puts each line in a discount band; a second CASE gives each band a sort order. Grouping by band adds up gross "
+        "revenue and the discount given (gross − net); SUM(COUNT(*)) OVER () is a window over the grouped rows, so each band's share of lines "
+        "needs no second query.",
+    )
+    check = fill('''
+        bands = result.copy()
+        total_gross = float(bands["gross_revenue"].sum())
+        total_given = float(bands["discount_given"].sum())
+        none = bands[bands["discount_band"] == "no discount"]
+        some = bands[bands["discount_band"] != "no discount"]
+        metrics["discounts"] = {
+            "given": total_given, "gross": total_gross, "pct_of_gross": 100 * total_given / total_gross if total_gross else 0.0,
+            "discounted_lines_pct": float(some["lines_pct"].sum()),
+            "qty_discounted": float((some["avg_quantity_per_line"] * some["line_rows"]).sum() / some["line_rows"].sum()) if len(some) else None,
+            "qty_full_price": float(none["avg_quantity_per_line"].iloc[0]) if len(none) else None,
+        }
+        plt.figure(figsize=(8, 3.2))
+        plt.bar(bands["discount_band"], bands["discount_given"].astype(float), width=0.6, color=C_SERIES)
+        plt.title("Revenue given away, by discount band", loc="left"); plt.tight_layout(); plt.show()
+        dm = metrics["discounts"]
+        note(f"Discounts gave away **{total_given:,.2f}** ({dm['pct_of_gross']:.1f}% of gross revenue) on {dm['discounted_lines_pct']:.1f}% of lines.")
+        if dm["qty_discounted"] is not None and dm["qty_full_price"] is not None:
+            lift = 100 * (dm["qty_discounted"] / dm["qty_full_price"] - 1) if dm["qty_full_price"] else float("nan")
+            note(f"Discounted lines sell **{dm['qty_discounted']:.1f}** units on average vs {dm['qty_full_price']:.1f} at full price ({lift:+.0f}%). "
+                 + ("Discounts go with bigger lines, though this alone doesn't show they cause them." if lift > 10 else
+                    "Discounts don't come with noticeably bigger lines here: worth reviewing the policy."))
+    ''')
+    return Cell("discounts", "What discounts cost", SECTIONS[4], story, (stmt("discounts", "Discount bands: cost and quantity", sql),), check)
+
+
+def _trend_signals_cell(b: Builder) -> Cell:
+    d = b.d
+    main = "revenue" if b.money else "orders"
+    agg = "SUM(revenue)" if b.money else "COUNT(*)"
+
+    def sql(D: Dialect) -> str:
+        z = D.round(f"(p.{main} - p.trailing_avg) / NULLIF(p.trailing_sd, 0)", 2)
+        return fill('''
+            -- RANGE frames count period_index values, not rows, so a missing period is skipped instead of pulling an older one in.
+            WITH <<cte>>,
+            framed AS (
+                SELECT p.*,
+                       AVG(<<main>>) OVER (ORDER BY period_index RANGE BETWEEN 2 PRECEDING AND CURRENT ROW) AS moving_avg_3,
+                       AVG(<<main>>) OVER (ORDER BY period_index RANGE BETWEEN 4 PRECEDING AND 1 PRECEDING) AS trailing_avg,
+                       STDDEV_SAMP(<<main>>) OVER (ORDER BY period_index RANGE BETWEEN 4 PRECEDING AND 1 PRECEDING) AS trailing_sd
+                FROM   per_period p
+            )
+            SELECT <<cols>>,
+                   <<main_r>> AS <<main>>,
+                   <<ma>> AS moving_avg_3,
+                   <<ta>> AS trailing_avg_4,
+                   <<z>> AS z_score
+            FROM   framed p
+            ORDER  BY <<order>>''', cte=_period_ctes(b, D, [f"{agg} AS {main}"], "per_period").strip(), main=main,
+                    cols=", ".join(f"p.{c}" for c in d.period_cols), main_r=D.round(f"p.{main}", 2), ma=D.round("p.moving_avg_3", 2),
+                    ta=D.round("p.trailing_avg", 2), z=z, order=", ".join(f"p.{c}" for c in d.period_cols))
+
+    story = Step(
+        "trend_signals",
+        f"There are {len(d.periods)} {d.period}s of {main}.",
+        "One period up or down proves little. A moving average shows the underlying direction, and comparing each period with the spread of the "
+        "previous ones (a z-score) separates an unusual period from normal noise. Frames matter: ROWS counts rows, RANGE counts values, so "
+        "RANGE stays correct when a period is missing.",
+        f"We add a 3-{d.period} moving average and flag {d.period}s more than 2 standard deviations from their 4-{d.period} trailing average, "
+        "so that real breaks stand out from normal movement.",
+        "AVG(…) OVER (ORDER BY period_index RANGE BETWEEN 2 PRECEDING AND CURRENT ROW) is the moving average; the same window shifted to "
+        "'4 PRECEDING AND 1 PRECEDING' gives the trailing average and STDDEV_SAMP, and the z-score is (value − trailing average) ÷ trailing "
+        "standard deviation, guarded with NULLIF.",
+    )
+    check = fill('''
+        sig = result.copy()
+        cols = list(sig.columns)
+        n = <<n>>
+        sig["period"] = ["-Q".join(str(int(v)) for v in r) if <<quarter>> else "-".join(f"{int(v):02d}" if i else str(int(v)) for i, v in enumerate(r))
+                         for r in sig[cols[:n]].itertuples(index=False)]
+        partial = set(<<partial>>)
+        sig["partial"] = sig["period"].isin(partial)
+        unusual = sig[(sig["z_score"].abs() >= 2) & ~sig["partial"]]
+        metrics["unusual_periods"] = [{"period": r.period, "z": float(r.z_score), "value": float(r.<<main>>)} for r in unusual.itertuples()]
+        fig, ax = plt.subplots(figsize=(10, 3.4))
+        ax.bar(sig["period"], sig["<<main>>"].astype(float), width=0.6, color=[C_MUTED if p else C_SERIES for p in sig["partial"]])
+        ax.plot(sig["period"], sig["moving_avg_3"].astype(float), color=C_TOTAL, marker="o", markersize=4)
+        ax.set_title("<<main>> per <<unit>> (bars) and its 3-<<unit>> moving average (line)", loc="left")
+        ax.tick_params(axis="x", labelrotation=45); plt.tight_layout(); plt.show()
+        last = sig[~sig["partial"]].iloc[-1]
+        note(f"Moving average at the last complete <<unit>> ({last.period}): **{float(last.moving_avg_3):,.2f}**.")
+        if len(unusual):
+            note("Unusual <<unit>>s (|z| ≥ 2 against the previous 4): " + ", ".join(f"**{r.period}** (z = {r.z_score:+.1f})" for r in unusual.itertuples())
+                 + ". Look for a one-off event (a big order, a promotion, a loading problem) before reading a trend into it.")
+        else:
+            note("No complete <<unit>> is more than 2 standard deviations from its trailing average: the movement is within normal noise.")
+    ''', n=len(d.period_cols), quarter=d.period == "quarter", partial=repr([d.label(p) for p in d.partial_periods]), main=main,
+        unit=d.period)
+    return Cell("trend_signals", "Moving average and unusual periods", SECTIONS[5], story,
+                (stmt("trend_signals", f"Moving average and z-score per {d.period} (RANGE frames)", sql),), check)
+
+
+def _pareto_cell(b: Builder) -> Cell:
+    d = b.d
+    entities = [("customers", "order_facts", d.customer[1])]
+    if d.item and d.item[2].level == "line":
+        entities.append(("items", "line_facts", d.item[1]))
+
+    def ranked(D: Dialect, view: str, key: str) -> str:
+        k = D.ident(key)
+        return fill('''
+            entity_revenue AS (
+                SELECT <<k>>, SUM(revenue) AS revenue
+                FROM   <<view>>
+                WHERE  <<k>> IS NOT NULL
+                GROUP  BY <<k>>
+            ),
+            ranked AS (
+                SELECT e.*,
+                       ROW_NUMBER() OVER (ORDER BY revenue DESC, <<k>>) AS revenue_rank,
+                       COUNT(*) OVER () AS entities,
+                       SUM(revenue) OVER (ORDER BY revenue DESC, <<k>> ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW) AS running_revenue,
+                       SUM(revenue) OVER () AS total_revenue
+                FROM   entity_revenue e
+            ),
+            classed AS (
+                SELECT r.*,
+                       CASE WHEN running_revenue - revenue < 0.80 * total_revenue THEN 'A'
+                            WHEN running_revenue - revenue < 0.95 * total_revenue THEN 'B'
+                            ELSE 'C'
+                       END AS abc_class
+                FROM   ranked r
+            )''', k=k, view=view)
+
+    def curve(D: Dialect, view: str, key: str) -> str:
+        return ("-- ABC: an entity is A while the revenue before it is under 80% of the total, B under 95%, C after that.\nWITH "
+                + ranked(D, view, key).strip() + "\n" + fill('''
+            SELECT <<k>>,
+                   revenue_rank,
+                   <<rev>> AS revenue,
+                   <<share>> AS entity_pct,
+                   <<cum>> AS cumulative_revenue_pct,
+                   abc_class
+            FROM   classed
+            ORDER  BY revenue_rank''', k=D.ident(key), rev=D.round("revenue", 2), share=D.pct("revenue_rank", "entities"),
+                    cum=D.pct("running_revenue", "total_revenue")))
+
+    def classes(D: Dialect, view: str, key: str) -> str:
+        return "WITH " + ranked(D, view, key).strip() + "\n" + fill('''
+            SELECT abc_class,
+                   COUNT(*) AS entities,
+                   <<share_e>> AS entities_pct,
+                   <<rev>> AS revenue,
+                   <<share_r>> AS revenue_pct
+            FROM   classed
+            GROUP  BY abc_class
+            ORDER  BY abc_class''', share_e=D.pct("COUNT(*)", "SUM(COUNT(*)) OVER ()"), rev=D.round("SUM(revenue)", 2),
+                    share_r=D.pct("SUM(revenue)", "SUM(SUM(revenue)) OVER ()"))
+
+    statements = []
+    for name, view, key in entities:
+        statements.append(stmt(f"curve_{name}", f"Cumulative revenue share of {name} (`{key}`), largest first", lambda D, v=view, k=key: curve(D, v, k)))
+        statements.append(stmt(f"abc_{name}", f"ABC classes of {name}", lambda D, v=view, k=key: classes(D, v, k)))
+    story = Step(
+        "pareto",
+        "Revenue is known per customer" + (" and per item" if len(entities) > 1 else "") + ".",
+        "Revenue is rarely spread evenly: often about 20% of customers bring about 80% of it (the Pareto pattern). How concentrated it is decides "
+        "where account management, stock and service effort should go, and how exposed the business is if a few large customers leave.",
+        "We rank " + " and ".join(name for name, _, _ in entities) + " by revenue, add a running share with a window SUM, and class them A / B / C, "
+        "so that concentration is a number, not an impression.",
+        "SUM(revenue) OVER (ORDER BY revenue DESC ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW) is the running total from the biggest down; "
+        "dividing by SUM(revenue) OVER () gives the cumulative share. ABC classes come from a CASE on the share *before* each entity, so the "
+        "entity that crosses 80% is still A. The class summary uses SUM(SUM(revenue)) OVER (): a window over grouped rows.",
+    )
+    check = fill('''
+        import numpy as _np
+        for name in <<names>>:
+            cur = outputs[f"curve_{name}"]
+            x = cur["entity_pct"].astype(float).to_numpy()
+            y = cur["cumulative_revenue_pct"].astype(float).to_numpy()
+            top20 = float(_np.interp(20, _np.r_[0, x], _np.r_[0, y]))
+            cls = outputs[f"abc_{name}"].set_index("abc_class")
+            a = cls.loc["A"] if "A" in cls.index else None
+            metrics.setdefault("pareto", {})[name] = {
+                "entities": int(len(cur)), "top20_revenue_pct": top20,
+                "a_entities": int(a["entities"]) if a is not None else 0, "a_entities_pct": float(a["entities_pct"]) if a is not None else 0.0,
+                "a_revenue_pct": float(a["revenue_pct"]) if a is not None else 0.0,
+            }
+            p = metrics["pareto"][name]
+            note(f"The top 20% of {name} bring **{top20:.0f}%** of revenue. Class A ({p['a_entities']:,} {name}, {p['a_entities_pct']:.0f}% of them) "
+                 f"brings {p['a_revenue_pct']:.0f}%.")
+        first = <<names>>[0]
+        cur = outputs[f"curve_{first}"]
+        plt.figure(figsize=(6.5, 4))
+        plt.plot(_np.r_[0, cur["entity_pct"].astype(float)], _np.r_[0, cur["cumulative_revenue_pct"].astype(float)], color=C_SERIES)
+        plt.plot([0, 100], [0, 100], color=C_MUTED, linewidth=1)
+        plt.axhline(80, color=C_MUTED, linewidth=1); plt.axvline(20, color=C_MUTED, linewidth=1)
+        plt.xlabel(f"% of {first}, largest first"); plt.ylabel("% of revenue")
+        plt.title(f"Revenue concentration across {first}", loc="left"); plt.tight_layout(); plt.show()
+    ''', names=repr([n for n, _, _ in entities]))
+    return Cell("pareto", "Revenue concentration (Pareto / ABC)", SECTIONS[5], story, tuple(statements), check)
+
+
+def _purchase_gaps_cell(b: Builder) -> Cell:
+    d = b.d
+    cust, date = d.customer[1], d.date[1]
+
+    def ordered(D: Dialect) -> str:
+        c, dt, ok = D.ident(cust), D.ident(date), D.ident(b.order_key)
+        rev = ", revenue" if b.money else ""
+        return fill('''
+            customer_orders AS (
+                SELECT <<c>>, <<ok>>, <<dt>><<rev>>,
+                       LAG(<<dt>>) OVER (PARTITION BY <<c>> ORDER BY <<dt>>, <<ok>>) AS previous_order_date,
+                       LEAD(<<dt>>) OVER (PARTITION BY <<c>> ORDER BY <<dt>>, <<ok>>) AS next_order_date
+                FROM   order_facts
+                WHERE  <<c>> IS NOT NULL
+                  AND  <<dt>> IS NOT NULL
+            )''', c=c, dt=dt, ok=ok, rev=rev)
+
+    def gaps(D: Dialect) -> str:
+        days = D.days_between("previous_order_date", D.ident(date), d.date_is_timestamp)
+        return "WITH " + ordered(D).strip() + ",\n" + fill('''
+            gaps AS (
+                SELECT <<days>> AS days_since_previous
+                FROM   customer_orders
+                WHERE  previous_order_date IS NOT NULL      -- a customer's first order has no previous one
+            )
+            SELECT COUNT(*) AS repeat_orders,
+                   <<avg>> AS avg_days_between_orders,
+                   MIN(days_since_previous) AS min_days,
+                   MAX(days_since_previous) AS max_days,
+                   <<w30>> AS within_30_days_pct,
+                   <<w90>> AS within_90_days_pct
+            FROM   gaps''', days=days, avg=D.round("AVG(days_since_previous)", 1),
+                    w30=D.pct("SUM(CASE WHEN days_since_previous <= 30 THEN 1 ELSE 0 END)", "COUNT(*)"),
+                    w90=D.pct("SUM(CASE WHEN days_since_previous <= 90 THEN 1 ELSE 0 END)", "COUNT(*)"))
+
+    def overdue(D: Dialect) -> str:
+        c, dt = D.ident(cust), D.ident(date)
+        gap = D.days_between("previous_order_date", dt, d.date_is_timestamp)
+        since = D.days_between("last_order_date", f"(SELECT MAX({dt}) FROM order_facts)", d.date_is_timestamp)
+        rev = ",\n           SUM(revenue) AS revenue" if b.money else ""
+        rev_out = f",\n       {D.round('revenue', 2)} AS revenue" if b.money else ""
+        order = "revenue DESC" if b.money else "orders DESC"
+        return "WITH " + ordered(D).strip() + ",\n" + fill('''
+            per_customer AS (
+                SELECT <<c>>,
+                       COUNT(*) AS orders,
+                       MAX(<<dt>>) AS last_order_date,
+                       AVG(<<gap>>) AS typical_gap_days<<rev>>    -- AVG skips the first order's NULL gap
+                FROM   customer_orders
+                GROUP  BY <<c>>
+            ),
+            scored AS (
+                SELECT p.*,
+                       <<since>> AS days_since_last_order
+                FROM   per_customer p
+                WHERE  orders >= 3                       -- at least two gaps, so 'typical' means something
+            )
+            SELECT <<c>>,
+                   orders,
+                   last_order_date,
+                   <<typ>> AS typical_gap_days,
+                   days_since_last_order,
+                   CASE WHEN days_since_last_order > 2 * typical_gap_days THEN 'overdue' ELSE 'on track' END AS status<<rev_out>>
+            FROM   scored
+            ORDER  BY CASE WHEN days_since_last_order > 2 * typical_gap_days THEN 0 ELSE 1 END, <<order>>, <<c>>''',
+                    c=c, dt=dt, gap=gap, rev=rev, since=since, typ=D.round("typical_gap_days", 0), rev_out=rev_out, order=order)
+
+    story = Step(
+        "purchase_gaps",
+        f"Customers order repeatedly (`{cust}` repeats in order_facts).",
+        "How long customers take to come back is the rhythm of the business. A customer who has been silent for more than twice their own usual gap "
+        "is the earliest sign of churn, long before they are 'lost' by any fixed rule like 180 days.",
+        "We measure the days between consecutive orders with LAG and list customers who are overdue against their own rhythm, so that a "
+        "win-back list exists before they are gone.",
+        f"LAG({date}) OVER (PARTITION BY {cust} ORDER BY {date}, {b.order_key}) is each customer's previous order date (LEAD is the next one); the "
+        "difference is the gap. Per customer, AVG of the gaps is their typical rhythm (the first order's NULL gap is skipped by AVG); a customer "
+        "is overdue when the days since their last order exceed twice that rhythm. Only customers with 3+ orders are judged.",
+    )
+    check = fill('''
+        g = outputs["gaps"].iloc[0]
+        od = outputs["overdue"]
+        late = od[od["status"] == "overdue"]
+        metrics["purchase_gaps"] = {"avg_days": float(g.avg_days_between_orders) if g.avg_days_between_orders is not None else None,
+                                    "within_90_pct": float(g.within_90_days_pct or 0), "judged": int(len(od)), "overdue": int(len(late))}
+        if "revenue" in od and len(od):
+            metrics["purchase_gaps"]["overdue_revenue_pct"] = 100 * float(late["revenue"].sum()) / float(od["revenue"].sum())
+        note(f"Repeat orders come **{float(g.avg_days_between_orders):.0f} days** apart on average; {float(g.within_90_days_pct):.0f}% within 90 days.")
+        if len(od):
+            share = metrics["purchase_gaps"].get("overdue_revenue_pct")
+            note(f"**{len(late):,} of {len(od):,}** repeat customers are overdue (silent for more than twice their usual gap)"
+                 + (f"; they brought {share:.0f}% of these customers' revenue: the win-back list." if share is not None else "."))
+    ''')
+    return Cell("purchase_gaps", "Time between orders, and overdue customers", SECTIONS[5], story,
+                (stmt("gaps", "Days between consecutive orders (LAG / LEAD)", gaps),
+                 stmt("overdue", "Customers silent for more than twice their usual gap", overdue)), check)
+
+
+# ═════════════════════════════════════════════════════════════════════════
 # Public API
 # ═════════════════════════════════════════════════════════════════════════
 BUILDERS: dict[str, Callable[[Builder], Cell]] = {
     "schema": _schema_cell, "grain": _grain_cell, "cardinality": _cardinality_cell,
     "duplicates": _duplicates_cell, "nulls": _nulls_cell, "date_range": _date_range_cell, "orphans": _orphans_cell,
     "base": _base_cell, "reconcile": _reconcile_cell,
-    "kpis": _kpis_cell, "kpi_by_period": _kpi_by_period_cell,
-    "running_total": _running_total_cell, "top_n": _top_n_cell, "latest_record": _latest_record_cell, "rfm": _rfm_cell,
+    "kpis": _kpis_cell, "discounts": _discounts_cell, "kpi_by_period": _kpi_by_period_cell,
+    "running_total": _running_total_cell, "trend_signals": _trend_signals_cell, "top_n": _top_n_cell, "pareto": _pareto_cell,
+    "latest_record": _latest_record_cell, "purchase_gaps": _purchase_gaps_cell, "rfm": _rfm_cell,
     "driver_tree": _driver_tree_cell, "drilldown": _drilldown_cell, "cohort": _cohort_cell,
     "explain": _explain_cell, "null_traps": _null_traps_cell,
 }
