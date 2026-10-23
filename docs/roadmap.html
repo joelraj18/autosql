@@ -1,0 +1,521 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>AutoML Explorer Roadmap</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,600;12..96,800&family=IBM+Plex+Sans:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500&display=swap">
+<style>
+/* Layout concept: a transit map. One shared trunk line every file rides, a junction where the task is chosen,
+   three coloured lines (regression / classification / clustering), then the shared modelling line. Each stop
+   lists its real IF -> THEN conditions. Example buttons light up the exact route one real file takes. */
+:root {
+  --bg: #f3f5f8; --surface: #ffffff; --ink: #18202c; --muted: #5a6475; --rule: #d6dbe4; --chip: #eef1f6;
+  --trunk: #2b3443; --reg: #0b8577; --cls: #b8620b; --clu: #6a4dc0; --stop: #b3261e; --ok: #23784a;
+  --display: "Bricolage Grotesque", "Segoe UI", system-ui, sans-serif;
+  --body: "IBM Plex Sans", "Segoe UI", system-ui, sans-serif;
+  --mono: "IBM Plex Mono", ui-monospace, "SFMono-Regular", Menlo, monospace;
+  color-scheme: light;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --bg: #0e1218; --surface: #161b24; --ink: #e5e9f0; --muted: #9ba4b4; --rule: #2a3241; --chip: #1e2532;
+    --trunk: #c8d0dd; --reg: #3cc4b5; --cls: #f0a24a; --clu: #a891f2; --stop: #f2877e; --ok: #5fcf8f; color-scheme: dark;
+  }
+}
+:root[data-theme="dark"] {
+  --bg: #0e1218; --surface: #161b24; --ink: #e5e9f0; --muted: #9ba4b4; --rule: #2a3241; --chip: #1e2532;
+  --trunk: #c8d0dd; --reg: #3cc4b5; --cls: #f0a24a; --clu: #a891f2; --stop: #f2877e; --ok: #5fcf8f; color-scheme: dark;
+}
+* { box-sizing: border-box; }
+body { background: var(--bg); color: var(--ink); font: 15px/1.55 var(--body); }
+.page { max-width: 1240px; margin: 0 auto; padding-inline: 20px; padding-block: 32px 64px; }
+h1, h2, h3 { font-family: var(--display); text-wrap: balance; margin: 0; }
+h1 { font-size: clamp(2rem, 5vw, 3.2rem); font-weight: 800; letter-spacing: -0.02em; line-height: 1.05; }
+h2 { font-size: 1.45rem; font-weight: 800; letter-spacing: -0.01em; }
+h3 { font-size: 1.02rem; font-weight: 600; }
+p { margin: 0; }
+code, .mono { font-family: var(--mono); font-size: 0.86em; }
+.lede { max-width: 68ch; color: var(--muted); margin-top: 10px; font-size: 1.05rem; }
+.eyebrow { font: 500 0.72rem/1 var(--mono); letter-spacing: 0.12em; text-transform: uppercase; color: var(--muted); }
+
+/* legend + example picker */
+.controls { display: flex; flex-wrap: wrap; gap: 18px 32px; align-items: flex-start; margin-top: 24px; }
+.legend { display: flex; flex-wrap: wrap; gap: 8px 18px; }
+.legend span { display: inline-flex; align-items: center; gap: 8px; font-size: 0.9rem; }
+.swatch { width: 26px; height: 6px; border-radius: 3px; background: var(--c); display: inline-block; }
+.picker { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
+.picker button {
+  font: 500 0.85rem var(--body); color: var(--ink); background: var(--surface); border: 1.5px solid var(--rule);
+  border-radius: 999px; padding: 6px 14px; cursor: pointer;
+}
+.picker button[aria-pressed="true"] { border-color: var(--ink); background: var(--ink); color: var(--bg); }
+.picker button:focus-visible { outline: 2px solid var(--reg); outline-offset: 2px; }
+.trace-note { flex-basis: 100%; color: var(--muted); font-size: 0.92rem; min-height: 1.4em; }
+
+/* a line = vertical track with stops */
+.section { margin-top: 44px; }
+.section > header { display: grid; gap: 6px; margin-bottom: 16px; }
+.line { --c: var(--trunk); position: relative; display: grid; gap: 14px; padding-left: 34px; }
+.line::before { content: ""; position: absolute; left: 11px; top: 10px; bottom: 10px; width: 6px; border-radius: 3px; background: var(--c); }
+.line.reg { --c: var(--reg); } .line.cls { --c: var(--cls); } .line.clu { --c: var(--clu); }
+.stop { position: relative; background: var(--surface); border: 1px solid var(--rule); border-radius: 10px; padding: 14px 16px; min-width: 0; transition: opacity .2s; }
+.stop::before {
+  content: ""; position: absolute; left: -30px; top: 15px; width: 14px; height: 14px; border-radius: 50%;
+  background: var(--surface); border: 4px solid var(--c);
+}
+.stop.optional::before { border-style: dashed; }
+.stop .kicker { font: 500 0.7rem/1 var(--mono); letter-spacing: 0.1em; text-transform: uppercase; color: var(--c); }
+.stop h3 { margin-top: 4px; }
+.stop .why { color: var(--muted); margin-top: 4px; font-size: 0.93rem; }
+.rules { list-style: none; margin: 10px 0 0; padding: 0; display: grid; gap: 6px; }
+.rules li { display: grid; grid-template-columns: auto 1fr; gap: 8px; align-items: baseline; font-size: 0.9rem; }
+.rules .if { font: 500 0.66rem/1.6 var(--mono); letter-spacing: 0.06em; padding: 0 6px; border-radius: 4px; background: var(--chip); color: var(--muted); }
+.rules .if.stopflag { color: var(--stop); }
+.rules b { font-weight: 600; }
+.ex { display: none; margin-top: 10px; font: 0.84rem/1.45 var(--mono); color: var(--ink); background: var(--chip); border-radius: 6px; padding: 6px 9px; }
+body[data-trace] .stop.on .ex.show { display: block; }
+body[data-trace] .stop:not(.on) { opacity: 0.32; }
+
+/* junction */
+.junction { margin: 18px 0 0 34px; display: grid; gap: 10px; }
+.fork { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 12px; }
+.fork div { border: 2px solid var(--c); border-radius: 10px; padding: 10px 12px; background: var(--surface); }
+.fork .reg { --c: var(--reg); } .fork .cls { --c: var(--cls); } .fork .clu { --c: var(--clu); }
+.fork b { color: var(--c); font-family: var(--display); font-size: 1.05rem; }
+.fork p { font-size: 0.88rem; color: var(--muted); margin-top: 2px; }
+.branches { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 22px; align-items: start; }
+
+/* tables + code */
+.scroll { overflow-x: auto; }
+table { border-collapse: collapse; width: 100%; font-size: 0.9rem; background: var(--surface); border: 1px solid var(--rule); border-radius: 10px; overflow: hidden; }
+th, td { text-align: left; padding: 9px 12px; border-bottom: 1px solid var(--rule); vertical-align: top; }
+th { font: 600 0.75rem var(--mono); letter-spacing: 0.06em; text-transform: uppercase; color: var(--muted); }
+td.num { font-variant-numeric: tabular-nums; font-family: var(--mono); font-size: 0.85rem; white-space: nowrap; }
+.good { color: var(--ok); } .warn { color: var(--cls); } .bad { color: var(--stop); }
+.further { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 16px; }
+.further article { background: var(--surface); border: 1px solid var(--rule); border-radius: 10px; padding: 14px 16px; min-width: 0; display: grid; gap: 8px; align-content: start; }
+pre { margin: 0; overflow-x: auto; background: var(--chip); border-radius: 8px; padding: 10px 12px; font: 0.8rem/1.5 var(--mono); }
+.footer { margin-top: 48px; color: var(--muted); font-size: 0.88rem; max-width: 80ch; }
+
+@media (max-width: 900px) {
+  .branches, .fork, .further { grid-template-columns: minmax(0, 1fr); }
+}
+@media (prefers-reduced-motion: reduce) { .stop { transition: none; } }
+</style>
+</head>
+<body>
+
+<div class="page">
+  <p class="eyebrow">AutoML Explorer · how the engine decides</p>
+  <h1>AutoML Explorer Roadmap</h1>
+  <p class="lede">Every stop on this map is one step the app runs. Each card says what happens, why, and the exact rules
+    (<b>IF</b> this is true <b>THEN</b> that happens). Follow the dark line from your upload to the junction, then the
+    coloured line for your task. Pick an example to light up the route a real file takes.</p>
+
+  <div class="controls">
+    <div class="legend" aria-label="Line colours">
+      <span><i class="swatch" style="--c: var(--trunk)"></i>Every file</span>
+      <span><i class="swatch" style="--c: var(--reg)"></i>Regression (predict a number)</span>
+      <span><i class="swatch" style="--c: var(--cls)"></i>Classification (predict a label)</span>
+      <span><i class="swatch" style="--c: var(--clu)"></i>Clustering (find groups)</span>
+      <span><i class="swatch" style="--c: var(--muted); height: 6px; border: 1px dashed var(--muted); background: transparent"></i>Dashed stop = only when its condition holds</span>
+    </div>
+    <div class="picker" role="group" aria-label="Trace an example file">
+      <span class="eyebrow">Trace</span>
+      <button type="button" id="t-all" data-trace="" aria-pressed="true">Whole map</button>
+      <button type="button" id="t-inn" data-trace="inn" aria-pressed="false">Hotel bookings</button>
+      <button type="button" id="t-dia" data-trace="dia" aria-pressed="false">Diabetes (number)</button>
+      <button type="button" id="t-iris" data-trace="iris" aria-pressed="false">Iris, no target</button>
+      <p class="trace-note" id="trace-note" aria-live="polite">Showing every possible route.</p>
+    </div>
+  </div>
+
+  <!-- ═════════════ TRUNK ═════════════ -->
+  <section class="section">
+    <header>
+      <p class="eyebrow">Part 1 · every file rides this line</p>
+      <h2>From upload to the junction</h2>
+    </header>
+    <div class="line">
+      <article class="stop on" data-routes="inn dia iris">
+        <p class="kicker">Stop 1</p><h3>Profile every column</h3>
+        <p class="why">A column's <i>type</i> is how it is stored; its <i>role</i> is how a model should use it. Rules are checked in this order, first match wins.</p>
+        <ul class="rules">
+          <li><span class="if">IF</span><span>only one distinct value <b>→ constant</b> (dropped)</span></li>
+          <li><span class="if">IF</span><span>stored as a date, or text where ≥ 90% parses as dates <b>→ date</b> (becomes year / month / weekday)</span></li>
+          <li><span class="if">IF</span><span>whole numbers, unique in &gt; 95% of rows, and counting 1, 2, 3… or named like <code>id</code> / <code>key</code> <b>→ ID</b> (dropped)</span></li>
+          <li><span class="if">IF</span><span>other numbers <b>→ numeric</b></span></li>
+          <li><span class="if">IF</span><span>text averaging &gt; 30 characters with spaces <b>→ free text</b> (set aside)</span></li>
+          <li><span class="if">IF</span><span>text unique in &gt; 95% of rows <b>→ ID</b>; &gt; 50 distinct values <b>→ many categories</b>; otherwise <b>→ category</b></span></li>
+        </ul>
+        <p class="ex" data-ex="inn"><code>Booking_ID</code> → ID (100% unique text). <code>arrival_year/month/date</code> detected as one date split in three.</p>
+        <p class="ex" data-ex="dia">All 11 columns numeric; nothing to drop.</p>
+        <p class="ex" data-ex="iris">4 numeric columns.</p>
+      </article>
+
+      <article class="stop on" data-routes="inn dia iris">
+        <p class="kicker">Stop 2</p><h3>Choose what to predict</h3>
+        <p class="why">You decide how the target is chosen. Most tables are collected to predict one thing; some have no answer column at all.</p>
+        <ul class="rules">
+          <li><span class="if">🤖 AUTO</span><span>a column named like <code>status</code>, <code>target</code>, <code>label</code>, <code>churn</code>, <code>cancel</code>, <code>fraud</code>… with 2–15 values (or numeric with any number of values) <b>→ predict it</b>; else the last column if it is a category with 2–15 values <b>→ predict it</b>; else <b>→ clustering</b> (the engine says why)</span></li>
+          <li><span class="if">🎯 PICK</span><span>you choose any column <b>→ predict it</b> (the trace notes when the engine would have chosen differently)</span></li>
+          <li><span class="if">🔍 NONE</span><span><b>→ clustering</b>; a column named like an outcome is still left out of the groups</span></li>
+        </ul>
+        <p class="ex" data-ex="inn">Let the engine decide → <code>booking_status</code> (its name says "status", 2 values).</p>
+        <p class="ex" data-ex="dia">Let the engine decide → <code>target</code> (named like an outcome, numeric with 214 values → regression).</p>
+        <p class="ex" data-ex="iris">Let the engine decide → no outcome column found → clustering.</p>
+      </article>
+
+      <article class="stop on" data-routes="inn dia iris">
+        <p class="kicker">Stop 3</p><h3>Quality gates</h3>
+        <p class="why">Some files can't give a trustworthy result. The app stops and explains instead of guessing.</p>
+        <ul class="rules">
+          <li><span class="if stopflag">STOP IF</span><span>fewer than <b>30 rows</b></span></li>
+          <li><span class="if stopflag">STOP IF</span><span>fewer than <b>2 columns</b></span></li>
+          <li><span class="if stopflag">STOP IF</span><span>more than <b>60%</b> of all cells are empty</span></li>
+          <li><span class="if stopflag">STOP IF</span><span>the target is free text, a date, a single value, or an ID (a different value in every row)</span></li>
+          <li><span class="if stopflag">STOP IF</span><span>after clean-up no inputs are left (clustering needs ≥ 2)</span></li>
+        </ul>
+        <p class="ex" data-ex="inn">36,275 rows, 0% empty → passes.</p>
+        <p class="ex" data-ex="dia">442 rows → passes.</p>
+        <p class="ex" data-ex="iris">150 rows → passes.</p>
+      </article>
+
+      <article class="stop on" data-routes="inn dia iris">
+        <p class="kicker">Stop 4</p><h3>Clean up</h3>
+        <p class="why">Messy inputs either crash models or quietly make them worse.</p>
+        <ul class="rules">
+          <li><span class="if">IF</span><span>ID, constant, free text, or &gt; 40% empty <b>→ drop the column</b></span></li>
+          <li><span class="if">IF</span><span>year + month + day columns share a prefix <b>→ build the real date, add weekday</b>; impossible dates (29 Feb 2018) left blank</span></li>
+          <li><span class="if">IF</span><span>exact duplicate rows ≤ <b>5%</b> <b>→ drop</b> (looks like double entry)</span></li>
+          <li><span class="if">IF</span><span>duplicates &gt; 5%, or rows identical apart from the ID <b>→ keep</b>, but also score the model on "unseen" test rows</span></li>
+          <li><span class="if">IF</span><span>no target and a column is <i>named</i> like an outcome <b>→ leave it out of clustering</b></span></li>
+          <li><span class="if">IF</span><span>a number is ±infinity (usually a division by zero) <b>→ treat it as missing</b></span></li>
+          <li><span class="if">ALWAYS</span><span>gaps → median (numbers) or a "missing" category (text)</span></li>
+        </ul>
+        <p class="ex" data-ex="inn">Drop <code>Booking_ID</code>; add <code>arrival_weekday</code> (37 impossible dates); keep 10,275 look-alike rows (28%).</p>
+        <p class="ex" data-ex="dia">Nothing to clean.</p>
+        <p class="ex" data-ex="iris">1 exact duplicate (0.7%) → dropped.</p>
+      </article>
+
+      <article class="stop on" data-routes="inn dia iris">
+        <p class="kicker">Stop 5 · the junction</p><h3>Pick the task</h3>
+        <p class="why">The type of answer you want decides the whole rest of the route.</p>
+        <ul class="rules">
+          <li><span class="if">IF</span><span>no target <b>→ clustering</b></span></li>
+          <li><span class="if">IF</span><span>target is a number with <b>more than 15</b> distinct values <b>→ regression</b></span></li>
+          <li><span class="if">ELSE</span><span><b>classification</b>: binary if 2 classes, multiclass if more (classes seen only once are dropped first)</span></li>
+          <li><span class="if">IF</span><span>fewer than <b>200 rows</b> <b>→ small-data warning</b>: one test row moves the score a lot</span></li>
+        </ul>
+        <p class="ex" data-ex="inn">2 classes → binary classification.</p>
+        <p class="ex" data-ex="dia">Number with 214 values → regression.</p>
+        <p class="ex" data-ex="iris">No target → clustering.</p>
+      </article>
+    </div>
+
+    <div class="junction" aria-hidden="true">
+      <div class="fork">
+        <div class="reg"><b>Regression</b><p>"How much?": price, sales, a measurement</p></div>
+        <div class="cls"><b>Classification</b><p>"Which one?": cancel or not, churn, a species</p></div>
+        <div class="clu"><b>Clustering</b><p>"What groups exist?": no answer column</p></div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ═════════════ BRANCHES ═════════════ -->
+  <section class="section">
+    <header>
+      <p class="eyebrow">Part 2 · the three lines</p>
+      <h2>Explore, set the bar, explain with statistics</h2>
+    </header>
+    <div class="branches">
+      <div class="line reg" aria-label="Regression line">
+        <article class="stop on" data-routes="dia">
+          <p class="kicker">Regression</p><h3>Key drivers</h3>
+          <p class="why">Average target for each group of every column; numbers are cut into 5 equal-sized bands, groups under 30 rows hidden.</p>
+          <p class="ex" data-ex="dia"><code>bmi</code>: average 98 in the lowest band, 218 in the highest.</p>
+        </article>
+        <article class="stop on" data-routes="dia">
+          <p class="kicker">Regression</p><h3>Split, prepare, baseline</h3>
+          <p class="why">80% training / 20% locked test set. The baseline always guesses the average; its R² ≈ 0 is the bar to beat.</p>
+          <ul class="rules"><li><span class="if">IF</span><span>|skew| &gt; 1 and no negatives <b>→ model log(target)</b>, convert back</span></li></ul>
+        </article>
+        <article class="stop on" data-routes="dia">
+          <p class="kicker">Regression</p><h3>Multicollinearity (VIF)</h3>
+          <p class="why">Inputs that copy each other make coefficients unreliable.</p>
+          <ul class="rules"><li><span class="if">WHILE</span><span>any VIF &gt; <b>10</b> <b>→ drop the worst</b>; &lt; 5 is safe, 5–10 "read with care"</span></li></ul>
+          <p class="ex" data-ex="dia"><code>s1</code> removed (VIF 55); largest left 8.2.</p>
+        </article>
+        <article class="stop on" data-routes="dia">
+          <p class="kicker">Regression</p><h3>OLS statistics</h3>
+          <p class="why">y = β₀ + β₁x₁ + … with a p-value and 95% confidence interval for each β, R², adjusted R² and the F-test.</p>
+          <ul class="rules"><li><span class="if">IF</span><span>p &lt; 0.05 <b>→ significant driver</b></span></li></ul>
+          <p class="ex" data-ex="dia">R² 0.52; 5 of 9 inputs significant; <code>bmi</code> +560 per unit.</p>
+        </article>
+        <article class="stop on" data-routes="dia">
+          <p class="kicker">Regression</p><h3>Check assumptions</h3>
+          <p class="why">P-values are only valid if these hold. Each gets a plot and a test.</p>
+          <ul class="rules">
+            <li><span class="if">TEST</span><span>linearity (RESET), equal spread (Breusch–Pagan), normal residuals (Jarque–Bera): <b>p ≥ 0.05 = OK</b></span></li>
+            <li><span class="if">TEST</span><span>independence: Durbin–Watson between <b>1.5 and 2.5 = OK</b></span></li>
+          </ul>
+          <p class="ex" data-ex="dia">All four pass.</p>
+        </article>
+      </div>
+
+      <div class="line cls" aria-label="Classification line">
+        <article class="stop optional on" data-routes="inn">
+          <p class="kicker">Classification · binary only</p><h3>Key drivers</h3>
+          <p class="why">Rate of the rarer class (the one worth catching) for each group of every column.</p>
+          <p class="ex" data-ex="inn">Lead time: 11% cancel when booked ≤ 11 days ahead, 72% beyond 151 days.</p>
+        </article>
+        <article class="stop on" data-routes="inn">
+          <p class="kicker">Classification</p><h3>Split, prepare, baseline</h3>
+          <p class="why">Stratified split keeps the class mix equal in train and test. The baseline always guesses the most common class.</p>
+          <ul class="rules">
+            <li><span class="if">IF</span><span>smallest ÷ largest class &lt; <b>0.25</b> <b>→ imbalanced</b>: class weights on, resampling stop later, score by <b>macro F1</b></span></li>
+            <li><span class="if">ELSE IF</span><span>smallest class under <b>40%</b> (binary) <b>→ uneven</b>: score by <b>macro F1</b>, because accuracy would flatter a model that always says "no"</span></li>
+            <li><span class="if">ELSE</span><span>score by <b>accuracy</b></span></li>
+          </ul>
+          <p class="ex" data-ex="inn">32.8% Canceled: not imbalanced (ratio 0.49), but uneven → macro F1. Baseline 0.40.</p>
+        </article>
+        <article class="stop optional on" data-routes="inn">
+          <p class="kicker">Classification · binary only</p><h3>Logistic regression odds</h3>
+          <p class="why">statsmodels <code>Logit</code>: each input's odds ratio, 95% CI and p-value. 0.5 = halves the odds, 2 = doubles them.</p>
+          <ul class="rules"><li><span class="if">IF</span><span>the fit doesn't converge <b>→ warning</b>: a category is (almost) always one class</span></li></ul>
+          <p class="ex" data-ex="inn">Repeat guest: odds of cancelling −87%; parking needed −84%.</p>
+        </article>
+      </div>
+
+      <div class="line clu" aria-label="Clustering line">
+        <article class="stop on" data-routes="iris">
+          <p class="kicker">Clustering</p><h3>Scale everything</h3>
+          <p class="why">K-Means measures distance, so a column in thousands would drown one in fractions.</p>
+          <ul class="rules"><li><span class="if">IF</span><span>more than <b>10,000 rows</b> <b>→ MiniBatchKMeans</b> (faster); else K-Means</span></li></ul>
+        </article>
+        <article class="stop on" data-routes="iris">
+          <p class="kicker">Clustering</p><h3>PCA</h3>
+          <p class="why">How many directions hold 80% of the information, and which columns build them.</p>
+          <p class="ex" data-ex="iris">2 of 4 components keep 80%; the first two keep 96%.</p>
+        </article>
+        <article class="stop on" data-routes="iris">
+          <p class="kicker">Clustering</p><h3>Choose k</h3>
+          <p class="why">Try k = 2 to min(8, rows ÷ 10). Elbow chart (inertia) plus silhouette score.</p>
+          <ul class="rules"><li><span class="if">PICK</span><span>the k with the <b>highest silhouette</b></span></li></ul>
+          <p class="ex" data-ex="iris">k = 2, silhouette 0.58 (strong).</p>
+        </article>
+        <article class="stop on" data-routes="iris">
+          <p class="kicker">Clustering</p><h3>Fit and describe</h3>
+          <p class="why">Clusters on a PCA map with centres; each cluster named by its two most unusual columns.</p>
+          <p class="ex" data-ex="iris">Cluster 0 (34%): small petals. Cluster 1 (66%): large petals.</p>
+        </article>
+        <article class="stop on" data-routes="iris">
+          <p class="kicker">Clustering</p><h3>Hierarchical cross-check</h3>
+          <p class="why">Ward dendrogram on ≤ 1,500 rows, cut into the same k; compared with K-Means.</p>
+          <ul class="rules"><li><span class="if">IF</span><span>agreement (adjusted Rand) &gt; <b>0.6</b> <b>→ robust groups</b>; else treat them as tendencies</span></li></ul>
+          <p class="ex" data-ex="iris">Agreement 0.97 → robust.</p>
+        </article>
+      </div>
+    </div>
+  </section>
+
+  <!-- ═════════════ MODELLING LINE ═════════════ -->
+  <section class="section">
+    <header>
+      <p class="eyebrow">Part 3 · regression and classification rejoin here</p>
+      <h2>Find the best model, honestly</h2>
+      <p class="lede">The golden rule on this line: every choice (model, settings, threshold, resampling) is made with
+        cross-validation on <b>training rows only</b>. The test set is used once, at the end.</p>
+    </header>
+    <div class="line">
+      <article class="stop on" data-routes="inn dia">
+        <p class="kicker">Stop 6</p><h3>Compare 5–7 models</h3>
+        <p class="why">3-fold cross-validation on up to 10,000 training rows. The highest average wins; the rule-of-thumb pick is only a first guess.</p>
+        <ul class="rules">
+          <li><span class="if">ALWAYS</span><span>linear, decision tree, random forest (bagging), AdaBoost and gradient boosting (boosting)</span></li>
+          <li><span class="if">IF</span><span>installed <b>→ also XGBoost and LightGBM</b></span></li>
+          <li><span class="if">IF</span><span>the simple linear model is within 0.01 of the winner <b>→ suggest it</b> (easier to explain)</span></li>
+        </ul>
+        <p class="ex" data-ex="inn">Macro F1: LightGBM 0.862 ≈ random forest 0.858 ≈ XGBoost 0.857 &gt; … &gt; logistic 0.761.</p>
+        <p class="ex" data-ex="dia">Linear regression wins (0.48): the relationship really is close to a straight line.</p>
+      </article>
+      <article class="stop optional on" data-routes="">
+        <p class="kicker">Stop 7 · only if imbalanced</p><h3>Handle the rare class</h3>
+        <p class="why">Compare class weights with random oversampling, random undersampling and SMOTE. Resampling happens inside each training fold only.</p>
+        <ul class="rules"><li><span class="if">IF</span><span>smallest ÷ largest class &lt; 0.25 and <code>imbalanced-learn</code> installed <b>→ run this stop</b>; keep the best method</span></li></ul>
+      </article>
+      <article class="stop on" data-routes="inn dia">
+        <p class="kicker">Stop 8</p><h3>Tune the winner</h3>
+        <p class="why">RandomizedSearchCV tries up to 8 setting combinations (depth, learning rate, α/λ regularisation…) with 3-fold CV.</p>
+        <ul class="rules"><li><span class="if">IF</span><span>the winner has no settings to tune (linear regression) <b>→ skip</b></span></li><li><span class="if">IF</span><span>no combination beats the defaults <b>→ keep the defaults</b></span></li></ul>
+        <p class="ex" data-ex="inn">8 combinations tried; none beat LightGBM's defaults (0.859 vs 0.862), so the defaults stay.</p>
+        <p class="ex" data-ex="dia">Linear regression → nothing to tune.</p>
+      </article>
+      <article class="stop on" data-routes="inn dia">
+        <p class="kicker">Stop 9</p><h3>Train on all training rows, sit the final exam</h3>
+        <p class="why">Score on train and test, plus the extras that apply.</p>
+        <ul class="rules">
+          <li><span class="if">GAP</span><span>train − test ≤ 0.05 <b class="good">generalises</b> · ≤ 0.15 <b class="warn">mild overfitting</b> · &gt; 0.15 <b class="bad">overfitting</b></span></li>
+          <li><span class="if">IF</span><span>look-alike rows <b>→ also score test rows with no twin in training</b></span></li>
+          <li><span class="if">IF</span><span>binary <b>→ ROC curve and AUC</b>; regression <b>→ MAE and predicted-vs-actual</b></span></li>
+          <li><span class="if">IF</span><span>test set under 100 rows <b>→ warn</b> that each row is worth several points</span></li>
+          <li><span class="if">IF</span><span>test score ≥ 0.99 <b class="bad">→ leakage warning</b>: real data is rarely that easy, so check that no column gives away the answer</span></li>
+        </ul>
+        <p class="ex" data-ex="inn">Test macro F1 0.88 (baseline 0.40), ROC-AUC 0.96; 0.84 on test rows with no twin in training.</p>
+        <p class="ex" data-ex="dia">Test R² 0.45, average error 42.8.</p>
+      </article>
+      <article class="stop optional on" data-routes="inn">
+        <p class="kicker">Stop 10 · binary only</p><h3>Tune the decision threshold</h3>
+        <p class="why">Default: say "yes" above 50% probability. Lower catches more (recall) with more false alarms (precision).</p>
+        <ul class="rules"><li><span class="if">PICK</span><span>the threshold with the best F1, from out-of-fold training predictions</span></li></ul>
+        <p class="ex" data-ex="inn">Threshold 0.44 lifts recall 0.81 → 0.82, but F1 dips slightly, so the note says to keep 0.50.</p>
+      </article>
+      <article class="stop on" data-routes="inn dia">
+        <p class="kicker">Stop 11</p><h3>Readable rules and importance</h3>
+        <p class="why">A 3-question decision tree in real units, then permutation importance (how much the score drops when a column is shuffled).</p>
+        <ul class="rules"><li><span class="if">IF</span><span>the 3-question tree is no better than the baseline <b>→ say so</b>: the pattern needs many columns</span></li><li><span class="if">IF</span><span>it matches or beats the full model <b>→ recommend the simple rules</b></span></li></ul>
+        <p class="ex" data-ex="inn">First question: is lead time ≤ 151.5 days?</p>
+        <p class="ex" data-ex="dia">First question: is bmi ≤ 0.005?</p>
+      </article>
+      <article class="stop on" data-routes="inn dia iris">
+        <p class="kicker">Last stop</p><h3>What the results mean</h3>
+        <p class="why">Every cell already wrote its own 📌 findings; the summary collects them in plain English.</p>
+      </article>
+    </div>
+  </section>
+
+  <!-- ═════════════ VERDICTS ═════════════ -->
+  <section class="section">
+    <header>
+      <p class="eyebrow">Part 4 · reading the verdicts</p>
+      <h2>What the numbers mean</h2>
+    </header>
+    <div class="scroll">
+      <table>
+        <thead><tr><th>Measure</th><th>Good</th><th>Middle</th><th>Weak / warning</th><th>In one sentence</th></tr></thead>
+        <tbody>
+          <tr><td>Gain over baseline</td><td class="num good">&gt; 0.10</td><td class="num warn">0.01 – 0.10</td><td class="num bad">≤ 0.01</td><td>Is the model better than guessing?</td></tr>
+          <tr><td>Train − test gap</td><td class="num good">≤ 0.05</td><td class="num warn">0.05 – 0.15</td><td class="num bad">&gt; 0.15</td><td>Does it memorise instead of learn?</td></tr>
+          <tr><td>ROC-AUC</td><td class="num good">≥ 0.90</td><td class="num warn">0.75 – 0.90</td><td class="num bad">&lt; 0.75</td><td>Does it rank positives above negatives?</td></tr>
+          <tr><td>Silhouette</td><td class="num good">≥ 0.50</td><td class="num warn">0.25 – 0.50</td><td class="num bad">&lt; 0.25</td><td>Are the clusters clearly separated?</td></tr>
+          <tr><td>VIF</td><td class="num good">&lt; 5</td><td class="num warn">5 – 10</td><td class="num bad">&gt; 10 (dropped)</td><td>Is a column a copy of the others?</td></tr>
+          <tr><td>p-value</td><td class="num good">&lt; 0.05</td><td class="num">–</td><td class="num">≥ 0.05</td><td>Is the effect real, or could it be chance?</td></tr>
+          <tr><td>Durbin–Watson</td><td class="num good">1.5 – 2.5</td><td class="num">–</td><td class="num bad">outside</td><td>Are neighbouring rows' errors independent?</td></tr>
+          <tr><td>Test score near 1.0</td><td class="num">–</td><td class="num">–</td><td class="num bad">≥ 0.99</td><td>Too good to be true? Look for a column that leaks the answer.</td></tr>
+          <tr><td>Hierarchical agreement (ARI)</td><td class="num good">&gt; 0.6</td><td class="num">–</td><td class="num warn">≤ 0.6</td><td>Do two methods find the same groups?</td></tr>
+        </tbody>
+      </table>
+    </div>
+  </section>
+
+  <!-- ═════════════ GOING FURTHER ═════════════ -->
+  <section class="section">
+    <header>
+      <p class="eyebrow">Part 5 · not automated yet, here is the code</p>
+      <h2>Going further by hand</h2>
+      <p class="lede">These course techniques aren't run automatically. Paste them into the downloaded notebook after the
+        "Train" cell; they reuse its variables (<code>X_train</code>, <code>y_train</code>, <code>preprocessor</code>, …).</p>
+    </header>
+    <div class="further">
+      <article>
+        <h3>Early stopping and the validation-loss curve</h3>
+        <p class="why">Boosting adds trees until the validation error stops improving, instead of a fixed number.</p>
+<pre>from xgboost import XGBClassifier
+from sklearn.model_selection import train_test_split
+Xa, Xv, ya, yv = train_test_split(X_train, y_train, test_size=0.2,
+                                  stratify=y_train, random_state=42)
+prep = preprocessor.fit(Xa)
+codes = {c: i for i, c in enumerate(sorted(y_train.unique()))}
+xgb = XGBClassifier(n_estimators=2000, learning_rate=0.05,
+                    early_stopping_rounds=50, eval_metric="logloss")
+xgb.fit(prep.transform(Xa), ya.map(codes),
+        eval_set=[(prep.transform(Xv), yv.map(codes))], verbose=False)
+loss = xgb.evals_result()["validation_0"]["logloss"]
+plt.plot(loss); plt.axvline(xgb.best_iteration, ls="--")
+plt.xlabel("trees"); plt.ylabel("validation log-loss"); plt.show()
+print("best number of trees:", xgb.best_iteration)</pre>
+      </article>
+      <article>
+        <h3>Bagging any model</h3>
+        <p class="why">Random forest is bagging of trees; <code>BaggingClassifier</code> bags any model and reports an out-of-bag score.</p>
+<pre>from sklearn.ensemble import BaggingClassifier
+from sklearn.tree import DecisionTreeClassifier
+bag = make_pipe(BaggingClassifier(
+    DecisionTreeClassifier(max_depth=8), n_estimators=100,
+    max_samples=0.8, oob_score=True, random_state=42))
+bag.fit(X_train, y_train)
+print("OOB score:", bag.named_steps["model"].oob_score_)
+print("test score:", score(y_test, bag.predict(X_test)))</pre>
+      </article>
+      <article>
+        <h3>SMOTE for mixed numbers and categories</h3>
+        <p class="why">Plain SMOTE invents in-between values such as "0.4 of a category". SMOTENC keeps categories whole.</p>
+<pre>from imblearn.over_sampling import SMOTENC
+from imblearn.pipeline import Pipeline as ImbPipeline
+from sklearn.impute import SimpleImputer
+from sklearn.compose import ColumnTransformer
+fill = ColumnTransformer([("n", SimpleImputer(strategy="median"), num_features),
+                          ("c", "passthrough", cat_features)])
+cat_idx = list(range(len(num_features), len(num_features) + len(cat_features)))
+pipe_nc = ImbPipeline([("fill", fill),
+                       ("smote", SMOTENC(categorical_features=cat_idx, random_state=42)),
+                       ("prep", ColumnTransformer([
+                           ("n", StandardScaler(), list(range(len(num_features)))),
+                           ("c", OneHotEncoder(handle_unknown="ignore"), cat_idx)])),
+                       ("model", clone(tuned_model))])
+pipe_nc.fit(X_train, y_train)</pre>
+      </article>
+      <article>
+        <h3>Threshold from business costs</h3>
+        <p class="why">Instead of best F1, choose the threshold that costs least. Example: a missed cancellation costs €100, a false alarm €10.</p>
+<pre>cost_miss, cost_false_alarm = 100, 10
+proba = pipe.predict_proba(X_test)[:, list(pipe.classes_).index(positive)]
+is_pos = (y_test == positive).to_numpy()
+cuts = np.linspace(0.05, 0.95, 91)
+cost = [cost_miss * ((proba &lt; t) &amp; is_pos).sum()
+        + cost_false_alarm * ((proba &gt;= t) &amp; ~is_pos).sum() for t in cuts]
+best = cuts[int(np.argmin(cost))]
+plt.plot(cuts, cost); plt.axvline(best, ls="--"); plt.show()
+print(f"cheapest threshold: {best:.2f}")
+# Pick this on validation data in a real project, then check it once on test.</pre>
+      </article>
+    </div>
+  </section>
+
+  <p class="footer">Every threshold on this map is a constant in the AutoML Explorer code (<code>automl/profiling.py</code>,
+    <code>automl/decision.py</code>, <code>automl/codegen.py</code>, <code>automl/narrative.py</code>). The full specification
+    is in <code>docs/DECISION_TREE.md</code> in the repository.</p>
+</div>
+
+<script>
+(function () {
+  var notes = {
+    "": "Showing every possible route.",
+    inn: "Hotel bookings (36,275 rows, target booking_status): trunk → classification line → modelling line. Stop 7 (resampling) is skipped: 32.8% vs 67.2% is uneven, so it's judged by macro F1, but not imbalanced enough (ratio 0.49, not under 0.25) to need resampling.",
+    dia: "Diabetes (442 rows, target is a number with 214 values): trunk → regression line → modelling line.",
+    iris: "Iris measurements with no target: trunk → clustering line. Clustering doesn't use the modelling line."
+  };
+  var buttons = document.querySelectorAll(".picker button");
+  var stops = document.querySelectorAll(".stop");
+  function trace(key) {
+    if (key) document.body.setAttribute("data-trace", key); else document.body.removeAttribute("data-trace");
+    buttons.forEach(function (b) { b.setAttribute("aria-pressed", String(b.dataset.trace === key)); });
+    stops.forEach(function (s) {
+      var routes = (s.dataset.routes || "").split(" ");
+      s.classList.toggle("on", !key || routes.indexOf(key) !== -1);
+      s.querySelectorAll(".ex").forEach(function (e) { e.classList.toggle("show", e.dataset.ex === key); });
+    });
+    document.getElementById("trace-note").textContent = notes[key];
+    try { localStorage.setItem("roadmap-trace", key); } catch (e) {}
+  }
+  buttons.forEach(function (b) { b.addEventListener("click", function () { trace(b.dataset.trace); }); });
+  var saved = "";
+  try { saved = localStorage.getItem("roadmap-trace") || ""; } catch (e) {}
+  if (location.hash && notes.hasOwnProperty(location.hash.slice(1))) saved = location.hash.slice(1);
+  trace(notes.hasOwnProperty(saved) ? saved : "");
+})();
+</script>
+</body>
+</html>

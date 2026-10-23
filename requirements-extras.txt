@@ -1,0 +1,4 @@
+# Optional: adds XGBoost as a candidate model (large download, ~200 MB).
+# The engine detects it automatically; without it, everything else still works.
+-r requirements.txt
+xgboost>=2.0
