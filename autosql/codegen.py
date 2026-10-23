@@ -1,0 +1,2101 @@
+"""Turn a ``Decision`` into SQL cells that explain themselves.
+
+Every cell carries a six-part narrative so a beginner can follow along:
+
+  🔍 What we found before   - the evidence that led to this step        (Step.found)
+  💡 Why it matters          - why that evidence changes what we do      (Step.why)
+  🎯 What we're going to do  - the action and what it achieves           (Step.action)
+  🛠 What this SQL does      - the SQL explained in plain words          (Step.code)
+     The SQL itself, in MySQL 8 or PostgreSQL, then its result
+  📌 What we found after     - written by the cell's check code (``note()``) from the actual result
+
+Each statement is written once as a function of a ``Dialect`` and rendered for MySQL, PostgreSQL and DuckDB
+(which runs it in the app). The cells follow the seven steps: schema & grain → validate → CTEs → KPIs →
+window functions → root cause → fast and correct.
+"""
+from __future__ import annotations
+
+import re
+import textwrap
+from dataclasses import dataclass
+from typing import Callable
+
+from .decision import CELL_TITLES, MIN_PERIODS_FOR_CORR, NTILE_BUCKETS, TOP_N, Decision, Dimension, Period
+from .dialect import DIALECTS, Dialect
+from .narrative import Step
+from .profiling import singular
+from .schema import Relationship
+
+SECTIONS = {
+    1: "1 · Schema & grain", 2: "2 · Validate", 3: "3 · Build with CTEs", 4: "4 · KPIs",
+    5: "5 · Window functions", 6: "6 · Root cause", 7: "7 · Fast & correct",
+}
+MAX_NULL_COLUMNS = 60      # more columns than this: the NULL profile lists only the columns that had NULLs
+DISPLAY_LIMIT = 20         # rows listed by "show me examples" queries
+
+
+@dataclass(frozen=True)
+class Statement:
+    label: str                 # key of the result in ``outputs`` (check code and notebook)
+    title: str                 # shown above the SQL and its result
+    sql: dict[str, str]        # dialect -> SQL text (no trailing semicolon)
+    run: str = "query"         # query | scratch (run in an empty database) | show (never run: dialect-only demo)
+
+
+@dataclass(frozen=True)
+class Cell:
+    id: str
+    title: str
+    section: str
+    story: Step
+    statements: tuple[Statement, ...]
+    check: str                 # Python: reads ``outputs`` / ``result``, writes ``note()`` and ``metrics``
+
+    def code(self, dialect: str) -> str:
+        """The cell's SQL in one dialect, with a 'Why' header and one numbered block per statement."""
+        why = re.sub(r"[*`]", "", self.story.action)
+        lines = [textwrap.fill(why, width=100, initial_indent="-- Why: ", subsequent_indent="--      ")]
+        for i, st in enumerate(self.statements, 1):
+            prefix = f"-- {i}) " if len(self.statements) > 1 else "-- "
+            note = "  [not run here: shown for your database]" if st.run == "show" else ""
+            lines.append(f"\n{prefix}{st.title}{note}\n{st.sql[dialect]};")
+        return "\n".join(lines) + "\n"
+
+
+def fill(template: str, **values) -> str:
+    """Dedent a template and replace <<name>> placeholders (avoids escaping every brace)."""
+    text = textwrap.dedent(template).strip("\n")
+    for key, value in values.items():
+        text = text.replace(f"<<{key}>>", str(value))
+    assert "<<" not in text, text
+    return text
+
+
+def render(fn: Callable[[Dialect], str]) -> dict[str, str]:
+    return {name: fn(Dialect(name)) for name in DIALECTS}
+
+
+def stmt(label: str, title: str, fn: Callable[[Dialect], str], run: str = "query") -> Statement:
+    return Statement(label, title, render(fn), run)
+
+
+def indent(text: str, spaces: int) -> str:
+    return textwrap.indent(text, " " * spaces)
+
+
+def union_all(parts: list[str]) -> str:
+    return "\nUNION ALL\n".join(parts)
+
+
+# ═════════════════════════════════════════════════════════════════════════
+# Builder: names, aliases and shared SQL fragments for one decision
+# ═════════════════════════════════════════════════════════════════════════
+class Builder:
+    def __init__(self, d: Decision):
+        self.d = d
+        self.p = d.profile
+        self.aliases: dict[str, str] = {}
+        used = [d.fact, d.header, d.customer_rel.parent_table if d.customer_rel else None]
+        used += [r.parent_table for dim in d.dimensions for r in dim.path] + [d.item[0] if d.item else None]
+        order = list(dict.fromkeys([t for t in used if t] + list(self.p.tables)))
+        for t in order:
+            self.alias(t)
+
+    # ── names ────────────────────────────────────────────────────────────
+    def alias(self, table: str) -> str:
+        if table not in self.aliases:
+            words = [w for w in table.split("_") if w]
+            options = ["".join(w[0] for w in words) if len(words) > 1 else table[:1], table[:3], table[:4]]
+            taken = set(self.aliases.values())
+            from .dialect import RESERVED
+            pick = next((a for a in options if a and a not in taken and a not in RESERVED and re.match(r"^[a-z_]", a)), None)
+            n = 2
+            while pick is None:
+                cand = f"{options[0] or 't'}{n}"
+                pick = cand if cand not in taken else None
+                n += 1
+            self.aliases[table] = pick
+        return self.aliases[table]
+
+    def src(self, D: Dialect, table: str) -> str:
+        """FROM-clause name of a table: the table itself, or its de-duplicated CTE."""
+        return f"{table}_deduped" if table in self.d.dedupe else D.ident(table)
+
+    def dedupe_ctes(self, D: Dialect, tables: list[str]) -> list[str]:
+        out = []
+        for t in tables:
+            if t not in self.d.dedupe:
+                continue
+            keys, order = self.d.dedupe[t]
+            a = "x"
+            part = ", ".join(D.col(a, k) for k in keys)
+            by = f"{D.col(a, order)} IS NULL, {D.col(a, order)} DESC" if order else part
+            keep = f"keep the latest by {order}" if order else "keep one copy (arbitrary: there is no date to choose by)"
+            out.append(fill('''
+                <<name>>_deduped AS (            -- <<table>> repeats its key: <<keep>>
+                    SELECT *
+                    FROM (SELECT x.*,
+                                 ROW_NUMBER() OVER (PARTITION BY <<part>> ORDER BY <<by>>) AS row_num
+                          FROM   <<src>> x) ranked
+                    WHERE  row_num = 1
+                )''', name=t, table=t, keep=keep, part=part, by=by, src=D.ident(t)))
+        return out
+
+    # ── shared columns ───────────────────────────────────────────────────
+    @property
+    def money(self) -> bool:
+        return self.d.revenue.kind != "count"
+
+    def line_revenue(self, D: Dialect, a: str, price_alias: str | None = None) -> str:
+        rev = self.d.revenue
+        if rev.kind == "price_qty":
+            price = D.col(price_alias or a, rev.price)
+            expr = f"{price} * {D.col(a, rev.quantity)}"
+            if rev.discount:
+                disc = D.col(a, rev.discount) + (" / 100.0" if rev.discount_scale == 100 else "")
+                expr += f" * (1 - COALESCE({disc}, 0))"
+            return expr
+        if rev.kind == "amount":
+            return D.col(a, rev.amount)
+        return "1"
+
+    def revenue_formula(self) -> str:
+        rev = self.d.revenue
+        if rev.kind == "price_qty":
+            disc = f" × (1 − {rev.discount}{' / 100' if rev.discount_scale == 100 else ''})" if rev.discount else ""
+            source = f"{rev.price_rel.parent_table}." if rev.price_rel else ""
+            return f"{source}{rev.price} × {rev.quantity}{disc}"
+        if rev.kind == "amount":
+            return f"SUM({rev.amount})"
+        return "row count"
+
+    @property
+    def order_key(self) -> str:
+        return self.d.order_key or "row_num"
+
+    @property
+    def customer_col(self) -> str | None:
+        return self.d.customer[1] if self.d.customer else None
+
+    @property
+    def date_col(self) -> str | None:
+        return self.d.date[1] if self.d.date else None
+
+    def period_select(self, D: Dialect, expr: str) -> list[str]:
+        d = self.d
+        cols = [f"{D.year(expr)} AS {d.year_col}"]
+        if d.number_col:
+            cols.append(f"{D.period(d.period, expr)} AS {d.number_col}")
+        return cols
+
+    def period_where(self, p: Period, prefix: str = "") -> str:
+        d = self.d
+        cond = f"{prefix}{d.year_col} = {p.year}"
+        if d.number_col:
+            cond = f"({cond} AND {prefix}{d.number_col} = {p.number})"
+        return cond
+
+    def period_order(self, prefix: str = "") -> str:
+        return ", ".join(prefix + c for c in self.d.period_cols)
+
+    def partial_case(self) -> str | None:
+        parts = [self.period_where(p) for p in self.d.partial_periods]
+        if not parts:
+            return None
+        return f"CASE WHEN {' OR '.join(parts)} THEN 'partial' ELSE 'complete' END AS period_status"
+
+    def rating_expr(self, D: Dialect, a: str) -> str | None:
+        r = self.d.rating
+        if r is None:
+            return None
+        if not r.scale:
+            return D.col(a, r.name)
+        whens = "\n".join(f"            WHEN {D.literal(label)} THEN {score}" for label, score in r.scale)
+        return f"CASE {D.col(a, r.name)}\n{whens}\n       END"
+
+    def dim_expr(self, D: Dialect, dim: Dimension, alias: str) -> str:
+        col = D.col(alias, dim.column)
+        if self.p.col(dim.table, dim.column).logical_type != "text":
+            col = D.as_text(col)
+        return f"COALESCE({col}, 'Unknown') AS {D.ident(dim.alias)}"
+
+    def joins_for(self, D: Dialect, paths: list[tuple[Relationship, ...]], start_alias: dict[str, str]) -> tuple[list[str], dict[str, str]]:
+        """LEFT JOIN clauses following foreign-key paths (each table joined once). Returns (clauses, table -> alias)."""
+        clauses, where = [], dict(start_alias)
+        for path in paths:
+            for r in path:
+                if r.parent_table in where:
+                    continue
+                child = where.get(r.child_table)
+                if child is None:
+                    break
+                pa = self.alias(r.parent_table)
+                cond = f"{D.col(pa, r.parent_col)} = {D.col(child, r.child_col)}"
+                if r.type_mismatch:
+                    cond = f"{D.as_text(D.col(pa, r.parent_col))} = {D.as_text(D.col(child, r.child_col))}"
+                clauses.append(f"LEFT   JOIN {self.src(D, r.parent_table)} {pa} ON {cond}")
+                where[r.parent_table] = pa
+        return clauses, where
+
+    def label_col(self) -> tuple[str, str] | None:
+        """(table, column) of the item label used by top-N, and its alias in the views."""
+        if not self.d.item:
+            return None
+        table, label, _ = self.d.item
+        return table, label
+
+
+# ═════════════════════════════════════════════════════════════════════════
+# 1 · Schema & grain
+# ═════════════════════════════════════════════════════════════════════════
+def _topological(d: Decision) -> list[str]:
+    parents = {t: {r.parent_table for r in d.schema.accepted if r.child_table == t and r.parent_table != t} for t in d.profile.tables}
+    out, seen = [], set()
+
+    def visit(t: str, stack: tuple = ()):
+        if t in seen or t in stack:
+            return
+        for p in sorted(parents[t]):
+            visit(p, stack + (t,))
+        seen.add(t)
+        out.append(t)
+    for t in d.profile.tables:
+        visit(t)
+    return out
+
+
+def _ddl(b: Builder, D: Dialect, table: str) -> str:
+    d, t = b.d, b.p[table]
+    money = {"price", "amount", "charge"}
+    fk_cols = {r.child_col: r for r in d.schema.accepted if r.child_table == table}
+    lines = []
+    width = max(len(D.ident(c.name)) for c in t.columns)
+    for c in t.columns:
+        big = c.logical_type == "integer" and c.maximum is not None and abs(float(c.maximum)) > 2_147_483_647
+        key = c.name in t.primary_key or c.name in fk_cols
+        typ = D.type_name(c.logical_type, max_len=c.max_len, scale=2 if c.kind in money else 4, big=big, key=key)
+        if key and c.logical_type == "integer" and not big:
+            # a foreign key must have exactly the type of the key it points at
+            r = fk_cols.get(c.name)
+            if r is not None:
+                pc = b.p.col(r.parent_table, r.parent_col)
+                if pc.logical_type == "integer" and pc.maximum is not None and abs(float(pc.maximum)) > 2_147_483_647:
+                    typ = D.type_name("integer", big=True)
+        if c.logical_type == "text" and key:
+            r = fk_cols.get(c.name)
+            length = max(c.max_len, b.p.col(r.parent_table, r.parent_col).max_len if r else 0)
+            typ = D.type_name("text", max_len=length, key=True)
+        if c.name in t.primary_key and c.logical_type == "text":
+            longest = max([c.max_len] + [b.p.col(r.child_table, r.child_col).max_len for r in d.schema.accepted
+                                         if r.parent_table == table and r.parent_col == c.name])
+            typ = D.type_name("text", max_len=longest, key=True)
+        null = " NOT NULL" if c.n_null == 0 and c.n_rows else ""
+        lines.append(f"    {D.ident(c.name).ljust(width)}  {typ}{null}")
+    if t.key_status in ("single", "composite"):
+        lines.append(f"    PRIMARY KEY ({', '.join(D.ident(k) for k in t.primary_key)})")
+    elif t.key_status == "intended":
+        lines.append(f"    -- PRIMARY KEY ({', '.join(t.primary_key)}) is not declared: it has duplicates (see the duplicates step)")
+    for r in d.schema.accepted:
+        if r.child_table != table:
+            continue
+        parent = b.p[r.parent_table]
+        if parent.key_status not in ("single",) or r.orphan_rows:
+            why = "has orphan rows (see the orphans step)" if r.orphan_rows else f"{r.parent_table} has no unique key"
+            lines.append(f"    -- FOREIGN KEY ({r.child_col}) REFERENCES {r.parent_table} ({r.parent_col}): not declared, {why}")
+            continue
+        lines.append(f"    FOREIGN KEY ({D.ident(r.child_col)}) REFERENCES {D.ident(r.parent_table)} ({D.ident(r.parent_col)})")
+    body = ",\n".join(l for l in lines if not l.lstrip().startswith("--"))
+    comments = "\n".join(l for l in lines if l.lstrip().startswith("--"))
+    return f"CREATE TABLE {D.ident(table)} (\n{body}{chr(10) + comments if comments else ''}\n)"
+
+
+def _schema_cell(b: Builder) -> Cell:
+    d = b.d
+    order = _topological(d)
+    statements = [stmt(f"create_{t}", f"`{t}`: {b.p[t].grain}", lambda D, t=t: _ddl(b, D, t), run="scratch") for t in order]
+    n_fk = sum(1 for r in d.schema.accepted)
+    story = Step(
+        "schema",
+        f"There are {len(order)} tables and {n_fk} trusted relationship(s) between them.",
+        "A schema written down as CREATE TABLE statements, with its primary and foreign keys, is the map every later query relies on. "
+        "It also documents types: dates as DATE, money as DECIMAL, codes as text so leading zeros survive.",
+        "We write the CREATE TABLE statements, parents first, and test them on an empty database, so that the keys are declared exactly as the data supports.",
+        "One CREATE TABLE per table, in an order where every referenced table already exists. Types come from the data "
+        "(text length rounded up, NOT NULL when no value is missing). PRIMARY KEY is the key found during profiling; FOREIGN KEY "
+        "is declared only for trusted links with no orphans. In the app the statements run on an empty database, as a syntax check.",
+    )
+    check = fill('''
+        metrics["tables"] = <<n>>
+        metrics["foreign_keys"] = <<fk>>
+        note(f"All <<n>> CREATE TABLE statements ran on an empty database, with <<pk>> primary key(s) and <<fk_declared>> foreign key(s) declared.")
+    ''', n=len(order), fk=n_fk, pk=sum(1 for t in order if b.p[t].key_status in ("single", "composite")),
+        fk_declared=sum(1 for r in d.schema.accepted if b.p[r.parent_table].key_status == "single" and not r.orphan_rows))
+    return Cell("schema", "Write down the schema", SECTIONS[1], story, tuple(statements), check)
+
+
+def _key_count(D: Dialect, b: Builder, table: str) -> str:
+    t = b.p[table]
+    if len(t.primary_key) == 1:
+        return f"COUNT(DISTINCT {D.ident(t.primary_key[0])})"
+    cols = ", ".join(D.ident(k) for k in t.primary_key) if t.primary_key else "*"
+    return f"(SELECT COUNT(*) FROM (SELECT DISTINCT {cols} FROM {D.ident(table)}) k)"
+
+
+def _grain_cell(b: Builder) -> Cell:
+    def sql(D: Dialect) -> str:
+        parts = []
+        for t in b.p.tables.values():
+            keys = t.primary_key
+            null_test = " OR ".join(f"{D.ident(k)} IS NULL" for k in keys) if keys else "1 = 0"
+            label = " + ".join(keys) if keys else "(whole row)"
+            parts.append(fill('''
+                SELECT <<name>> AS table_name,
+                       <<key>> AS key_columns,
+                       COUNT(*) AS row_count,
+                       <<distinct>> AS distinct_keys,
+                       SUM(CASE WHEN <<nulls>> THEN 1 ELSE 0 END) AS null_keys
+                FROM   <<table>>''', name=D.literal(t.name), key=D.literal(label), distinct=_key_count(D, b, t.name),
+                                     nulls=null_test, table=D.ident(t.name)))
+        return union_all(parts)
+
+    story = Step(
+        "grain",
+        "Profiling found a key for each table: " + "; ".join(f"`{t.name}`: {t.grain}" for t in list(b.p.tables.values())[:4])
+        + ("…" if len(b.p.tables) > 4 else "") + ".",
+        "If a key is really unique, COUNT(*) equals the number of distinct keys. If not, every join on it multiplies rows. "
+        "COUNT(DISTINCT key) ignores NULLs, so empty keys are counted separately.",
+        "We compare rows with distinct keys in every table, so that the grain is proven by SQL, not assumed.",
+        "For each table: COUNT(*), the number of distinct key values (for a two-column key, the number of distinct pairs), and "
+        "how many rows have an empty key. One SELECT per table, stacked with UNION ALL.",
+    )
+    check = fill('''
+        bad = result[(result["row_count"] != result["distinct_keys"]) | (result["null_keys"] > 0)]
+        metrics["grain_ok"] = bad.empty
+        for row in result.itertuples():
+            ok = row.row_count == row.distinct_keys and row.null_keys == 0
+            metrics.setdefault("grain", {})[row.table_name] = {"rows": int(row.row_count), "distinct": int(row.distinct_keys), "ok": bool(ok)}
+        if bad.empty:
+            note(f"Every key is unique and never empty: in all {len(result)} tables, COUNT(*) equals the number of distinct keys.")
+        for row in bad.itertuples():
+            note(f"`{row.table_name}`: {int(row.row_count):,} rows but {int(row.distinct_keys):,} distinct `{row.key_columns}` "
+                 f"and {int(row.null_keys):,} empty key(s). Joins on this key will repeat rows until it is de-duplicated.")
+    ''')
+    return Cell("grain", "Prove the grain", SECTIONS[1], story, (stmt("grain", "Rows vs distinct keys per table", sql),), check)
+
+
+def _cardinality_cell(b: Builder) -> Cell:
+    d = b.d
+    rels = [r for r in d.schema.accepted]
+
+    def per_parent(D: Dialect) -> str:
+        parts = []
+        for r in rels:
+            pk, fk = D.ident(r.parent_col), D.ident(r.child_col)
+            cond = f"c.{fk} = p.{pk}" if not r.type_mismatch else f"{D.as_text('c.' + fk)} = {D.as_text('p.' + pk)}"
+            parts.append(fill('''
+                SELECT <<label>> AS relationship,
+                       COUNT(*) AS parents,
+                       SUM(CASE WHEN children > 0 THEN 1 ELSE 0 END) AS parents_with_children,
+                       MIN(children) AS min_children,
+                       <<avg>> AS avg_children,
+                       MAX(children) AS max_children
+                FROM   (SELECT p.<<pk>>, COUNT(c.<<fk>>) AS children
+                        FROM   <<parent>> p
+                        LEFT   JOIN <<child>> c ON <<cond>>
+                        GROUP  BY p.<<pk>>) per_parent''',
+                label=D.literal(f"{r.child_table}.{r.child_col} -> {r.parent_table}"), avg=D.round("AVG(children)", 2),
+                pk=pk, fk=fk, parent=D.ident(r.parent_table), child=D.ident(r.child_table), cond=cond))
+        return union_all(parts)
+
+    statements = [stmt("cardinality", "Child rows per parent row, for every relationship", per_parent)]
+    for i, f in enumerate(d.fanouts[:2]):
+        r = next(x for x in d.schema.accepted if x.parent_table == f.parent_table and x.child_table == f.child_table and x.child_col == f.via)
+
+        def fan(D: Dialect, f=f, r=r) -> str:
+            pa, ca = b.alias(f.parent_table), b.alias(f.child_table)
+            if pa == ca:
+                ca = ca + "2"
+            return fill('''
+                -- <<col>> is stored once per <<parent>> row; joining <<child>> repeats it on every <<child>> row.
+                SELECT (SELECT SUM(<<colq>>) FROM <<parentq>>) AS total_counted_once,
+                       (SELECT SUM(<<pa>>.<<colq>>)
+                        FROM   <<parentq>> <<pa>>
+                        JOIN   <<childq>> <<ca>> ON <<ca>>.<<fk>> = <<pa>>.<<pk>>) AS total_after_join''',
+                        col=f.column, parent=f.parent_table, child=f.child_table, colq=D.ident(f.column), parentq=D.ident(f.parent_table),
+                        childq=D.ident(f.child_table), pa=pa, ca=ca, fk=D.ident(r.child_col), pk=D.ident(r.parent_col))
+        statements.append(stmt(f"fanout_{i + 1}", f"Fan-out demo: `{f.parent_table}.{f.column}` before and after joining `{f.child_table}`", fan))
+    first = d.fanouts[0] if d.fanouts else None
+    story = Step(
+        "cardinality",
+        f"There are {len(rels)} trusted relationship(s)" + (f", and `{first.parent_table}.{first.column}` sits on the 'one' side of a one-to-many join" if first else "") + ".",
+        "A 1:N join repeats every parent row once per child. Anything stored on the parent (freight, a budget, a target) is then summed several times: "
+        "the classic fan-out that silently inflates totals.",
+        "We measure children per parent for every link" + (f" and show `{first.column}` summed before and after the join" if first else "")
+        + ", so that the size of the trap is visible in your own numbers.",
+        "For each relationship, a LEFT JOIN from parent to child counts the children of every parent (0 when none), then MIN / AVG / MAX "
+        "summarise them. The fan-out demo sums the parent column once per parent, and again after an inner join to the child table.",
+    )
+    check = fill('''
+        rel = outputs["cardinality"]
+        for row in rel.itertuples():
+            kind = "1:1" if row.max_children <= 1 else "1:N"
+            metrics.setdefault("cardinality", {})[row.relationship] = {"kind": kind, "max": int(row.max_children), "avg": float(row.avg_children)}
+        widest = rel.sort_values("max_children", ascending=False).iloc[0]
+        note(f"Widest join: `{widest.relationship}`, up to {int(widest.max_children):,} child rows for one parent "
+             f"({float(widest.avg_children):.2f} on average; {int(widest.parents - widest.parents_with_children):,} parent(s) have none).")
+        for label, name in <<fans>>:
+            row = outputs[label].iloc[0]
+            once, joined = float(row.total_counted_once), float(row.total_after_join)
+            factor = joined / once if once else float("nan")
+            metrics.setdefault("fanout", {"column": name, "total": once, "joined": joined, "factor": factor})
+            note(f"**Fan-out:** `{name}` totals **{once:,.2f}** counted once, but **{joined:,.2f}** after the join "
+                 f"({factor:.2f}× too high). It must be summed before joining, or at its own grain.")
+    ''', fans=repr([(f"fanout_{i + 1}", f"{f.parent_table}.{f.column}") for i, f in enumerate(d.fanouts[:2])]))
+    return Cell("cardinality", "Join cardinality and fan-out", SECTIONS[1], story, tuple(statements), check)
+
+
+# ═════════════════════════════════════════════════════════════════════════
+# 2 · Validate
+# ═════════════════════════════════════════════════════════════════════════
+def _duplicates_cell(b: Builder) -> Cell:
+    p = b.p
+
+    def summary(D: Dialect) -> str:
+        parts = []
+        for t in p.tables.values():
+            if t.primary_key:
+                cols = ", ".join(D.ident(k) for k in t.primary_key)
+                not_null = " AND ".join(f"{D.ident(k)} IS NOT NULL" for k in t.primary_key)
+                label = " + ".join(t.primary_key)
+            elif len(t.columns) <= 40:
+                cols = ", ".join(D.ident(c.name) for c in t.columns)
+                not_null, label = "1 = 1", "(whole row)"
+            else:
+                continue
+            parts.append(fill('''
+                SELECT <<name>> AS table_name,
+                       <<label>> AS checked_columns,
+                       COUNT(*) AS duplicated_values,
+                       COALESCE(SUM(copies - 1), 0) AS extra_rows
+                FROM   (SELECT <<cols>>, COUNT(*) AS copies
+                        FROM   <<table>>
+                        WHERE  <<nn>>
+                        GROUP  BY <<cols>>
+                        HAVING COUNT(*) > 1) dup''', name=D.literal(t.name), label=D.literal(label), cols=cols,
+                                                     table=D.ident(t.name), nn=not_null))
+        return union_all(parts)
+
+    statements = [stmt("duplicates", "Duplicated keys per table (GROUP BY … HAVING COUNT(*) > 1)", summary)]
+    for t in p.tables.values():
+        if t.duplicate_keys and t.primary_key:
+            def listing(D: Dialect, t=t) -> str:
+                cols = ", ".join(D.ident(k) for k in t.primary_key)
+                return fill('''
+                    SELECT <<cols>>, COUNT(*) AS copies
+                    FROM   <<table>>
+                    WHERE  <<nn>>
+                    GROUP  BY <<cols>>
+                    HAVING COUNT(*) > 1
+                    ORDER  BY copies DESC, <<cols>>
+                    LIMIT  <<n>>''', cols=cols, table=D.ident(t.name), n=DISPLAY_LIMIT,
+                            nn=" AND ".join(f"{D.ident(k)} IS NOT NULL" for k in t.primary_key))
+            statements.append(stmt(f"duplicates_{t.name}", f"The most repeated keys in `{t.name}`", listing))
+    found = [t for t in p.tables.values() if t.duplicate_keys]
+    story = Step(
+        "duplicates",
+        ("Profiling found repeated keys in " + _names([t.name for t in found]) + ".") if found else
+        "Profiling found no repeated key, but a profile is only as good as the query behind it.",
+        "A duplicated key is either a double-loaded row or a sign that the table's grain is finer than it looks. Either way it inflates every count and sum that joins to it.",
+        "We list duplicated keys with GROUP BY … HAVING COUNT(*) > 1, so that each one can be traced back to the source.",
+        "Groups each table by its key and keeps only the groups with more than one row; a table without a key is grouped by all of its "
+        "columns, which finds exact copies. The summary counts the duplicated values and the extra rows they add.",
+    )
+    check = fill('''
+        dup = outputs["duplicates"]
+        metrics["duplicate_keys"] = {row.table_name: int(row.duplicated_values) for row in dup.itertuples()}
+        bad = dup[dup["duplicated_values"] > 0]
+        if bad.empty:
+            note("No duplicates: every key value appears exactly once in its table.")
+        for row in bad.itertuples():
+            note(f"`{row.table_name}`: {int(row.duplicated_values):,} `{row.checked_columns}` value(s) repeat, adding "
+                 f"{int(row.extra_rows):,} extra row(s). The analysis keeps one row per key with ROW_NUMBER().")
+    ''')
+    return Cell("duplicates", "Find duplicates", SECTIONS[2], story, tuple(statements), check)
+
+
+def _nulls_cell(b: Builder) -> Cell:
+    p = b.p
+    total = sum(len(t.columns) for t in p.tables.values())
+    only_gappy = total > MAX_NULL_COLUMNS
+
+    def sql(D: Dialect) -> str:
+        parts = []
+        for t in p.tables.values():
+            for c in t.columns:
+                if only_gappy and c.n_null == 0:
+                    continue
+                parts.append(f"SELECT {D.literal(t.name)} AS table_name, {D.literal(c.name)} AS column_name, "
+                             f"COUNT(*) AS row_count, COUNT(*) - COUNT({D.ident(c.name)}) AS null_rows FROM {D.ident(t.name)}")
+        if not parts:
+            t = next(iter(p.tables.values()))
+            parts.append(f"SELECT {D.literal(t.name)} AS table_name, {D.literal('(none)')} AS column_name, COUNT(*) AS row_count, "
+                         f"0 AS null_rows FROM {D.ident(t.name)}")
+        head = ("-- Only the columns that had NULLs when the data was profiled; add the others back to re-check new data.\n"
+                if only_gappy else "")
+        return head + "\nUNION ALL\n".join(parts)
+
+    gappy = sorted((c for t in p.tables.values() for c in t.columns if c.n_null), key=lambda c: -c.null_frac)
+    story = Step(
+        "nulls",
+        (f"{len(gappy)} column(s) have empty values, e.g. " + ", ".join(f"`{c.table}.{c.name}` ({c.null_frac:.0%})" for c in gappy[:3]) + ".")
+        if gappy else "No column has empty values.",
+        "NULL means unknown. COUNT(col), SUM and AVG silently skip it, so an average over a gappy column describes fewer rows than you think, "
+        "and a NULL foreign key drops the row from an inner join.",
+        "We count NULLs in every column, so that every average and join later can be read with the right caveat.",
+        "For every column: COUNT(*) − COUNT(column). COUNT(*) counts rows; COUNT(column) counts only rows where the column has a value, "
+        "so the difference is the number of NULLs. One line per column, stacked with UNION ALL.",
+    )
+    check = fill('''
+        nulls = result.assign(null_pct=100 * result["null_rows"] / result["row_count"].clip(lower=1))
+        gappy = nulls[nulls["null_rows"] > 0].sort_values("null_pct", ascending=False)
+        metrics["nulls"] = {f"{r.table_name}.{r.column_name}": round(float(r.null_pct), 1) for r in gappy.itertuples()}
+        if gappy.empty:
+            note("No NULLs anywhere: every column is filled in every row.")
+        else:
+            top = gappy.head(12).iloc[::-1]
+            plt.figure(figsize=(8, max(2.5, 0.35 * len(top))))
+            plt.barh(top["table_name"] + "." + top["column_name"], top["null_pct"], color="#0071e3")
+            plt.xlabel("% of rows empty"); plt.title("Columns with NULLs")
+            plt.tight_layout(); plt.show()
+            note(f"{len(gappy)} column(s) have NULLs. Most empty: " + ", ".join(
+                f"`{r.table_name}.{r.column_name}` {r.null_pct:.1f}%" for r in gappy.head(3).itertuples()) + ".")
+        for table, col, meaning in <<watch>>:
+            row = nulls[(nulls["table_name"] == table) & (nulls["column_name"] == col)]
+            if len(row) and int(row["null_rows"].iloc[0]):
+                note(f"`{table}.{col}` is empty in {int(row['null_rows'].iloc[0]):,} row(s): {meaning}")
+    ''', watch=repr(_null_watch(b)))
+    return Cell("nulls", "Profile NULLs", SECTIONS[2], story, (stmt("nulls", "NULLs per column: COUNT(*) − COUNT(column)", sql),), check)
+
+
+def _null_watch(b: Builder) -> list[tuple[str, str, str]]:
+    d, out = b.d, []
+    if d.lead:
+        out.append((d.lead[0], d.lead[2], f"those orders have no {d.lead_name}, so AVG({d.lead_name}) leaves them out."))
+    if d.rating:
+        out.append((d.rating.table, d.rating.name, "those orders have no rating, so the average rating describes only rated orders."))
+    for r in d.schema.accepted:
+        if r.child_nulls:
+            out.append((r.child_table, r.child_col, f"those rows have no `{r.parent_table}` row, so an INNER JOIN would drop them."))
+    return out
+
+
+def _date_range_cell(b: Builder) -> Cell:
+    d, p = b.d, b.p
+    dates = [(t.name, c) for t in p.tables.values() for c in t.by_role("datetime")]
+
+    def ranges(D: Dialect) -> str:
+        return union_all([fill('''
+            SELECT <<t>> AS table_name, <<c>> AS column_name,
+                   MIN(<<col>>) AS earliest, MAX(<<col>>) AS latest,
+                   COUNT(*) - COUNT(<<col>>) AS null_rows
+            FROM   <<table>>''', t=D.literal(t), c=D.literal(c.name), col=D.ident(c.name), table=D.ident(t)) for t, c in dates])
+
+    statements = [stmt("date_ranges", "Earliest and latest value of every date column", ranges)]
+    if d.date and d.period:
+        table, col = d.date
+
+        def per_period(D: Dialect) -> str:
+            cq = D.ident(col)
+            sel = b.period_select(D, cq)
+            group = [D.year(cq)] + ([D.period(d.period, cq)] if d.number_col else [])
+            return fill('''
+                SELECT <<sel>>,
+                       COUNT(*) AS row_count,
+                       MIN(<<c>>) AS first_date,
+                       MAX(<<c>>) AS last_date
+                FROM   <<t>>
+                WHERE  <<c>> IS NOT NULL
+                GROUP  BY <<group>>
+                ORDER  BY <<order>>''', sel=",\n       ".join(sel), c=cq, t=D.ident(table), group=", ".join(group), order=b.period_order())
+        statements.append(stmt("periods", f"Rows per {d.period}, with the first and last date seen", per_period))
+    if d.lead:
+        table, start, end = d.lead
+
+        def lead(D: Dialect) -> str:
+            days = D.days_between(D.ident(start), D.ident(end), _lead_is_timestamp(b))
+            return fill('''
+                SELECT COUNT(*) AS row_count,
+                       COUNT(<<e>>) AS with_<<end>>,
+                       SUM(CASE WHEN <<e>> < <<s>> THEN 1 ELSE 0 END) AS before_<<start>>,
+                       SUM(CASE WHEN <<days>> > 365 THEN 1 ELSE 0 END) AS over_a_year,
+                       MIN(<<days>>) AS min_days,
+                       MAX(<<days>>) AS max_days
+                FROM   <<t>>''', e=D.ident(end), s=D.ident(start), end=end, start=start, days=days, t=D.ident(table))
+        statements.append(stmt("lead_sanity", f"Is `{end}` ever before `{start}`, or implausibly late?", lead))
+    for table, col, unit in d.date_parts:
+        base = d.date[1] if d.date and d.date[0] == table else p[table].by_role("datetime")[0].name
+
+        def parts(D: Dialect, table=table, col=col, unit=unit, base=base) -> str:
+            derived = {"year": D.year, "quarter": D.quarter, "month": D.month}[unit](D.ident(base))
+            return fill('''
+                SELECT COUNT(*) AS row_count,
+                       SUM(CASE WHEN <<c>> <> <<derived>> THEN 1 ELSE 0 END) AS mismatched
+                FROM   <<t>>
+                WHERE  <<c>> IS NOT NULL AND <<b>> IS NOT NULL''', c=D.ident(col), derived=derived, t=D.ident(table), b=D.ident(base))
+        statements.append(stmt(f"part_{table}_{col}", f"Does the stored `{col}` agree with `{base}`?", parts))
+
+    partial = ", ".join(d.label(x) for x in d.partial_periods)
+    story = Step(
+        "date_range",
+        (f"`{d.date[0]}.{d.date[1]}` runs from {p.col(*d.date).minimum:%Y-%m-%d} to {p.col(*d.date).maximum:%Y-%m-%d}"
+         + (f"; {partial} is only partly covered" if partial else "") + ".") if d.date else
+        f"{len(dates)} date column(s) found.",
+        "An extract that stops mid-period makes the last period look like a collapse, and impossible dates (shipped before ordered, years in the future) "
+        "point at loading errors. Both must be caught before any trend is reported.",
+        "We check the earliest and latest date of every date column and count rows per period, so that partial periods are labelled instead of misread.",
+        "MIN and MAX per date column; then rows per period with the first and last date seen in each, so that the check below can tell how much "
+        "of each period the data covers" + ("; then shipping dates that come before the order or more than a year after it" if d.lead else "") + ".",
+    )
+    check = fill('''
+        import datetime as _dt
+        ranges = outputs["date_ranges"]
+        for row in ranges.itertuples():
+            metrics.setdefault("date_ranges", {})[f"{row.table_name}.{row.column_name}"] = (str(row.earliest)[:10], str(row.latest)[:10])
+        if "periods" not in outputs:
+            note("Date columns: " + "; ".join(f"`{r.table_name}.{r.column_name}` {str(r.earliest)[:10]} to {str(r.latest)[:10]}"
+                 + (f" ({int(r.null_rows):,} empty)" if r.null_rows else "") for r in ranges.itertuples()) + ".")
+        if "periods" in outputs:
+            per = outputs["periods"]
+            unit = <<unit>>
+            starts, ends = [], []
+            for row in per.itertuples(index=False):
+                year, number = int(row[0]), (int(row[1]) if unit != "year" else 1)
+                first_month = {"quarter": 3 * number - 2, "month": number, "year": 1}[unit]
+                start = _dt.date(year, first_month, 1)
+                end = (pd.Timestamp(start) + {"quarter": pd.offsets.QuarterEnd(0), "month": pd.offsets.MonthEnd(0),
+                                              "year": pd.offsets.YearEnd(0)}[unit]).date()
+                starts.append(start); ends.append(end)
+            per = per.assign(period_start=starts, period_end=ends)
+            first_seen = pd.to_datetime(per["first_date"]).dt.date
+            last_seen = pd.to_datetime(per["last_date"]).dt.date
+            covered = [((min(l, e) - max(f, s)).days + 1) / ((e - s).days + 1) if i in (0, len(per) - 1) else 1.0
+                       for i, (f, l, s, e) in enumerate(zip(first_seen, last_seen, per["period_start"], per["period_end"]))]
+            per = per.assign(coverage=covered)
+            label = (lambda r: f"{int(r.iloc[0])}-Q{int(r.iloc[1])}") if unit == "quarter" else \\
+                    (lambda r: f"{int(r.iloc[0])}-{int(r.iloc[1]):02d}") if unit == "month" else (lambda r: str(int(r.iloc[0])))
+            partial = [label(r) for _, r in per.iterrows() if r["coverage"] < <<cov>>]
+            metrics["partial_periods"] = partial
+            metrics["periods_seen"] = len(per)
+            gaps = len(per) - len(set(starts))
+            span = f"{str(ranges['earliest'].min())[:10]} to {str(ranges['latest'].max())[:10]}"
+            note(f"{len(per)} {unit}s of data. " + (f"**Partial:** {', '.join(partial)} (less than {<<cov>>:.0%} of its days covered), so "
+                 "it is labelled and left out of period-over-period verdicts." if partial else "Every period is fully covered."))
+        if "lead_sanity" in outputs:
+            row = outputs["lead_sanity"].iloc[0]
+            metrics["negative_lead"] = int(row.iloc[2] or 0)
+            end_col, start_col = <<end>>, <<start>>
+            note(f"{int(row.iloc[2] or 0):,} row(s) where `{end_col}` is before `{start_col}`, {int(row.iloc[3] or 0):,} more than a year later; "
+                 f"lead times run from {row.min_days} to {row.max_days} days.")
+        for label in [k for k in outputs if k.startswith("part_")]:
+            row = outputs[label].iloc[0]
+            note(f"{label[5:]}: {int(row.mismatched or 0):,} row(s) disagree with the date they were derived from.")
+    ''', unit=repr(d.period or "quarter"), cov=0.9, end=repr(d.lead[2] if d.lead else ""), start=repr(d.lead[1] if d.lead else ""))
+    return Cell("date_range", "Date ranges and partial periods", SECTIONS[2], story, tuple(statements), check)
+
+
+def _orphans_cell(b: Builder) -> Cell:
+    d = b.d
+    rels = [r for r in d.schema.accepted if r.kind != "self"] + [r for r in d.schema.accepted if r.kind == "self"]
+
+    def cond(D: Dialect, r: Relationship) -> str:
+        if r.type_mismatch:
+            return f"{D.as_text('p.' + D.ident(r.parent_col))} = {D.as_text('c.' + D.ident(r.child_col))}"
+        return f"p.{D.ident(r.parent_col)} = c.{D.ident(r.child_col)}"
+
+    def summary(D: Dialect) -> str:
+        parts = []
+        for r in rels:
+            label = D.literal(f"{r.child_table}.{r.child_col} -> {r.parent_table}")
+            parts.append(fill('''
+                SELECT <<label>> AS relationship,
+                       'child rows with no parent' AS problem,
+                       COUNT(*) AS row_count
+                FROM   <<child>> c
+                LEFT   JOIN <<parent>> p ON <<cond>>
+                WHERE  p.<<pk>> IS NULL
+                  AND  c.<<fk>> IS NOT NULL''', label=label, child=D.ident(r.child_table), parent=D.ident(r.parent_table),
+                                               cond=cond(D, r), pk=D.ident(r.parent_col), fk=D.ident(r.child_col)))
+            parts.append(fill('''
+                SELECT <<label>>,
+                       'parents with no child rows (information)',
+                       COUNT(*)
+                FROM   <<parent>> p
+                WHERE  NOT EXISTS (SELECT 1 FROM <<child>> c WHERE <<cond>>)''', label=label, child=D.ident(r.child_table),
+                                                                              parent=D.ident(r.parent_table), cond=cond(D, r)))
+        return union_all(parts)
+
+    statements = [stmt("orphans", "Orphans in both directions, for every relationship", summary)]
+    worst = max(rels, key=lambda r: r.orphan_rows, default=None)
+    if worst is not None and worst.orphan_rows:
+        def missing(D: Dialect, r=worst) -> str:
+            return fill('''
+                SELECT DISTINCT c.<<fk>> AS missing_<<name>>
+                FROM   <<child>> c
+                LEFT   JOIN <<parent>> p ON <<cond>>
+                WHERE  p.<<pk>> IS NULL
+                  AND  c.<<fk>> IS NOT NULL
+                ORDER  BY 1
+                LIMIT  <<n>>''', fk=D.ident(r.child_col), name=r.child_col, child=D.ident(r.child_table), parent=D.ident(r.parent_table),
+                                 cond=cond(D, r), pk=D.ident(r.parent_col), n=DISPLAY_LIMIT)
+        statements.append(stmt("orphan_examples", f"Values of `{worst.child_table}.{worst.child_col}` with no `{worst.parent_table}` row", missing))
+    lonely = next((r for r in rels if r.childless_parents and r.kind != "self" and r.childless_parents < r.child_distinct + r.childless_parents), None)
+    if lonely is not None:
+        label = None
+        from .decision import label_column
+        label = label_column(b.p[lonely.parent_table])
+
+        def childless(D: Dialect, r=lonely, label=label) -> str:
+            cols = f"p.{D.ident(r.parent_col)}" + (f", p.{D.ident(label)}" if label and label != r.parent_col else "")
+            return fill('''
+                SELECT <<cols>>
+                FROM   <<parent>> p
+                WHERE  NOT EXISTS (SELECT 1 FROM <<child>> c WHERE <<cond>>)
+                ORDER  BY 1
+                LIMIT  <<n>>''', cols=cols, parent=D.ident(r.parent_table), child=D.ident(r.child_table), cond=cond(D, r), n=DISPLAY_LIMIT)
+        statements.append(stmt("childless_examples", f"`{lonely.parent_table}` rows that no `{lonely.child_table}` row points at", childless))
+    story = Step(
+        "orphans",
+        f"{len(rels)} trusted relationship(s); profiling counted {sum(r.orphan_rows for r in rels):,} orphan child row(s) in total.",
+        "An orphan (a child whose parent is missing) vanishes from every INNER JOIN, so revenue quietly drops. Parents without children are not errors, "
+        "but they matter for rates: a customer who never ordered still counts as a customer.",
+        "We count orphans in both directions with an anti-join, so that every join later can be trusted or its losses explained.",
+        "LEFT JOIN child to parent and keep the rows where the parent key came back NULL: those children have no parent. The second query "
+        "uses NOT EXISTS to find parents that no child points at. Both are anti-joins; NOT EXISTS is safe when the child column has NULLs.",
+    )
+    check = fill('''
+        orphans = outputs["orphans"]
+        bad = orphans[(orphans["problem"] == "child rows with no parent") & (orphans["row_count"] > 0)]
+        lonely = orphans[(orphans["problem"] != "child rows with no parent") & (orphans["row_count"] > 0)]
+        metrics["orphans"] = {r.relationship: int(r.row_count) for r in bad.itertuples()}
+        metrics["childless"] = {r.relationship: int(r.row_count) for r in lonely.itertuples()}
+        if bad.empty:
+            note("No orphans: every foreign key value points at an existing row, so no row will vanish from an inner join.")
+        for r in bad.itertuples():
+            note(f"`{r.relationship}`: **{int(r.row_count):,} orphan row(s)**. They are kept (LEFT JOIN, labelled 'Unknown') so that no revenue is lost.")
+        for r in lonely.itertuples():
+            note(f"`{r.relationship}`: {int(r.row_count):,} parent row(s) have no child rows.")
+        if "childless_examples" in outputs:
+            ex = outputs["childless_examples"]
+            note("For example: " + ", ".join(" / ".join(str(v) for v in row) for row in ex.head(5).itertuples(index=False)) + ".")
+    ''')
+    return Cell("orphans", "Find orphans", SECTIONS[2], story, tuple(statements), check)
+
+
+# ═════════════════════════════════════════════════════════════════════════
+# 3 · Build with CTEs: the analysis views
+# ═════════════════════════════════════════════════════════════════════════
+def _lead_is_timestamp(b: Builder) -> bool:
+    d = b.d
+    return bool(d.lead) and any(b.p.col(d.lead[0], c).logical_type == "timestamp" for c in d.lead[1:])
+
+
+def _order_facts_sql(b: Builder, D: Dialect) -> str:
+    """One row per order. Line-level facts are rolled up (CTEs) BEFORE order-level tables are joined."""
+    d, p = b.d, b.p
+    fact, fa = d.fact, b.alias(d.fact)
+    ha = b.alias(d.header) if d.header else None
+    order_dims = [dim for dim in d.dimensions if dim.level == "order"]
+    item = d.item if d.item and d.item[2].level == "order" else None
+    used = [fact] + ([d.header] if d.header else []) + [r.parent_table for dim in order_dims for r in dim.path]
+    if d.revenue.price_rel:
+        used.append(d.revenue.price_rel.parent_table)
+    ctes = b.dedupe_ctes(D, list(dict.fromkeys(used)))
+    ok = D.ident(b.order_key)
+    # order-level columns: (table, column). In a line-level fact without an order table they are taken per order with MIN().
+    order_cols = [x for x in ((d.customer and d.customer), d.date, (d.lead and (d.lead[0], d.lead[2])),
+                              (d.required and (d.lead[0], d.required)), (d.rating and (d.rating.table, d.rating.name))) if x]
+    in_fact = list(dict.fromkeys(c for t, c in order_cols if t == fact))
+
+    if d.line_level:
+        price_alias, price_join = None, ""
+        if d.revenue.price_rel:
+            r = d.revenue.price_rel
+            price_alias = b.alias(r.parent_table)
+            price_join = f"\n    LEFT   JOIN {b.src(D, r.parent_table)} {price_alias} ON {D.col(price_alias, r.parent_col)} = {D.col(fa, r.child_col)}"
+        line_cols = [D.col(fa, b.order_key), f"{b.line_revenue(D, fa, price_alias)} AS revenue"]
+        if d.revenue.quantity:
+            line_cols.append(f"{D.col(fa, d.revenue.quantity)} AS units")
+        line_cols += [D.col(fa, c) for c in in_fact]
+        ctes.append(fill('''
+            line_revenue AS (                -- 1) one row per <<fact>> line, with its revenue
+                SELECT <<cols>>
+                FROM   <<src>> <<fa>><<pj>>
+            )''', fact=fact, cols=",\n           ".join(line_cols), src=b.src(D, fact), fa=fa, pj=price_join))
+        totals = [ok, "SUM(revenue) AS revenue"] + (["SUM(units) AS units"] if d.revenue.quantity else []) + ["COUNT(*) AS line_count"]
+        totals += [f"MIN({D.ident(c)}) AS {D.ident(c)}" for c in in_fact]
+        note = ("\n    -- MIN(): order-level columns repeat on every line of an order (checked when reconciling)" if in_fact else "")
+        ctes.append(fill('''
+            order_totals AS (                -- 2) one row per order: roll the lines up BEFORE joining order-level tables<<note>>
+                SELECT <<cols>>
+                FROM   line_revenue
+                GROUP  BY <<ok>>
+            )''', cols=",\n           ".join(totals), ok=ok, note=note))
+        where = {fact: "t"}
+        from_lines = ["FROM   order_totals t"]
+        if d.header:
+            r = d.header_rel
+            from_lines.append(f"LEFT   JOIN {b.src(D, d.header)} {ha} ON {D.col(ha, r.parent_col)} = t.{ok}")
+            where[d.header] = ha
+    else:
+        joined = any(dim.path for dim in order_dims) or bool(item and d.customer_rel) or bool(d.revenue.price_rel)
+        where = {fact: fa if joined else None}
+        from_lines = [f"FROM   {b.src(D, fact)}" + (f" {fa}" if joined else "")]
+    paths = [tuple(r for r in dim.path if r is not d.header_rel) for dim in order_dims]
+    if item and d.customer_rel:
+        paths.append((d.customer_rel,))
+    if d.revenue.price_rel and not d.line_level:
+        paths.append((d.revenue.price_rel,))
+    joins, where = b.joins_for(D, paths, where)
+
+    def oc(table: str, col: str) -> str:
+        return D.col(where[table], col)
+
+    select = [f"t.{ok}" if d.line_level else oc(fact, b.order_key)] if d.order_key else []
+    if d.customer:
+        select.append(oc(*d.customer))
+    if d.date:
+        dq = oc(*d.date)
+        select += [dq] + b.period_select(D, dq)
+    if d.line_level:
+        select += ["t.revenue"] + (["t.units"] if d.revenue.quantity else []) + ["t.line_count"]
+    else:
+        if b.money:
+            price_alias = where.get(d.revenue.price_rel.parent_table) if d.revenue.price_rel else None
+            select.append(f"{b.line_revenue(D, where[fact], price_alias)} AS revenue")
+        if d.revenue.quantity:
+            select.append(f"{oc(fact, d.revenue.quantity)} AS units")
+    if d.header:
+        select += [D.col(ha, c.name) for c in p[d.header].by_role("measure") if c.kind in ("amount", "charge")]
+    if d.lead:
+        table, start, end = d.lead
+        select.append(f"{D.days_between(oc(table, start), oc(table, end), _lead_is_timestamp(b))} AS {d.lead_name}")
+        if d.required:
+            select.append(fill('''
+                CASE WHEN <<e>> IS NULL OR <<r>> IS NULL THEN NULL
+                            WHEN <<e>> > <<r>> THEN 1
+                            ELSE 0
+                       END AS shipped_late''', e=oc(table, end), r=oc(table, d.required)))
+    if d.rating:
+        rating = b.rating_expr(D, where[d.rating.table])
+        select.append(f"{rating} AS rating_score")
+
+    for dim in order_dims:
+        select.append(b.dim_expr(D, dim, where.get(dim.table, where[fact])))
+    if item:
+        table, label, _ = item
+        if table in where and label != (d.customer[1] if d.customer else None):
+            col = D.col(where[table], label)
+            if p.col(table, label).logical_type != "text":
+                col = D.as_text(col)
+            select.append(f"COALESCE({col}, 'Unknown') AS {D.ident(label)}")
+    head = f"-- Grain: one row per order (`{b.order_key}`)." if d.order_key else f"-- Grain: one row per `{fact}` row."
+    if d.line_level:
+        head += " Lines are rolled up BEFORE joining order-level tables, so nothing is repeated."
+    with_clause = ("WITH " + ",\n".join(c.strip() for c in ctes) + "\n") if ctes else ""
+    body = "SELECT " + ",\n       ".join(select) + "\n" + "\n".join(from_lines + joins)
+    return f"{head}\nCREATE OR REPLACE VIEW order_facts AS\n{with_clause}{body}"
+
+
+def _line_facts_sql(b: Builder, D: Dialect) -> str:
+    d, p = b.d, b.p
+    fact, fa = d.fact, b.alias(d.fact)
+    line_dims = [dim for dim in d.dimensions if dim.level == "line"]
+    item = d.item if d.item and d.item[2].level == "line" else None
+    tables = [fact] + ([d.header] if d.header else []) + [r.parent_table for dim in line_dims for r in dim.path]
+    if d.revenue.price_rel:
+        tables.append(d.revenue.price_rel.parent_table)
+    ctes = b.dedupe_ctes(D, list(dict.fromkeys(tables)))
+    start = {fact: fa}
+    paths = []
+    if d.header:
+        paths.append((d.header_rel,))
+    if d.revenue.price_rel:
+        paths.append((d.revenue.price_rel,))
+    paths += [dim.path for dim in line_dims]
+    if item:
+        paths.append(item[2].path[:-1] if len(item[2].path) >= 2 else item[2].path)
+    joins, where = b.joins_for(D, paths, start)
+    order_alias = where.get(d.header, fa) if d.header else fa
+    price_alias = where.get(d.revenue.price_rel.parent_table) if d.revenue.price_rel else None
+    select = [D.col(fa, b.order_key)]
+    select += [D.col(fa, k) for k in p[fact].primary_key if k != b.order_key]
+    if d.customer:
+        select.append(D.col(order_alias if d.customer[0] == d.header else fa, d.customer[1]))
+    if d.date:
+        dq = D.col(order_alias if d.date[0] == d.header else fa, d.date[1])
+        select += [dq] + b.period_select(D, dq)
+    select.append(f"{b.line_revenue(D, fa, price_alias)} AS revenue")
+    if d.revenue.quantity:
+        select.append(f"{D.col(fa, d.revenue.quantity)} AS units")
+    if item:
+        table, label, _ = item
+        col = D.col(where.get(table, fa), label)
+        if p.col(table, label).logical_type != "text":
+            col = D.as_text(col)
+        select.append(f"COALESCE({col}, 'Unknown') AS {D.ident(label)}")
+    for dim in line_dims:
+        select.append(b.dim_expr(D, dim, where.get(dim.table, fa)))
+    with_clause = ("WITH " + ",\n".join(c.strip() for c in ctes) + "\n") if ctes else ""
+    body = "SELECT " + ",\n       ".join(select) + "\n" + "\n".join([f"FROM   {b.src(D, fact)} {fa}"] + joins)
+    return (f"-- Grain: one row per {fact} line. Use it for product-level questions; use order_facts for order-level KPIs.\n"
+            f"CREATE OR REPLACE VIEW line_facts AS\n{with_clause}{body}")
+
+
+def _base_cell(b: Builder) -> Cell:
+    d = b.d
+    statements = [stmt("order_facts", "View `order_facts`: one row per order", lambda D: _order_facts_sql(b, D))]
+    if d.line_level:
+        statements.append(stmt("line_facts", "View `line_facts`: one row per line", lambda D: _line_facts_sql(b, D)))
+
+    def preview(D: Dialect) -> str:
+        cols = ([D.ident(b.date_col)] if b.date_col else []) + ([D.ident(d.order_key)] if d.order_key else [])
+        return f"SELECT *\nFROM   order_facts\nORDER  BY {', '.join(cols) or '1'}\nLIMIT  5"
+    statements.append(stmt("preview", "The first five rows of `order_facts`", preview))
+    joined = sorted({r.parent_table for dim in d.dimensions for r in dim.path} | ({d.header} if d.header else set()))
+    story = Step(
+        "base",
+        f"The revenue formula ({b.revenue_formula()}), the order grain and the tables to join ({_names(joined) or 'none'}) are known.",
+        "Writing every KPI from raw tables repeats the same joins and invites the same mistakes each time. One tested view per grain fixes them once.",
+        "We build " + ("two views, `order_facts` (one row per order) and `line_facts` (one row per line)," if d.line_level else "the view `order_facts`")
+        + " from small CTEs that each do one job, so that every later query starts from checked, business-named columns.",
+        ("`line_revenue` computes revenue per line; `order_totals` rolls lines up to one row per order; the final SELECT joins the order table "
+         "and dimension tables with LEFT JOIN (so nothing is dropped; a missing match becomes 'Unknown'), and adds the period columns"
+         + (f", {d.lead_name}" if d.lead else "") + (" and shipped_late" if d.required else "") + ". `line_facts` keeps one row per line for product questions."
+         if d.line_level else
+         "One SELECT over the fact table adds revenue, the period columns" + (f", {d.lead_name}" if d.lead else "")
+         + " and the dimensions (LEFT JOIN, so nothing is dropped)."),
+    )
+    check = fill('''
+        preview = outputs["preview"]
+        note(f"`order_facts` has these columns: " + ", ".join(f"`{c}`" for c in preview.columns) + ".")
+    ''')
+    return Cell("base", "Build the analysis views", SECTIONS[3], story, tuple(statements), check)
+
+
+def _reconcile_cell(b: Builder) -> Cell:
+    d = b.d
+    fact, fa = d.fact, b.alias(d.fact)
+
+    def totals(D: Dialect) -> str:
+        okq = D.ident(b.order_key)
+        price_join = ""
+        price_alias = None
+        if d.revenue.price_rel:
+            r = d.revenue.price_rel
+            price_alias = b.alias(r.parent_table)
+            price_join = f"\nLEFT   JOIN {D.ident(r.parent_table)} {price_alias} ON {D.col(price_alias, r.parent_col)} = {D.col(fa, r.child_col)}"
+        src_rows = "COUNT(*)"
+        src_orders = f"COUNT(DISTINCT {D.col(fa, b.order_key)})" if d.order_key else "COUNT(*)"
+        fact_part = fill('''
+            SELECT <<label>> AS computed_from,
+                   <<rows>> AS rows_read,
+                   <<orders>> AS orders,
+                   <<rev>> AS revenue
+            FROM   <<t>> <<fa>><<pj>>''', label=D.literal(f"{fact} (raw table" + (", before de-duplication)" if fact in d.dedupe else ")")),
+                                      rows=src_rows, orders=src_orders, rev=D.round(f"SUM({b.line_revenue(D, fa, price_alias)})", 2),
+                                      t=D.ident(fact), fa=fa, pj=price_join)
+        lines = "SUM(line_count)" if d.line_level else "COUNT(*)"
+        parts = [fact_part, fill('''
+            SELECT 'order_facts (one row per order)',
+                   <<lines>>,
+                   COUNT(*),
+                   <<rev>>
+            FROM   order_facts''', lines=lines, rev=D.round("SUM(revenue)", 2))]
+        if d.line_level:
+            parts.append(fill('''
+                SELECT 'line_facts (one row per line)',
+                       COUNT(*),
+                       COUNT(DISTINCT <<ok>>),
+                       <<rev>>
+                FROM   line_facts''', ok=okq, rev=D.round("SUM(revenue)", 2)))
+        return union_all(parts)
+
+    statements = [stmt("totals", "The same totals computed from the raw table and from each view", totals)]
+    rev = d.revenue
+    if rev.kind == "price_qty" and rev.discount and not rev.price_rel:
+        def gross(D: Dialect) -> str:
+            g = f"{D.col(fa, rev.price)} * {D.col(fa, rev.quantity)}"
+            return fill('''
+                SELECT <<g>> AS gross_revenue,
+                       <<n>> AS net_revenue,
+                       <<x>> AS discount_given
+                FROM   <<t>> <<fa>>''', g=D.round(f"SUM({g})", 2), n=D.round(f"SUM({b.line_revenue(D, fa)})", 2),
+                                        x=D.round(f"SUM({g} - {b.line_revenue(D, fa)})", 2), t=D.ident(fact), fa=fa)
+        statements.append(stmt("gross_net", "Gross vs net revenue (the formula is net of discount)", gross))
+    if rev.kind == "price_qty" and not rev.price_rel:
+        list_price = next(((r, c) for r in d.schema.parents(fact) for c in b.p[r.parent_table].by_role("measure")
+                           if c.kind == "price" and "price" in c.name), None)
+        if list_price:
+            r, c = list_price
+
+            def differs(D: Dialect, r=r, c=c) -> str:
+                pa = b.alias(r.parent_table)
+                return fill('''
+                    SELECT COUNT(*) AS line_rows,
+                           SUM(CASE WHEN <<fp>> <> <<pp>> THEN 1 ELSE 0 END) AS price_differs_from_list,
+                           <<pct>> AS differs_pct
+                    FROM   <<t>> <<fa>>
+                    JOIN   <<pt>> <<pa>> ON <<pa>>.<<pk>> = <<fa>>.<<fk>>''', fp=D.col(fa, rev.price), pp=D.col(pa, c.name),
+                            pct=D.pct(f"SUM(CASE WHEN {D.col(fa, rev.price)} <> {D.col(pa, c.name)} THEN 1 ELSE 0 END)", "COUNT(*)"),
+                            t=D.ident(fact), fa=fa, pt=D.ident(r.parent_table), pa=pa, pk=D.ident(r.parent_col), fk=D.ident(r.child_col))
+            statements.append(stmt("list_price", f"Is `{fact}.{rev.price}` the same as the list price `{r.parent_table}.{c.name}`?", differs))
+    if d.line_level and not d.header and d.date:
+        def conflicts(D: Dialect) -> str:
+            return fill('''
+                SELECT COUNT(*) AS orders_with_more_than_one_date
+                FROM   (SELECT <<ok>>
+                        FROM   <<t>>
+                        GROUP  BY <<ok>>
+                        HAVING COUNT(DISTINCT <<dt>>) > 1) x''', ok=D.ident(b.order_key), t=D.ident(fact), dt=D.ident(d.date[1]))
+        statements.append(stmt("order_conflicts", "Do all lines of an order share one date?", conflicts))
+    src_code = _pandas_revenue(b)
+    story = Step(
+        "reconcile",
+        "The views are built; their totals have not been checked yet.",
+        "A join that drops orphans, a duplicate that slips through or a filter in the wrong place all change the total. "
+        "Reconciling against the source is the only proof that the views neither lose nor invent revenue.",
+        "We compute rows, orders and revenue from the raw table, from each view, and independently in pandas from the uploaded file, "
+        "so that every number shared later is traceable to the source.",
+        "Three SELECTs stacked with UNION ALL compute the same totals three ways; they must agree to the cent. "
+        + ("A second query splits revenue into gross and discount. " if rev.discount else "")
+        + "The check below also recomputes revenue in pandas straight from the uploaded rows, outside SQL.",
+    )
+    check = fill('''
+        totals = outputs["totals"]
+        <<src>>
+        sql_values = [float(v) for v in totals["revenue"]]
+        agree = max(sql_values + [source_revenue]) - min(sql_values + [source_revenue]) < 0.01
+        metrics["revenue_total"] = sql_values[0]
+        metrics["revenue_source"] = source_revenue
+        metrics["reconciled"] = bool(agree)
+        if agree:
+            note(f"**Reconciled:** revenue is **{sql_values[0]:,.2f}** from the raw table, from every view, and from the uploaded file "
+                 "(recomputed in pandas). Nothing was lost or double-counted.")
+        else:
+            note("⚠️ The totals differ: " + "; ".join(f"{name}: {value:,.2f}" for name, value in zip(totals["computed_from"], sql_values))
+                 + f"; uploaded file: {source_revenue:,.2f}. Look for orphans or duplicated keys before trusting any KPI.")
+        if "gross_net" in outputs:
+            row = outputs["gross_net"].iloc[0]
+            metrics["revenue_gross"] = float(row.gross_revenue)
+            note(f"Gross revenue is {float(row.gross_revenue):,.2f}; discounts take {float(row.discount_given):,.2f} "
+                 f"({float(row.discount_given) / float(row.gross_revenue):.1%}), leaving net {float(row.net_revenue):,.2f}.")
+        if "list_price" in outputs:
+            row = outputs["list_price"].iloc[0]
+            metrics["price_differs_pct"] = float(row.differs_pct)
+            note(f"In {float(row.differs_pct):.1f}% of lines the price paid differs from today's list price, which is why revenue uses the price on the line.")
+        if "order_conflicts" in outputs:
+            n = int(outputs["order_conflicts"].iloc[0, 0])
+            note(f"{n:,} order(s) have lines with different dates" + (": the view takes the earliest." if n else "."))
+    ''', src=src_code)
+    return Cell("reconcile", "Reconcile the totals", SECTIONS[2], story, tuple(statements), check)
+
+
+def _pandas_revenue(b: Builder) -> str:
+    """Python that recomputes revenue from the uploaded DataFrame (``source``), outside SQL."""
+    d, rev = b.d, b.d.revenue
+    lines = [f"src = source[{d.fact!r}]"]
+    if d.fact in d.dedupe:
+        keys, order = d.dedupe[d.fact]
+        sort = f".sort_values({order!r}, na_position='first')" if order else ""
+        lines.append(f"src = src{sort}.drop_duplicates(subset={list(keys)!r}, keep='last')  # the views keep one row per key")
+    if rev.kind == "price_qty":
+        if rev.price_rel:
+            r = rev.price_rel
+            lines.append(f"prices = source[{r.parent_table!r}].drop_duplicates({r.parent_col!r}).set_index({r.parent_col!r})[{rev.price!r}]")
+            price = f"src[{r.child_col!r}].map(prices)"
+        else:
+            price = f"src[{rev.price!r}]"
+        expr = f"{price} * src[{rev.quantity!r}]"
+        if rev.discount:
+            scale = " / 100" if rev.discount_scale == 100 else ""
+            expr += f" * (1 - src[{rev.discount!r}].fillna(0){scale})"
+        lines.append(f"source_revenue = float(({expr}).sum())")
+    elif rev.kind == "amount":
+        lines.append(f"source_revenue = float(src[{rev.amount!r}].sum())")
+    else:
+        lines.append("source_revenue = float(len(src))")
+    return "\n".join(lines)
+
+
+# ═════════════════════════════════════════════════════════════════════════
+# 4 · KPIs
+# ═════════════════════════════════════════════════════════════════════════
+def _kpis_cell(b: Builder) -> Cell:
+    d = b.d
+
+    def sql(D: Dialect) -> str:
+        summary = ["SUM(revenue) AS revenue"] if b.money else []
+        summary.append("COUNT(*) AS orders")
+        if d.customer:
+            summary.append(f"COUNT(DISTINCT {D.ident(d.customer[1])}) AS customers")
+        if d.revenue.quantity:
+            summary.append("SUM(units) AS units")
+        if d.lead:
+            summary += [f"AVG({d.lead_name}) AS avg_{d.lead_name}", f"COUNT({d.lead_name}) AS orders_with_{d.lead_name}"]
+        if d.required:
+            summary += ["SUM(shipped_late) AS late_orders", "COUNT(shipped_late) AS checked_orders"]
+        if d.rating:
+            summary.append("AVG(rating_score) AS avg_rating")
+        ctes = [fill('''
+            order_summary AS (
+                SELECT <<cols>>
+                FROM   order_facts
+            )''', cols=",\n           ".join(summary))]
+        joins = ["order_summary"]
+        if d.customer:
+            ctes.append(fill('''
+                repeat_customers AS (
+                    SELECT COUNT(*) AS repeat_customers
+                    FROM   (SELECT <<c>>
+                            FROM   order_facts
+                            WHERE  <<c>> IS NOT NULL
+                            GROUP  BY <<c>>
+                            HAVING COUNT(*) >= 2) r
+                )''', c=D.ident(d.customer[1])))
+            joins.append("repeat_customers")
+        if d.line_level and b.money:
+            ctes.append(fill('''
+                line_summary AS (
+                    SELECT AVG(revenue) AS avg_line_value   -- NOT the average order value: shown for contrast
+                    FROM   line_facts
+                )'''))
+            joins.append("line_summary")
+        out = []
+        if b.money:
+            out += [f"{D.round('revenue', 2)} AS revenue"]
+        out.append("orders")
+        if b.money:
+            out.append(f"{D.ratio('revenue', 'orders', 2)} AS avg_order_value")
+        if d.line_level and b.money:
+            out.append(f"{D.round('avg_line_value', 2)} AS avg_line_value")
+        if d.customer:
+            out += ["customers", f"{D.ratio('orders', 'customers', 2)} AS orders_per_customer",
+                    f"{D.pct('repeat_customers', 'customers')} AS repeat_customer_pct"]
+        if d.revenue.quantity:
+            out.append(f"{D.ratio('units', 'orders', 2)} AS units_per_order")
+        if d.lead:
+            out += [f"{D.round(f'avg_{d.lead_name}', 2)} AS avg_{d.lead_name}", f"orders - orders_with_{d.lead_name} AS orders_without_{d.lead_name}"]
+        if d.required:
+            out.append(f"{D.pct('late_orders', 'checked_orders')} AS late_pct")
+        if d.rating:
+            out.append(f"{D.round('avg_rating', 2)} AS avg_rating")
+        return ("WITH " + ",\n".join(c.strip() for c in ctes) + "\nSELECT " + ",\n       ".join(out)
+                + "\nFROM   " + "\nCROSS  JOIN ".join(joins))
+
+    story = Step(
+        "kpis",
+        f"`order_facts` has one row per order and reconciles to the source.",
+        "Headline KPIs answer 'how big is the business?' and become the baseline for every trend. Each must be computed at the right grain: "
+        "average order value is revenue ÷ distinct orders, not the average of order lines.",
+        "We compute the headline KPIs in one query, so that every later breakdown can be compared with the overall figure.",
+        "One CTE summarises order_facts (SUM, COUNT, AVG); another counts customers with two or more orders (GROUP BY … HAVING COUNT(*) >= 2). "
+        "The final SELECT divides with 1.0 * … / NULLIF(…, 0) and 100.0 * …, so that ratios stay decimal and never divide by zero."
+        + (" The average *line* value is shown next to the AOV to make the grain difference visible." if d.line_level else ""),
+    )
+    check = fill('''
+        k = result.iloc[0].to_dict()
+        metrics["kpis"] = {key: (float(v) if v is not None and not pd.isna(v) else None) for key, v in k.items()}
+        if "revenue" in k:
+            note(f"Revenue **{float(k['revenue']):,.2f}** from **{int(k['orders']):,}** orders: average order value **{float(k['avg_order_value']):,.2f}**.")
+        else:
+            note(f"**{int(k['orders']):,}** orders in total.")
+        if "avg_line_value" in k:
+            note(f"The average *line* is only {float(k['avg_line_value']):,.2f}. Averaging lines would understate the order value "
+                 f"{float(k['avg_order_value']) / float(k['avg_line_value']):.1f}×: the grain matters.")
+        if "customers" in k:
+            note(f"{int(k['customers']):,} customers place {float(k['orders_per_customer']):.2f} orders each; "
+                 f"{float(k['repeat_customer_pct']):.1f}% ordered more than once.")
+        lead = <<lead>>
+        if lead and f"avg_{lead}" in k:
+            missing = int(k[f"orders_without_{lead}"])
+            note(f"Average {lead}: **{float(k[f'avg_{lead}']):.2f}**" + (f" (over the orders that have one; {missing:,} don't, and AVG skips them)." if missing else "."))
+        if "late_pct" in k:
+            note(f"{float(k['late_pct']):.1f}% of orders went out after the promised date.")
+        if "avg_rating" in k:
+            note(f"Average rating: {float(k['avg_rating']):.2f}.")
+    ''', lead=repr(d.lead_name if d.lead else None))
+    return Cell("kpis", "Headline KPIs", SECTIONS[4], story, (stmt("kpis", "Headline KPIs", sql),), check)
+
+
+def _period_ctes(b: Builder, D: Dialect, extra: list[str], name: str | None = None) -> str:
+    d = b.d
+    name = name or {"quarter": "quarterly", "month": "monthly", "year": "yearly"}[d.period]
+    cols = list(d.period_cols) + extra
+    return fill('''
+        <<name>> AS (
+            SELECT <<cols>>
+            FROM   order_facts
+            WHERE  <<y>> IS NOT NULL
+            GROUP  BY <<group>>
+        )''', name=name, cols=",\n           ".join(cols), y=d.year_col, group=", ".join(d.period_cols))
+
+
+def _kpi_by_period_cell(b: Builder) -> Cell:
+    d = b.d
+    name = {"quarter": "quarterly", "month": "monthly", "year": "yearly"}[d.period]
+    step = {"quarter": "qoq", "month": "mom", "year": "yoy"}[d.period]
+    year_lag = {"quarter": 4, "month": 12}.get(d.period)
+
+    def sql(D: Dialect) -> str:
+        measures = ["SUM(revenue) AS revenue"] if b.money else []
+        measures.append("COUNT(*) AS orders")
+        if d.customer:
+            measures.append(f"COUNT(DISTINCT {D.ident(d.customer[1])}) AS customers")
+        if d.lead:
+            measures.append(f"AVG({d.lead_name}) AS avg_{d.lead_name}")
+        if d.required:
+            measures += ["SUM(shipped_late) AS late_orders", "COUNT(shipped_late) AS checked_orders"]
+        if d.rating:
+            measures.append("AVG(rating_score) AS avg_rating")
+        main = "revenue" if b.money else "orders"
+        lags = [f"LAG({main}) OVER (ORDER BY {b.period_order()}) AS prev_{main}"]
+        if year_lag:
+            lags.append(f"LAG({main}, {year_lag}) OVER (ORDER BY {b.period_order()}) AS {main}_year_ago")
+        out = list(d.period_cols)
+        partial = b.partial_case()
+        if partial:
+            out.append(partial)
+        if b.money:
+            out += [f"{D.round('revenue', 2)} AS revenue", "orders", f"{D.ratio('revenue', 'orders', 2)} AS avg_order_value"]
+        else:
+            out.append("orders")
+        if d.customer:
+            out.append("customers")
+        if d.lead:
+            out.append(f"{D.round(f'avg_{d.lead_name}', 1)} AS avg_{d.lead_name}")
+        if d.required:
+            out.append(f"{D.pct('late_orders', 'checked_orders')} AS late_pct")
+        if d.rating:
+            out.append(f"{D.round('avg_rating', 2)} AS avg_rating")
+        out.append(f"{D.pct_change(main, f'prev_{main}')} AS {main}_{step}_pct")
+        if year_lag:
+            out.append(f"{D.pct_change(main, f'{main}_year_ago')} AS {main}_yoy_pct")
+        comments = []
+        if d.multi_year:
+            comments.append(f"-- The data spans several years, so periods are grouped and ordered by {b.period_order()}.")
+        for p in d.partial_periods:
+            comments.append(f"-- {d.label(p)} is partial (data from {max(p.first_seen, p.start)} to {min(p.last_seen, p.end)}): "
+                            "its change is missing days, not a trend.")
+        if year_lag:
+            comments.append(f"-- LAG({main}, {year_lag}) is the same {d.period} a year earlier; it assumes no {d.period} is missing (checked in step 2).")
+        if d.lead:
+            comments.append(f"-- The suspected driver ({d.lead_name}) sits next to the symptom ({main}).")
+        return "\n".join(comments + [
+            "WITH " + _period_ctes(b, D, measures, name).strip() + ",",
+            fill('''
+                with_prev AS (
+                    SELECT p.*,
+                           <<lags>>
+                    FROM   <<name>> p
+                )
+                SELECT <<out>>
+                FROM   with_prev
+                ORDER  BY <<order>>''', lags=",\n           ".join(lags), name=name, out=",\n       ".join(out), order=b.period_order())])
+
+    cmp, yoy = d.compare, d.yoy
+    story = Step(
+        "kpi_by_period",
+        f"Orders run over {len(d.periods)} {d.period}s" + (f"; {', '.join(d.label(p) for p in d.partial_periods)} is partial" if d.partial_periods else "") + ".",
+        "A KPI only means something next to its history. Putting the suspected driver in the same query as the symptom lets one table show "
+        "whether they move together." + (" The partial period is labelled so that its drop is not mistaken for a trend." if d.partial_periods else ""),
+        f"We compute the KPIs per {d.period} with LAG() for the change from the previous {d.period}"
+        + (" and from the same period a year earlier" if year_lag else "") + ", so that trends are measured, not eyeballed.",
+        f"The `{name}` CTE groups order_facts by {b.period_order()}; `with_prev` adds LAG() (the previous row's value in time order); the final "
+        "SELECT turns them into % changes with 100.0 * (new − old) / NULLIF(old, 0)." + (" period_status marks partial periods." if d.partial_periods else ""),
+    )
+    check = fill('''
+        per = result.copy()
+        unit, main = <<unit>>, <<main>>
+        cols = list(per.columns)
+        def label(row):
+            if unit == "quarter":
+                return f"{int(row[cols[0]])}-Q{int(row[cols[1]])}"
+            if unit == "month":
+                return f"{int(row[cols[0]])}-{int(row[cols[1]]):02d}"
+            return str(int(row[cols[0]]))
+        per["period"] = per.apply(label, axis=1)
+        status = per["period_status"] if "period_status" in per else pd.Series("complete", index=per.index)
+        complete = per[status == "complete"]
+        change = f"{main}_<<step>>_pct"
+        metrics["periods"] = per[["period", main]].assign(status=status).to_dict("records")
+        fig, ax = plt.subplots(figsize=(10, 4))
+        colors = ["#0071e3" if s == "complete" else "#c7c7cc" for s in status]
+        ax.bar(per["period"], per[main].astype(float), color=colors)
+        ax.set_ylabel(main); ax.tick_params(axis="x", labelrotation=45)
+        ax.set_title(f"{main.capitalize()} per {unit}" + (" (grey = partial)" if (status != "complete").any() else ""))
+        driver = <<driver>>
+        if driver and driver in per:
+            ax2 = ax.twinx()
+            ax2.plot(per["period"], per[driver].astype(float), color="#ff9500", marker="o")
+            ax2.set_ylabel(driver, color="#ff9500")
+        plt.tight_layout(); plt.show()
+        if len(complete) >= 2:
+            prev, last = complete.iloc[-2], complete.iloc[-1]
+            pct = 100 * (float(last[main]) - float(prev[main])) / float(prev[main]) if float(prev[main]) else float("nan")
+            metrics["qoq_last_complete"] = {"from": prev["period"], "to": last["period"], "pct": pct}
+            note(f"Last two complete {unit}s: {main} went from {float(prev[main]):,.2f} ({prev['period']}) to {float(last[main]):,.2f} "
+                 f"({last['period']}), **{pct:+.1f}%**.")
+        if (status != "complete").any():
+            part = per[status != "complete"].iloc[-1]
+            idx = per.index.get_loc(part.name)
+            if idx > 0 and not pd.isna(part[change]):
+                metrics["naive_change"] = {"period": part["period"], "pct": float(part[change])}
+                note(f"⚠️ A naive report would say {main} changed **{float(part[change]):+.1f}%** in {part['period']}, but that {unit} is partial: "
+                     "the drop is missing days, not a trend.")
+        yoy = f"{main}_yoy_pct"
+        if yoy in per and change != yoy:
+            rows = complete[complete[yoy].notna()]
+            if len(rows):
+                last = rows.iloc[-1]
+                metrics["yoy"] = {"period": last["period"], "pct": float(last[yoy])}
+                note(f"Year over year, {last['period']} is **{float(last[yoy]):+.1f}%** against the same {unit} a year earlier, which removes seasonality.")
+        if driver and driver in per and len(complete) >= 2:
+            note(f"{driver}: {float(complete.iloc[-2][driver]):.1f} → {float(complete.iloc[-1][driver]):.1f} over the same two {unit}s.")
+    ''', unit=repr(d.period), main=repr("revenue" if b.money else "orders"), step=step,
+        driver=repr(f"avg_{d.lead_name}" if d.lead else "avg_rating" if d.rating else None))
+    return Cell("kpi_by_period", f"KPIs per {d.period}, with the driver next to the symptom", SECTIONS[4], story,
+                (stmt("kpi_by_period", f"KPIs per {d.period} with LAG()", sql),), check)
+
+
+# ═════════════════════════════════════════════════════════════════════════
+# 5 · Window functions
+# ═════════════════════════════════════════════════════════════════════════
+def _running_total_cell(b: Builder) -> Cell:
+    d = b.d
+    main = "revenue" if b.money else "orders"
+    agg = "SUM(revenue)" if b.money else "COUNT(*)"
+
+    def sql(D: Dialect) -> str:
+        order = b.period_order()
+        frame = f"ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW"
+        running = f"SUM({main}) OVER (ORDER BY {order}\n                             {frame})"
+        return fill('''
+            WITH <<cte>>
+            SELECT <<cols>>,
+                   <<main_r>> AS <<main>>,
+                   <<run_r>> AS running_<<main>>,
+                   <<pct>> AS running_pct_of_total
+            FROM   per_period
+            ORDER  BY <<order>>''', cte=_period_ctes(b, D, [f"{agg} AS {main}"], "per_period").strip(), cols=", ".join(d.period_cols),
+                    main=main, main_r=D.round(main, 2), run_r=D.round(running, 2),
+                    pct=D.pct(running, f"SUM({main}) OVER ()"), order=order)
+
+    story = Step(
+        "running_total",
+        f"{main.capitalize()} per {d.period} is known.",
+        "A running total shows how quickly the total builds up and when half of it was reached, which a per-period chart hides.",
+        "We add a running total with a window frame, so that cumulative progress can be read directly.",
+        "SUM(…) OVER (ORDER BY period ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW) adds up every period so far, without collapsing "
+        "the rows like GROUP BY would; SUM(…) OVER () is the grand total, so their ratio is the share reached so far.",
+    )
+    check = fill('''
+        run = result
+        cols = list(run.columns)
+        half = run[run["running_pct_of_total"].astype(float) >= 50].iloc[0]
+        when = "-".join(str(int(half[c])) for c in cols[:<<n>>])
+        metrics["half_reached"] = when
+        plt.figure(figsize=(9, 3.5))
+        plt.plot(range(len(run)), run["running_<<main>>"].astype(float), color="#0071e3", marker="o")
+        plt.xticks(range(len(run)), ["-".join(str(int(v)) for v in row) for row in run[cols[:<<n>>]].itertuples(index=False)], rotation=45)
+        plt.title("Running total of <<main>>"); plt.tight_layout(); plt.show()
+        note(f"Half of all <<main>> had been reached by **{when}** ({float(half['running_pct_of_total']):.1f}% at that point).")
+    ''', n=len(d.period_cols), main=main)
+    return Cell("running_total", "Running total", SECTIONS[5], story, (stmt("running_total", "Running total with a window frame", sql),), check)
+
+
+def _top_n_cell(b: Builder) -> Cell:
+    d = b.d
+    table, label, group = d.item
+    view = "line_facts" if group.level == "line" else "order_facts"
+    main = "revenue" if b.money else "orders"
+    agg = "SUM(revenue)" if b.money else "COUNT(*)"
+
+    def sql(D: Dialect) -> str:
+        g, item = D.ident(group.alias), D.ident(label)
+        return fill('''
+            WITH item_totals AS (
+                SELECT <<g>>,
+                       <<item>>,
+                       <<agg>> AS <<main>>
+                FROM   <<view>>
+                GROUP  BY <<g>>, <<item>>
+            ),
+            ranked AS (
+                SELECT t.*,
+                       DENSE_RANK() OVER (PARTITION BY <<g>> ORDER BY <<main>> DESC) AS <<main>>_rank,
+                       ROW_NUMBER() OVER (PARTITION BY <<g>> ORDER BY <<main>> DESC, <<item>>) AS row_num
+                FROM   item_totals t
+            )
+            SELECT <<g>>,
+                   <<main>>_rank,
+                   row_num,
+                   <<item>>,
+                   <<main_r>> AS <<main>>
+            FROM   ranked
+            WHERE  <<main>>_rank <= <<n>>   -- DENSE_RANK keeps ties, so a group can return more than <<n>> rows
+            ORDER  BY <<g>>, <<main>>_rank, <<item>>''', g=g, item=item, agg=agg, main=main, view=view, n=TOP_N, main_r=D.round(main, 2))
+
+    story = Step(
+        "top_n",
+        f"Each `{label}` belongs to one `{group.alias}`.",
+        f"'Top {TOP_N} per group' is the classic window-function task. RANK and DENSE_RANK give tied rows the same number (so a group can return "
+        f"more than {TOP_N}); ROW_NUMBER never ties, so it returns exactly {TOP_N}.",
+        f"We rank `{label}` within each `{group.alias}` by {main}, so that the leaders of every group are visible side by side.",
+        f"`item_totals` adds up {main} per group and item; `ranked` adds DENSE_RANK() and ROW_NUMBER() OVER (PARTITION BY the group ORDER BY {main} DESC). "
+        "PARTITION BY restarts the numbering in every group. The outer query keeps the top ranks: a window result can't be filtered in the same "
+        "SELECT's WHERE, which is why it sits in a CTE.",
+    )
+    check = fill('''
+        top = result
+        g, item, main = <<g>>, <<item>>, <<main>>
+        sizes = top.groupby(g).size()
+        ties = sizes[sizes > <<n>>]
+        metrics["top_items"] = {str(k): v[item].astype(str).tolist() for k, v in top.groupby(g)}
+        leader = top.sort_values(main, ascending=False).iloc[0]
+        note(f"Biggest single item: `{leader[item]}` in `{leader[g]}` ({float(leader[main]):,.2f}).")
+        if len(ties):
+            note(f"Ties: {len(ties)} group(s) return more than <<n>> rows with DENSE_RANK; use ROW_NUMBER if exactly <<n>> are needed.")
+        else:
+            note("No ties: DENSE_RANK and ROW_NUMBER pick the same items here, but only ROW_NUMBER guarantees exactly <<n>> per group.")
+    ''', g=repr(group.alias), item=repr(label), main=repr(main), n=TOP_N)
+    return Cell("top_n", f"Top {TOP_N} `{label}` per `{group.alias}`", SECTIONS[5], story,
+                (stmt("top_n", f"Top {TOP_N} per group with DENSE_RANK and ROW_NUMBER", sql),), check)
+
+
+def _latest_record_cell(b: Builder) -> Cell:
+    d = b.d
+    cust, date = d.customer[1], d.date[1]
+
+    def sql(D: Dialect) -> str:
+        c, dt, ok = D.ident(cust), D.ident(date), D.ident(b.order_key)
+        recency = D.days_between(f"r.{dt}", f"(SELECT MAX({dt}) FROM order_facts)", d.date_is_timestamp)
+        return fill('''
+            WITH ranked AS (
+                SELECT <<c>>, <<ok>>, <<dt>><<rev>>,
+                       ROW_NUMBER() OVER (PARTITION BY <<c>> ORDER BY <<dt>> DESC, <<ok>> DESC) AS row_num
+                FROM   order_facts
+                WHERE  <<c>> IS NOT NULL
+                  AND  <<dt>> IS NOT NULL
+            )
+            SELECT r.<<c>>,
+                   r.<<ok>> AS latest_<<okn>>,
+                   r.<<dt>> AS latest_<<dtn>>,<<rev_out>>
+                   <<recency>> AS days_since_last_order   -- measured to the last date in the data, not to today
+            FROM   ranked r
+            WHERE  r.row_num = 1
+            ORDER  BY days_since_last_order DESC, r.<<c>>''', c=c, ok=ok, dt=dt, okn=re.sub(r"\W", "_", b.order_key),
+                    dtn=re.sub(r"\W", "_", date), rev=", revenue" if b.money else "",
+                    rev_out=f"\n       {D.round('r.revenue', 2)} AS latest_order_revenue," if b.money else "", recency=recency)
+
+    story = Step(
+        "latest_record",
+        f"Customers place several orders each (`{cust}` repeats in order_facts).",
+        "'The latest record per key' is how you de-duplicate history tables and how you measure recency. ROW_NUMBER() numbers each customer's "
+        "orders from newest to oldest, so row 1 is the latest, exactly one per customer even when dates tie.",
+        "We keep each customer's latest order and measure the days since it, so that lapsing customers stand out.",
+        f"ROW_NUMBER() OVER (PARTITION BY {cust} ORDER BY {date} DESC, {b.order_key} DESC): the order_id tie-breaker makes the pick "
+        "deterministic. Recency is measured to the latest date in the data, because measuring to today would make an old extract look like "
+        "every customer had left.",
+    )
+    check = fill('''
+        latest = result
+        days = latest["days_since_last_order"].astype(float)
+        metrics["recency_median"] = float(days.median())
+        lapsed = int((days > 180).sum())
+        note(f"{len(latest):,} customers (one row each). Median time since the last order: **{days.median():.0f} days**; "
+             f"{lapsed:,} customer(s) have not ordered in over 180 days before the end of the data.")
+    ''')
+    return Cell("latest_record", "Each customer's latest order", SECTIONS[5], story,
+                (stmt("latest_record", "The latest order per customer with ROW_NUMBER()", sql),), check)
+
+
+def _rfm_cell(b: Builder) -> Cell:
+    d = b.d
+    cust, date = d.customer[1], d.date[1]
+    n = NTILE_BUCKETS
+
+    def view(D: Dialect) -> str:
+        c, dt = D.ident(cust), D.ident(date)
+        recency = D.days_between(f"MAX({dt})", f"(SELECT MAX({dt}) FROM order_facts)", d.date_is_timestamp)
+        return fill('''
+            CREATE OR REPLACE VIEW customer_rfm AS
+            WITH customer_totals AS (
+                SELECT <<c>>,
+                       <<recency>> AS recency_days,
+                       COUNT(*) AS frequency,
+                       SUM(revenue) AS monetary
+                FROM   order_facts
+                WHERE  <<c>> IS NOT NULL
+                  AND  <<dt>> IS NOT NULL
+                GROUP  BY <<c>>
+            ),
+            scored AS (
+                SELECT t.*,
+                       NTILE(<<n>>) OVER (ORDER BY recency_days DESC, <<c>>) AS r_score,   -- <<n>> = most recent
+                       NTILE(<<n>>) OVER (ORDER BY frequency, <<c>>) AS f_score,            -- <<n>> = most orders
+                       NTILE(<<n>>) OVER (ORDER BY monetary, <<c>>) AS m_score              -- <<n>> = most revenue
+                FROM   customer_totals t
+            )
+            SELECT s.*,
+                   CASE WHEN r_score >= 4 AND f_score >= 4 THEN 'Champions'
+                        WHEN f_score >= 4 THEN 'Loyal'
+                        WHEN r_score <= 2 AND f_score >= 3 THEN 'At risk'
+                        WHEN r_score >= 4 AND f_score <= 2 THEN 'Recent, few orders'
+                        WHEN r_score <= 2 AND f_score <= 2 THEN 'Hibernating'
+                        ELSE 'Needs attention'
+                   END AS segment
+            FROM   scored s''', c=c, dt=dt, recency=recency, n=n)
+
+    def summary(D: Dialect) -> str:
+        return fill('''
+            SELECT segment,
+                   COUNT(*) AS customers,
+                   <<rev>> AS revenue,
+                   <<pct>> AS revenue_pct,
+                   <<rec>> AS avg_recency_days
+            FROM   customer_rfm
+            GROUP  BY segment
+            ORDER  BY revenue DESC''', rev=D.round("SUM(monetary)", 2),
+                    pct=D.pct("SUM(monetary)", "(SELECT SUM(monetary) FROM customer_rfm)"), rec=D.round("AVG(recency_days)", 0))
+
+    story = Step(
+        "rfm",
+        "Every customer has a last order date, an order count and a revenue total.",
+        "RFM (recency, frequency, monetary) turns three numbers into a segment a marketer can act on. NTILE(5) ranks customers into five equal-sized "
+        "buckets per measure; ties are split arbitrarily, so the customer id is added to the ORDER BY to make the split repeatable.",
+        "We score every customer 1-5 on R, F and M and name the segments, so that revenue concentration and churn risk become visible.",
+        "`customer_totals` aggregates order_facts per customer; `scored` adds three NTILE(5) windows; a CASE turns the scores into named segments. "
+        "It is saved as the view customer_rfm, then summarised per segment.",
+    )
+    check = fill('''
+        seg = outputs["rfm_segments"]
+        metrics["rfm"] = {r.segment: {"customers": int(r.customers), "revenue_pct": float(r.revenue_pct)} for r in seg.itertuples()}
+        top = seg.iloc[0]
+        metrics["rfm_top_share"] = (str(top.segment), float(top.revenue_pct), int(top.customers))
+        plt.figure(figsize=(8, 3.5))
+        plt.barh(seg["segment"].iloc[::-1], seg["revenue_pct"].astype(float).iloc[::-1], color="#0071e3")
+        plt.xlabel("% of revenue"); plt.title("Revenue share by RFM segment"); plt.tight_layout(); plt.show()
+        total = int(seg["customers"].sum())
+        note(f"**{top.segment}** ({int(top.customers):,} of {total:,} customers) bring **{float(top.revenue_pct):.1f}%** of revenue.")
+        risk = seg[seg["segment"] == "At risk"]
+        if len(risk):
+            note(f"At risk: {int(risk.customers.iloc[0]):,} customers who used to order often but not recently ({float(risk.revenue_pct.iloc[0]):.1f}% of revenue).")
+    ''')
+    return Cell("rfm", "RFM segments with NTILE", SECTIONS[5], story,
+                (stmt("rfm_view", "View `customer_rfm`: NTILE scores per customer", view),
+                 stmt("rfm_segments", "Customers and revenue per segment", summary)), check)
+
+
+# ═════════════════════════════════════════════════════════════════════════
+# 6 · Root cause
+# ═════════════════════════════════════════════════════════════════════════
+def _driver_tree_cell(b: Builder) -> Cell:
+    d = b.d
+    before, after = d.compare
+    lb, la = d.label(before), d.label(after)
+
+    def per_period(D: Dialect) -> str:
+        cols = list(d.period_cols) + [
+            f"{D.round('SUM(revenue)', 2)} AS revenue", "COUNT(*) AS orders"]
+        if d.customer:
+            cols += [f"COUNT(DISTINCT {D.ident(d.customer[1])}) AS customers",
+                     f"{D.ratio('COUNT(*)', f'COUNT(DISTINCT {D.ident(d.customer[1])})', 4)} AS orders_per_customer"]
+        cols.append(f"{D.ratio('SUM(revenue)', 'COUNT(*)', 4)} AS avg_order_value")
+        if d.revenue.quantity:
+            cols += [f"{D.ratio('SUM(units)', 'COUNT(*)', 4)} AS units_per_order", f"{D.ratio('SUM(revenue)', 'SUM(units)', 4)} AS revenue_per_unit"]
+        return fill('''
+            -- revenue = orders × average order value<<tree>>
+            SELECT <<cols>>
+            FROM   order_facts
+            WHERE  <<b>>
+               OR  <<a>>
+            GROUP  BY <<group>>
+            ORDER  BY <<order>>''', tree=("; orders = customers × orders per customer" if d.customer else "")
+                    + ("; AOV = units per order × revenue per unit" if d.revenue.quantity else ""),
+                    cols=",\n       ".join(cols), b=b.period_where(before), a=b.period_where(after), group=", ".join(d.period_cols),
+                    order=b.period_order())
+
+    statements = [stmt("tree", f"The drivers of revenue in {lb} and {la}", per_period)]
+    for i, dim in enumerate(d.dimensions):
+        view = "line_facts" if dim.level == "line" else "order_facts"
+
+        def by_dim(D: Dialect, dim=dim, view=view) -> str:
+            g = D.ident(dim.alias)
+            return fill('''
+                WITH by_segment AS (
+                    SELECT <<g>>,
+                           SUM(CASE WHEN <<b>> THEN revenue ELSE 0 END) AS revenue_before,
+                           SUM(CASE WHEN <<a>> THEN revenue ELSE 0 END) AS revenue_after
+                    FROM   <<view>>
+                    GROUP  BY <<g>>
+                )
+                SELECT <<g>>,
+                       <<rb>> AS revenue_before,
+                       <<ra>> AS revenue_after,
+                       <<rc>> AS revenue_change,
+                       <<share>> AS share_of_change_pct
+                FROM   by_segment
+                ORDER  BY ABS(revenue_after - revenue_before) DESC''', g=g, b=b.period_where(before), a=b.period_where(after), view=view,
+                        rb=D.round("revenue_before", 2), ra=D.round("revenue_after", 2), rc=D.round("revenue_after - revenue_before", 2),
+                        share=D.pct("(revenue_after - revenue_before)", "SUM(revenue_after - revenue_before) OVER ()"))
+        statements.append(stmt(f"by_{dim.alias}", f"Change in revenue by `{dim.alias}` ({lb} → {la})", by_dim))
+    story = Step(
+        "driver_tree",
+        f"The last two complete {d.period}s are {lb} and {la}" + (f" ({', '.join(d.label(p) for p in d.partial_periods)} is partial and left out)" if d.partial_periods else "") + ".",
+        "'Revenue changed' is a symptom. Revenue = orders × average order value, so the change comes from more or fewer orders, bigger or smaller orders, "
+        "or both, and then from particular segments. Splitting it is how a KPI move becomes a cause someone can act on.",
+        f"We split the revenue change from {lb} to {la} into a volume effect, an order-value effect and their interaction, and then by "
+        + (_names([x.alias for x in d.dimensions]) if d.dimensions else "segment") + ", so that the change is traced to the part that moved.",
+        "The first query computes each driver for both periods. The others use conditional aggregation (SUM(CASE WHEN period = … THEN revenue "
+        "ELSE 0 END)) to put both periods side by side per segment, and a window SUM(…) OVER () to express each segment's change as a share of the total change.",
+    )
+    check = fill('''
+        tree = outputs["tree"]
+        before, after = tree.iloc[0], tree.iloc[-1]
+        o1, o2 = float(before.orders), float(after.orders)
+        r1, r2 = float(before.revenue), float(after.revenue)
+        a1, a2 = r1 / o1, r2 / o2
+        volume, value, both = (o2 - o1) * a1, o1 * (a2 - a1), (o2 - o1) * (a2 - a1)
+        delta = r2 - r1
+        metrics["driver_split"] = {"from": <<lb>>, "to": <<la>>, "delta": delta, "volume": volume, "order_value": value, "interaction": both}
+        steps = [("before", r1), ("more/fewer orders", volume), ("order value", value), ("interaction", both)]
+        fig, ax = plt.subplots(figsize=(8, 3.5))
+        level = 0.0
+        for i, (name, amount) in enumerate(steps):
+            bottom = 0 if i == 0 else level if amount >= 0 else level + amount
+            ax.bar(name, abs(amount), bottom=bottom, color="#0071e3" if i == 0 else "#34c759" if amount >= 0 else "#ff3b30")
+            level = amount if i == 0 else level + amount
+        ax.bar("after", r2, color="#0071e3")
+        ax.set_title(<<lb>> + " → " + <<la>> + ": what moved revenue"); plt.tight_layout(); plt.show()
+        main = "orders" if abs(volume) >= abs(value) else "order value"
+        share = (volume if main == "orders" else value) / delta if delta else float("nan")
+        note(f"Revenue moved **{delta:+,.2f}** ({100 * delta / r1:+.1f}%): **{volume:+,.2f}** from the number of orders "
+             f"({int(o1):,} → {int(o2):,}), **{value:+,.2f}** from the average order value ({a1:,.2f} → {a2:,.2f}), and {both:+,.2f} from both together. "
+             f"About {abs(share):.0%} of the change comes from **{main}**.")
+        if "orders_per_customer" in tree:
+            note(f"Orders = customers × orders per customer: customers {int(before.customers):,} → {int(after.customers):,}, "
+                 f"orders per customer {float(before.orders_per_customer):.2f} → {float(after.orders_per_customer):.2f}.")
+        contributors = {}
+        for label in [k for k in outputs if k.startswith("by_")]:
+            seg = outputs[label]
+            col = seg.columns[0]
+            top = seg.iloc[0]
+            contributors[col] = {"segment": str(top[col]), "change": float(top.revenue_change), "share": float(top.share_of_change_pct)}
+            note(f"By `{col}`: **{top[col]}** moved most ({float(top.revenue_change):+,.2f}, {float(top.share_of_change_pct):.0f}% of the change).")
+        metrics["top_contributors"] = contributors
+    ''', lb=repr(lb), la=repr(la))
+    return Cell("driver_tree", "Driver tree: what moved revenue", SECTIONS[6], story, tuple(statements), check)
+
+
+def _drilldown_cell(b: Builder) -> Cell:
+    d = b.d
+    drivers = ([f"avg_{d.lead_name}"] if d.lead else []) + (["late_pct"] if d.required else []) + (["avg_rating"] if d.rating else [])
+    seg = next((dim for dim in d.dimensions if dim.level == "order"), None)
+    main = "revenue" if b.money else "orders"
+    agg = "SUM(revenue)" if b.money else "COUNT(*)"
+
+    def driver_cols(D: Dialect, cond: str | None = None, suffix: str = "") -> list[str]:
+        out = []
+        if d.lead:
+            x = d.lead_name if cond is None else f"CASE WHEN {cond} THEN {d.lead_name} END"
+            out.append(f"{D.round(f'AVG({x})', 1)} AS avg_{d.lead_name}{suffix}")
+        if d.required:
+            num = "shipped_late" if cond is None else f"CASE WHEN {cond} THEN shipped_late END"
+            out.append(f"{D.pct(f'SUM({num})', f'COUNT({num})')} AS late_pct{suffix}")
+        if d.rating:
+            x = "rating_score" if cond is None else f"CASE WHEN {cond} THEN rating_score END"
+            out.append(f"{D.round(f'AVG({x})', 2)} AS avg_rating{suffix}")
+        return out
+
+    def series(D: Dialect) -> str:
+        cols = list(d.period_cols) + [f"{D.round(agg, 2)} AS {main}"] + driver_cols(D)
+        where = [f"{d.year_col} IS NOT NULL"] + [f"NOT {b.period_where(p)}" for p in d.partial_periods]
+        return fill('''
+            -- Complete periods only: a partial period would show a fake drop in the symptom.
+            SELECT <<cols>>
+            FROM   order_facts
+            WHERE  <<where>>
+            GROUP  BY <<group>>
+            ORDER  BY <<order>>''', cols=",\n       ".join(cols), where="\n  AND  ".join(where), group=", ".join(d.period_cols),
+                    order=b.period_order())
+
+    statements = [stmt("series", f"Symptom and driver per complete {d.period}", series)]
+    if seg is not None and d.compare:
+        before, after = d.compare
+        cb, ca = b.period_where(before), b.period_where(after)
+
+        def by_segment(D: Dialect) -> str:
+            g = D.ident(seg.alias)
+            m_b = f"SUM(CASE WHEN {cb} THEN revenue ELSE 0 END)" if b.money else f"SUM(CASE WHEN {cb} THEN 1 ELSE 0 END)"
+            m_a = f"SUM(CASE WHEN {ca} THEN revenue ELSE 0 END)" if b.money else f"SUM(CASE WHEN {ca} THEN 1 ELSE 0 END)"
+            cols = [g, f"{D.round(m_b, 2)} AS {main}_before", f"{D.round(m_a, 2)} AS {main}_after",
+                    f"{D.pct_change(m_a, m_b)} AS {main}_change_pct"]
+            cols += driver_cols(D, cb, "_before") + driver_cols(D, ca, "_after")
+            return fill('''
+                -- AVG(CASE WHEN … THEN x END) averages only the rows of that period: CASE without ELSE gives NULL, and AVG skips NULLs.
+                SELECT <<cols>>
+                FROM   order_facts
+                WHERE  <<cb>>
+                   OR  <<ca>>
+                GROUP  BY <<g>>
+                ORDER  BY ABS(<<m_a>> - <<m_b>>) DESC''', cols=",\n       ".join(cols), cb=cb, ca=ca, g=g, m_a=m_a, m_b=m_b)
+        statements.append(stmt("by_segment", f"Symptom and driver per `{seg.alias}`, {d.label(before)} vs {d.label(after)}", by_segment))
+    story = Step(
+        "drilldown",
+        ("The suspected driver(s) are " + _names(drivers) + "." if drivers else "No operational driver column was found; the drill-down uses segments only."),
+        "A driver only explains a symptom if they move together, over time and across segments. Putting both in the same query, period by period "
+        "and segment by segment, is how 'revenue fell because shipping got slower' is checked instead of assumed.",
+        "We line the symptom up with the driver for every complete period" + (f" and for every `{seg.alias}`" if seg is not None and d.compare else "")
+        + ", so that the data says whether they move together. Correlation is not proof: the next step is a controlled test.",
+        "The first query groups order_facts per complete period and returns the symptom next to the driver. "
+        + ("The second compares the last two complete periods per segment with conditional aggregation, so that the segment where the symptom "
+           "moved can be checked for a matching move in the driver." if seg is not None and d.compare else ""),
+    )
+    check = fill('''
+        s = outputs["series"].copy()
+        main, drivers = <<main>>, <<drivers>>
+        drivers = [x for x in drivers if x in s]
+        if not drivers and len(s):
+            note(f"No operational driver column (shipping time, rating) to line up with {main}; over the {len(s)} complete period(s), "
+                 f"{main} went from {float(s[main].iloc[0]):,.2f} to {float(s[main].iloc[-1]):,.2f}. The segment view shows where it moved.")
+        if drivers and len(s) >= <<min_n>>:
+            for x in drivers:
+                r = s[main].astype(float).corr(s[x].astype(float))
+                metrics.setdefault("driver_corr", {})[x] = float(r)
+                note(f"Across {len(s)} complete periods, {main} and {x} have a correlation of **{r:+.2f}** "
+                     + ("(they move against each other)" if r < -0.5 else "(they move together)" if r > 0.5 else "(little linear relationship)") + ".")
+        elif drivers:
+            note(f"Only {len(s)} complete periods: too few for a meaningful correlation (at least <<min_n>> are needed), so compare the columns side by side.")
+        if drivers and len(s) >= 2:
+            first, last = s.iloc[-2], s.iloc[-1]
+            x = drivers[0]
+            change_main = 100 * (float(last[main]) - float(first[main])) / float(first[main]) if float(first[main]) else float("nan")
+            change_x = 100 * (float(last[x]) - float(first[x])) / float(first[x]) if float(first[x]) else float("nan")
+            metrics["driver_vs_symptom"] = {"driver": x, "driver_change_pct": change_x, "symptom_change_pct": change_main}
+            moved = abs(change_x) >= 10
+            note(f"Last two complete periods: {main} **{change_main:+.1f}%**, {x} **{change_x:+.1f}%** "
+                 f"({float(first[x]):.1f} → {float(last[x]):.1f}). "
+                 + (f"The driver moved too: a candidate cause, to confirm with a controlled test (e.g. a service-level target for a random half of orders)."
+                    if moved else f"{x} barely moved, so it does not explain this change; look at the segments in the driver tree instead."))
+        if "by_segment" in outputs:
+            seg = outputs["by_segment"]
+            top = seg.iloc[0]
+            col = seg.columns[0]
+            note(f"Segment that moved most: **{top[col]}** ({main} {float(top[f'{main}_change_pct']):+.1f}%)" +
+                 "".join(f", {x} {top[x + '_before']} → {top[x + '_after']}" for x in drivers if x + "_before" in seg) + ".")
+    ''', main=repr(main), drivers=repr(drivers), min_n=MIN_PERIODS_FOR_CORR)
+    return Cell("drilldown", "Drill down: symptom next to driver", SECTIONS[6], story, tuple(statements), check)
+
+
+def _cohort_cell(b: Builder) -> Cell:
+    d = b.d
+    cust, date = d.customer[1], d.date[1]
+    per_year = {"quarter": 4, "month": 12, "year": 1}[d.period]
+    unit = d.period
+
+    def sql(D: Dialect) -> str:
+        c, dt = D.ident(cust), D.ident(date)
+        index = lambda y, n: f"{y} * {per_year} + {n}" if d.number_col else y  # noqa: E731
+        cohort_cols = [f"{D.year('first_date')} AS cohort_year"] + ([f"{D.period(unit, 'first_date')} AS cohort_number"] if d.number_col else [])
+        act = ", ".join(d.period_cols)
+        since = f"({index('a.' + d.year_col, 'a.' + (d.number_col or ''))}) - ({index('c.cohort_year', 'c.cohort_number')})"
+        group = ["c.cohort_year"] + (["c.cohort_number"] if d.number_col else [])
+        return fill('''
+            WITH first_orders AS (
+                SELECT <<c>>, MIN(<<dt>>) AS first_date
+                FROM   order_facts
+                WHERE  <<c>> IS NOT NULL AND <<dt>> IS NOT NULL
+                GROUP  BY <<c>>
+            ),
+            cohorts AS (
+                SELECT <<c>>,
+                       <<cohort_cols>>
+                FROM   first_orders
+            ),
+            activity AS (
+                SELECT DISTINCT <<c>>, <<act>>
+                FROM   order_facts
+                WHERE  <<y>> IS NOT NULL
+            )
+            SELECT <<group>>,
+                   <<since>> AS <<unit>>s_since_first,
+                   COUNT(*) AS active_customers
+            FROM   cohorts c
+            JOIN   activity a ON a.<<c>> = c.<<c>>
+            GROUP  BY <<group>>, <<since>>
+            ORDER  BY <<group>>, <<unit>>s_since_first''', c=c, dt=dt, cohort_cols=",\n           ".join(cohort_cols), act=act,
+                    y=d.year_col, group=", ".join(group), since=since, unit=unit)
+
+    story = Step(
+        "cohort",
+        f"Each customer has a first order date.",
+        "Averages mix old and new customers. A cohort table follows each group of customers from their first order, so you can see whether newer "
+        "customers come back as often as older ones did.",
+        f"We group customers by the {unit} of their first order and count how many are active in each later {unit}, so that retention is measured per cohort.",
+        f"`first_orders` finds each customer's first order (MIN), `cohorts` turns it into a {unit}, `activity` lists the {unit}s in which each customer "
+        f"ordered, and the join counts active customers by cohort and by {unit}s since the first order (year × {per_year} + {unit} arithmetic, which works in every dialect).",
+    )
+    check = fill('''
+        coh = result.copy()
+        cols = list(coh.columns)
+        key = cols[:-2]
+        coh["cohort"] = coh[key].astype(int).astype(str).agg("-".join, axis=1)
+        grid = coh.pivot_table(index="cohort", columns=cols[-2], values="active_customers", aggfunc="sum").sort_index()
+        size = grid[0]
+        retention = grid.div(size, axis=0) * 100
+        metrics["cohort_sizes"] = {str(k): int(v) for k, v in size.items()}
+        plt.figure(figsize=(9, max(3, 0.4 * len(grid))))
+        plt.imshow(retention.to_numpy(dtype=float), aspect="auto", cmap="Blues", vmin=0, vmax=100)
+        plt.colorbar(label="% of cohort active")
+        plt.yticks(range(len(grid)), grid.index); plt.xlabel(cols[-2]); plt.title("Retention by cohort")
+        plt.tight_layout(); plt.show()
+        biggest = size.idxmax()
+        note(f"Largest cohort: **{biggest}** with {int(size.max()):,} new customers. " + (
+             f"A period after their first order, {retention[1].mean():.0f}% of a cohort is active again on average." if 1 in retention else ""))
+    ''')
+    return Cell("cohort", f"Cohorts by first-order {unit}", SECTIONS[6], story, (stmt("cohort", f"Active customers by cohort and {unit}s since first order", sql),), check)
+
+
+# ═════════════════════════════════════════════════════════════════════════
+# 7 · Fast & correct
+# ═════════════════════════════════════════════════════════════════════════
+def _explain_cell(b: Builder) -> Cell:
+    d = b.d
+    statements = []
+    if d.kpi and d.date:
+        def target(D: Dialect) -> str:
+            return D.explain(fill('''
+                SELECT <<cols>>, SUM(revenue) AS revenue, COUNT(*) AS orders
+                FROM   order_facts
+                GROUP  BY <<cols>>''', cols=", ".join(d.period_cols)) if b.money else fill('''
+                SELECT <<cols>>, COUNT(*) AS orders
+                FROM   order_facts
+                GROUP  BY <<cols>>''', cols=", ".join(d.period_cols)))
+        what = f"the KPI-per-{d.period} query"
+    elif d.schema.accepted:
+        r = next((x for x in d.schema.accepted if x.kind != "self"), d.schema.accepted[0])
+
+        def target(D: Dialect, r=r) -> str:
+            return D.explain(fill('''
+                SELECT COUNT(*)
+                FROM   <<child>> c
+                LEFT   JOIN <<parent>> p ON p.<<pk>> = c.<<fk>>
+                WHERE  p.<<pk>> IS NULL''', child=D.ident(r.child_table), parent=D.ident(r.parent_table), pk=D.ident(r.parent_col),
+                                            fk=D.ident(r.child_col)))
+        what = f"the orphan check on `{r.child_table}`"
+    else:
+        t = next(iter(b.p.tables))
+
+        def target(D: Dialect, t=t) -> str:
+            return D.explain(f"SELECT COUNT(*) FROM {D.ident(t)}")
+        what = f"a count of `{t}`"
+    statements.append(stmt("plan", f"The plan for {what}", target))
+    year = None
+    if d.date and d.periods:
+        counts: dict[int, int] = {}
+        for p in d.periods:
+            counts[p.year] = counts.get(p.year, 0) + p.rows
+        year = max(counts, key=counts.get)
+        table, col = d.date
+
+        def sarg(D: Dialect, table=table, col=col, year=year) -> str:
+            c, t = D.ident(col), D.ident(table)
+            return fill('''
+                SELECT (SELECT COUNT(*) FROM <<t>> WHERE <<yr>> = <<year>>) AS function_on_column,
+                       (SELECT COUNT(*) FROM <<t>>
+                        WHERE  <<c>> >= <<start>> AND <<c>> < <<end>>) AS sargable_range''',
+                        t=t, yr=D.year(c), year=year, c=c, start=D.date_literal(f"{year}-01-01"), end=D.date_literal(f"{year + 1}-01-01"))
+        statements.append(stmt("sargable", f"Same rows, two filters: YEAR({col}) = {year} vs a date range", sarg))
+    if d.indexes:
+        def indexes(D: Dialect) -> str:
+            out = []
+            for table, cols, why in d.indexes:
+                name = f"idx_{table}_{'_'.join(cols)}"
+                out.append(f"-- {why}\nCREATE INDEX {D.ident(name)} ON {D.ident(table)} ({', '.join(D.ident(c) for c in cols)})")
+            head = ("-- InnoDB already indexes foreign key columns; these are listed for completeness.\n" if D.name == "mysql" else
+                    "-- PostgreSQL does not index foreign key columns automatically.\n" if D.name == "postgres" else "")
+            return head + ";\n".join(out)
+        statements.append(stmt("indexes", "Indexes for the join and filter columns", indexes, run="show"))
+    story = Step(
+        "explain",
+        f"The analysis joins on {len(d.schema.accepted)} key(s)" + (f" and filters on `{d.date[1]}`" if d.date else "") + ".",
+        "On a real database, the same SQL can take milliseconds or minutes depending on indexes and on whether filters are *sargable* "
+        "(able to use an index). EXPLAIN shows the plan before you wait for it.",
+        "We read the plan, show that a function wrapped around a column returns the same rows as a range filter but blocks the index, and "
+        "propose indexes, so that the queries stay fast on large tables.",
+        f"EXPLAIN prints the operators the engine will use (scans, joins, aggregations). "
+        + (f"The second query counts the same {year} rows twice: YEAR({d.date[1]}) = {year} must compute YEAR() for every row, while the range "
+           f"{d.date[1]} >= '{year}-01-01' AND < '{year + 1}-01-01' can seek an index. " if year else "")
+        + "The CREATE INDEX statements are for your MySQL / PostgreSQL database; the in-memory engine here does not need them.",
+    )
+    check = fill('''
+        import re as _re
+        plan = outputs["plan"]
+        text = "\\n".join(str(v) for v in plan.iloc[:, -1]) if len(plan.columns) else ""
+        ops = [op.strip() for op in _re.findall(r"[╭┌]─+\\s*([A-Za-z_][A-Za-z_ ]*?)\\s*─", text)]
+        metrics["plan_ops"] = ops
+        if ops:
+            note("Plan operators, top to bottom: " + " → ".join(dict.fromkeys(ops)) + ". Full scans are normal here: the query reads whole "
+                 "tables to aggregate them. Indexes matter for selective lookups and joins on large tables.")
+        if "sargable" in outputs:
+            row = outputs["sargable"].iloc[0]
+            same = int(row.function_on_column) == int(row.sargable_range)
+            metrics["sargable_equal"] = same
+            note(f"Both filters return **{int(row.sargable_range):,}** rows" + (" (identical)" if same else " (they differ: check time zones or timestamps)")
+                 + ". Only the range version can use an index on the date column.")
+    ''')
+    return Cell("explain", "Read the plan; keep filters sargable", SECTIONS[7], story, tuple(statements), check)
+
+
+def _null_traps_cell(b: Builder) -> Cell:
+    d = b.d
+    statements = []
+    trap = d.null_trap.get("not_in")
+    if trap:
+        r, injected = trap
+
+        def not_in(D: Dialect, r=r, injected=injected) -> str:
+            parent, child = D.ident(r.parent_table), D.ident(r.child_table)
+            pk, fk = D.ident(r.parent_col), D.ident(r.child_col)
+            if r.type_mismatch:
+                cmp_in, sub = D.as_text(f"p.{pk}"), D.as_text(f"c.{fk}")
+                cond = f"{sub} = {cmp_in}"
+            else:
+                cmp_in, sub, cond = f"p.{pk}", f"c.{fk}", f"c.{fk} = p.{pk}"
+            if injected:
+                return fill('''
+                    -- <<fk_name>> has no NULL today. One NULL arriving tomorrow is enough to break NOT IN:
+                    SELECT (SELECT COUNT(*) FROM <<parent>> p
+                            WHERE  <<cmp>> NOT IN (SELECT <<sub>> FROM <<child>> c)) AS not_in_today,
+                           (SELECT COUNT(*) FROM <<parent>> p
+                            WHERE  <<cmp>> NOT IN (SELECT <<sub>> FROM <<child>> c UNION ALL SELECT NULL)) AS not_in_after_one_null,
+                           (SELECT COUNT(*) FROM <<parent>> p
+                            WHERE  NOT EXISTS (SELECT 1 FROM <<child>> c WHERE <<cond>>)) AS not_exists''',
+                            fk_name=f"{r.child_table}.{r.child_col}", parent=parent, child=child, cmp=cmp_in, sub=sub, cond=cond)
+            return fill('''
+                -- Which <<pname>> rows does no <<cname>>.<<fk_name>> point at? <<fk_name>> contains NULLs.
+                SELECT (SELECT COUNT(*) FROM <<parent>> p
+                        WHERE  <<cmp>> NOT IN (SELECT <<sub>> FROM <<child>> c)) AS using_not_in,
+                       (SELECT COUNT(*) FROM <<parent>> p
+                        WHERE  NOT EXISTS (SELECT 1 FROM <<child>> c WHERE <<cond>>)) AS using_not_exists''',
+                        pname=r.parent_table, cname=r.child_table, fk_name=r.child_col, parent=parent, child=child, cmp=cmp_in, sub=sub, cond=cond)
+        statements.append(stmt("not_in", "NOT IN vs NOT EXISTS when the sub-query can return NULL", not_in))
+    count = d.null_trap.get("count")
+    if count:
+        table, col = count
+        cp = b.p.col(table, col)
+
+        def counts(D: Dialect, table=table, col=col, cp=cp) -> str:
+            c = D.ident(col)
+            extra = ""
+            if d.lead and (table, col) == (d.lead[0], d.lead[2]):
+                days = D.days_between(D.ident(d.lead[1]), c, _lead_is_timestamp(b))
+                extra = f",\n       {D.round(f'AVG({days})', 2)} AS avg_{d.lead_name}_skips_nulls"
+            elif cp.numeric:
+                extra = f",\n       {D.round(f'AVG({c})', 2)} AS avg_skips_nulls,\n       {D.round(f'SUM({c}) * 1.0 / COUNT(*)', 2)} AS sum_over_all_rows"
+            return fill('''
+                SELECT COUNT(*) AS all_rows,
+                       COUNT(<<c>>) AS rows_with_<<name>>,
+                       COUNT(*) - COUNT(<<c>>) AS null_<<name>><<extra>>
+                FROM   <<t>>''', c=c, name=re.sub(r"\W", "_", col), extra=extra, t=D.ident(table))
+        statements.append(stmt("count_nulls", f"COUNT(*) vs COUNT({col}): aggregates skip NULLs", counts))
+    def division(D: Dialect) -> str:
+        return fill('''
+            -- Integer ÷ integer truncates in PostgreSQL and SQL Server (MySQL's / and DuckDB's / are already decimal):
+            SELECT 2 / 3 AS integer_division,           -- 0 in PostgreSQL, 0.6667 in MySQL
+                   100.0 * 2 / 3 AS percentage          -- 66.67 everywhere''')
+    statements.append(stmt("division", "Integer division (shown for your database; this engine never truncates)", division, run="show"))
+    story = Step(
+        "null_traps",
+        "NULLs were found in the NULL profile" + (f", including in `{trap[0].child_table}.{trap[0].child_col}`" if trap and not trap[1] else "") + ".",
+        "NULL means unknown, and SQL's three-valued logic makes `x NOT IN (…, NULL)` unknown for every row, so NOT IN silently returns nothing. "
+        "COUNT(column) and AVG skip NULLs. Integer division truncates in some engines. None of these raise an error; they just give wrong numbers.",
+        "We run each trap on your own data next to the safe version, so that the difference is visible and the safe habit sticks.",
+        "The first query counts the same thing with NOT IN and with NOT EXISTS. NOT EXISTS checks for a matching row, so NULLs can't poison it. "
+        "The second compares COUNT(*) with COUNT(column). The last block shows integer division for PostgreSQL; here it is not run because this engine never truncates.",
+    )
+    check = fill('''
+        if not outputs:
+            note("No foreign key and no nullable column here, so NOT IN and COUNT(column) can't go wrong on this data yet. "
+                 "The integer-division trap above still applies in PostgreSQL.")
+        if "not_in" in outputs:
+            row = outputs["not_in"].iloc[0]
+            values = {k: int(v) for k, v in row.items()}
+            metrics["null_trap"] = values
+            if "using_not_in" in values:
+                note(f"**NOT IN returns {values['using_not_in']:,}, NOT EXISTS returns {values['using_not_exists']:,}.** "
+                     "One NULL in the sub-query makes every NOT IN comparison unknown. Use NOT EXISTS (or filter out NULLs).")
+            else:
+                note(f"Today NOT IN finds {values['not_in_today']:,} row(s); after a single NULL arrives it finds **{values['not_in_after_one_null']:,}**, "
+                     f"while NOT EXISTS keeps finding {values['not_exists']:,}. That is why NOT EXISTS is the safe habit.")
+        if "count_nulls" in outputs:
+            row = outputs["count_nulls"].iloc[0]
+            metrics["count_trap"] = {k: (float(v) if v is not None else None) for k, v in row.items()}
+            note(f"COUNT(*) = {int(row.iloc[0]):,} but COUNT(column) = {int(row.iloc[1]):,}: {int(row.iloc[2]):,} NULL(s) are skipped by COUNT, SUM and AVG.")
+    ''')
+    return Cell("null_traps", "NULL traps: NOT IN, COUNT(column), integer division", SECTIONS[7], story, tuple(statements), check)
+
+
+def _names(items) -> str:
+    items = list(items)
+    return ", ".join(f"`{x}`" for x in items[:4]) + (f" and {len(items) - 4} more" if len(items) > 4 else "")
+
+
+# ═════════════════════════════════════════════════════════════════════════
+# Public API
+# ═════════════════════════════════════════════════════════════════════════
+BUILDERS: dict[str, Callable[[Builder], Cell]] = {
+    "schema": _schema_cell, "grain": _grain_cell, "cardinality": _cardinality_cell,
+    "duplicates": _duplicates_cell, "nulls": _nulls_cell, "date_range": _date_range_cell, "orphans": _orphans_cell,
+    "base": _base_cell, "reconcile": _reconcile_cell,
+    "kpis": _kpis_cell, "kpi_by_period": _kpi_by_period_cell,
+    "running_total": _running_total_cell, "top_n": _top_n_cell, "latest_record": _latest_record_cell, "rfm": _rfm_cell,
+    "driver_tree": _driver_tree_cell, "drilldown": _drilldown_cell, "cohort": _cohort_cell,
+    "explain": _explain_cell, "null_traps": _null_traps_cell,
+}
+ORDER = tuple(BUILDERS)
+
+
+def build_cells(d: Decision) -> list[Cell]:
+    if d.halted:
+        return []
+    b = Builder(d)
+    return [BUILDERS[cid](b) for cid in ORDER if cid not in d.skipped]
+
+
+def assumptions(d: Decision) -> list[str]:
+    """Everything a reader must know to trust the numbers, in plain words (app step 4 and the .sql header)."""
+    if not d.kpi:
+        return ["Validation only: no KPI was computed."]
+    b = Builder(d)
+    out = [f"Fact table: `{d.fact}` ({d.profile[d.fact].grain})."]
+    out.append(f"Revenue = {b.revenue_formula()}" + (" (net of discount; gross is shown in the reconciliation)." if d.revenue.discount else "."))
+    if d.revenue.price_rel:
+        out.append(f"The price comes from `{d.revenue.price_rel.parent_table}` (a list price), not from the sale itself.")
+    if d.line_level:
+        out.append(f"`order_facts` has one row per order (`{d.order_key}`); `line_facts` one row per line. AOV = revenue ÷ distinct orders.")
+    if d.date:
+        out.append(f"Periods are {d.period}s of `{d.date[0]}.{d.date[1]}`.")
+    for p in d.partial_periods:
+        out.append(f"{d.label(p)} is partial ({p.coverage:.0%} of its days have data) and is excluded from period-over-period verdicts.")
+    if d.lead:
+        out.append(f"{d.lead_name} = {d.lead[2]} − {d.lead[1]}, in days; orders without `{d.lead[2]}` are left out of its averages.")
+    if d.rating and d.rating.scale:
+        out.append("rating_score maps " + ", ".join(f"'{label}' = {score}" for label, score in d.rating.scale) + ".")
+    if d.customer:
+        out.append("Recency is measured to the last date in the data, not to today.")
+    for t, (keys, order) in d.dedupe.items():
+        out.append(f"`{t}` keeps one row per {', '.join(keys)} ({'latest by ' + order if order else 'an arbitrary copy'}).")
+    if d.dimensions:
+        out.append("Dimensions are joined with LEFT JOIN; a missing match is labelled 'Unknown'.")
+    return out

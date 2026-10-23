@@ -1,0 +1,50 @@
+[
+  {
+    "child_table": "Employees",
+    "child_col": "ReportsTo",
+    "parent_table": "Employees",
+    "parent_col": "EmployeeID"
+  },
+  {
+    "child_table": "Order Details",
+    "child_col": "OrderID",
+    "parent_table": "Orders",
+    "parent_col": "OrderID"
+  },
+  {
+    "child_table": "Order Details",
+    "child_col": "ProductID",
+    "parent_table": "Products",
+    "parent_col": "ProductID"
+  },
+  {
+    "child_table": "Orders",
+    "child_col": "CustomerID",
+    "parent_table": "Customers",
+    "parent_col": "CustomerID"
+  },
+  {
+    "child_table": "Orders",
+    "child_col": "EmployeeID",
+    "parent_table": "Employees",
+    "parent_col": "EmployeeID"
+  },
+  {
+    "child_table": "Orders",
+    "child_col": "ShipVia",
+    "parent_table": "Shippers",
+    "parent_col": "ShipperID"
+  },
+  {
+    "child_table": "Products",
+    "child_col": "CategoryID",
+    "parent_table": "Categories",
+    "parent_col": "CategoryID"
+  },
+  {
+    "child_table": "Products",
+    "child_col": "SupplierID",
+    "parent_table": "Suppliers",
+    "parent_col": "SupplierID"
+  }
+]

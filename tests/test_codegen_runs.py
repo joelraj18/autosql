@@ -1,258 +1,155 @@
-"""Generated code must actually run and beat the baseline."""
-import json
+"""Every generated cell must run, and every MySQL / PostgreSQL statement must respect the dialect rules."""
+import re
 
 import numpy as np
 import pandas as pd
 import pytest
+import sqlglot
 
-from automl import build_cells, decide, interpret, profile_dataset, run_cells, to_notebook
+from autosql import build_cells, run_cells
+from autosql.dialect import BANNED, RESERVED
+from conftest import analyse, catalog_from, new_wheels_frame, shop_frames
 
 
-def execute(df, target):
-    d = decide(df, profile_dataset(df), target)
-    cells = build_cells(d)
-    results, metrics = run_cells(cells, df)
-    errors = [(r.cell_id, r.stdout) for r in results if r.error]
+def timestamps_frame():
+    rng = np.random.default_rng(3)
+    start = pd.Timestamp("2021-01-01") + pd.to_timedelta(rng.integers(0, 600 * 24, 300), unit="h")
+    return pd.DataFrame({"order_id": range(300), "customer_id": rng.integers(1, 40, 300),
+                         "created_at": start.strftime("%Y-%m-%d %H:%M:%S"),
+                         "delivered_at": (start + pd.to_timedelta(rng.integers(20, 200, 300), unit="h")).strftime("%Y-%m-%d %H:%M:%S"),
+                         "amount": rng.uniform(5, 500, 300).round(2), "channel": rng.choice(["app", "web"], 300),
+                         "rating": rng.integers(1, 6, 300)})
+
+
+def list_price_frames():
+    """Quantity in the fact table, price only in the product table (list price)."""
+    rng = np.random.default_rng(4)
+    products = pd.DataFrame({"product_id": range(1, 11), "product_name": [f"Item {i}" for i in range(1, 11)],
+                             "category": rng.choice(["A", "B"], 10), "list_price": rng.uniform(1, 50, 10).round(2)})
+    days = pd.Timestamp("2022-01-01") + pd.to_timedelta(rng.integers(0, 400, 500), unit="D")
+    sales = pd.DataFrame({"sale_id": range(500), "product_id": rng.integers(1, 11, 500), "quantity": rng.integers(1, 4, 500),
+                          "sale_date": days.strftime("%Y-%m-%d"), "store": rng.choice(["North", "South"], 500)})
+    return {"products": products, "sales": sales}
+
+
+def denormalised_lines():
+    """One table of order lines with no separate orders table: order-level columns repeat on every line."""
+    rng = np.random.default_rng(5)
+    orders = pd.DataFrame({"invoice_no": range(1000, 1200), "customer_id": rng.integers(1, 50, 200),
+                           "invoice_date": (pd.Timestamp("2010-12-01") + pd.to_timedelta(rng.integers(0, 365, 200), unit="D")).strftime("%Y-%m-%d"),
+                           "country": rng.choice(["UK", "France", "Spain"], 200)})
+    lines = orders.loc[orders.index.repeat(rng.integers(1, 5, 200))].reset_index(drop=True)
+    lines["stock_code"] = rng.integers(100, 140, len(lines))
+    lines["quantity"] = rng.integers(1, 10, len(lines))
+    lines["unit_price"] = rng.uniform(0.5, 9, len(lines)).round(2)
+    return {"online_retail": lines.drop_duplicates(["invoice_no", "stock_code"])}
+
+
+def awkward_names_frames():
+    """Reserved words, capitals, symbols and quotes in names and values."""
+    rng = np.random.default_rng(6)
+    return {"Order": pd.DataFrame({
+        "Order ID": range(1, 121), "select": rng.choice(["it's", 'say "hi"', "back\\slash", "{x}"], 120),
+        "Group": rng.choice(["x", "y"], 120), "Date": pd.date_range("2022-01-05", periods=120, freq="5D").strftime("%Y-%m-%d"),
+        "Amount": rng.uniform(1, 9, 120).round(2), "user": rng.integers(1, 20, 120)})}
+
+
+CASES = {
+    "northwind": (None, "auto", ()),
+    "northwind_validate": (None, "validate", ()),
+    "northwind_ticked": (None, "auto", ("orders.ship_via → shippers.shipper_id",)),
+    "new_wheels": ({"orders": new_wheels_frame}, "auto", ()),
+    "shop": (shop_frames, "auto", ()),
+    "shop_validate": (shop_frames, "validate", ()),
+    "timestamps": ({"deliveries": timestamps_frame}, "auto", ()),
+    "list_price": (list_price_frames, "auto", ()),
+    "denormalised_lines": (denormalised_lines, "auto", ()),
+    "awkward_names": (awkward_names_frames, "auto", ()),
+}
+
+
+def build(case, northwind_catalog):
+    frames, mode, accept = CASES[case]
+    if frames is None:
+        catalog = northwind_catalog
+    elif callable(frames):
+        catalog = catalog_from(frames())
+    else:
+        catalog = catalog_from({name: make() for name, make in frames.items()})
+    d = analyse(catalog, mode=mode, accept=accept)
+    return catalog, d, build_cells(d)
+
+
+@pytest.fixture(scope="module", params=list(CASES))
+def case(request, northwind_catalog):
+    catalog, d, cells = build(request.param, northwind_catalog)
+    results, metrics = run_cells(cells, catalog)
+    return request.param, d, cells, results, metrics
+
+
+def test_every_cell_runs(case):
+    name, d, cells, results, metrics = case
+    assert not d.halted
+    errors = [(r.cell_id, r.error, r.stdout[-800:]) for r in results if r.error]
     assert not errors, errors
-    return d, cells, results, metrics
+    assert all(r.notes for r in results), [r.cell_id for r in results if not r.notes]  # every cell explains its result
+    assert all(c.code("mysql").startswith("-- Why:") for c in cells)
+    if d.kpi:
+        assert metrics.get("reconciled") is True
 
 
-@pytest.mark.parametrize("fixture,target", [("classification_df", "churn"), ("regression_df", "price")])
-def test_supervised_pipeline_runs_and_beats_baseline(request, fixture, target):
-    df = request.getfixturevalue(fixture)
-    _, cells, results, m = execute(df, target)
-    assert m["test_score"] > m["baseline_score"] + 0.1
-    assert m["top_features"]
-    assert all(r.figures for r in results if r.cell_id in ("eda", "train", "explain"))
-    assert all(c.code.startswith("# Why:") for c in cells)
-    assert interpret(m, target)
+def _strip_comments(sql: str) -> str:
+    return re.sub(r"--[^\n]*", "", sql)
 
 
-def test_clustering_pipeline_runs(blobs_df):
-    _, _, _, m = execute(blobs_df, None)  # messy columns: must still run
-    assert m["k"] >= 2
-
-    clean = blobs_df[["f1", "f2", "f3"]]  # clean blobs: must find the 3 groups
-    _, _, _, m = execute(clean, None)
-    assert m["k"] == 3 and m["silhouette"] > 0.5
-
-
-def test_mixed_type_categories_and_unseen_values():
-    rng = np.random.default_rng(0)
-    n = 400
-    df = pd.DataFrame({
-        "x": rng.normal(size=n),
-        "mixed": rng.choice([1, "two", 3.0, None], n).tolist(),  # mixed types used to crash OneHotEncoder
-        "rare": [f"r{i % 60}" for i in range(n)],
-    })
-    df["y"] = df["x"] * 2 + rng.normal(size=n) * 0.1
-    execute(df, "y")
+def _left_join_filters(sql: str) -> list[str]:
+    """Columns of a LEFT-joined table used in a WHERE condition other than `IS NULL` (that turns the join into an inner join)."""
+    bad = []
+    for body in re.split(r"\bUNION ALL\b", _strip_comments(sql)):
+        for alias in re.findall(r"LEFT\s+JOIN\s+\S+\s+(\w+)\s+ON", body):
+            for where in re.findall(r"\bWHERE\b(.*?)(?=\bGROUP\b|\bORDER\b|\)\s*AS|\Z)", body, re.S):
+                for m in re.finditer(rf"\b{alias}\.\w+", where):
+                    if not re.match(r"\s+IS\s+(NOT\s+)?NULL", where[m.end():]):
+                        bad.append(m.group())
+    return bad
 
 
-def test_error_skips_later_cells(classification_df):
-    d = decide(classification_df, profile_dataset(classification_df), "churn")
-    cells = build_cells(d)
-    broken = cells[:2] + [cells[2].__class__("boom", "Boom", cells[2].story, "raise ValueError('bad')")] + cells[3:]
-    results, _ = run_cells(broken, classification_df)
-    assert results[2].error == "ValueError: bad"
-    assert all(r.skipped for r in results[3:])
+def test_dialect_rules(case):
+    name, d, cells, *_ = case
+    for cell in cells:
+        for st in cell.statements:
+            for dialect in ("mysql", "postgres", "duckdb"):
+                sql = st.sql[dialect]
+                body = _strip_comments(sql).upper()
+                for construct, why in BANNED.items():
+                    assert construct not in body, f"{cell.id}/{st.label}/{dialect}: {construct} ({why})"
+                aliases = re.findall(r"\bAS\s+([a-z_][a-z0-9_]*)\b", _strip_comments(sql))
+                assert not [a for a in aliases if a in RESERVED], (cell.id, st.label, aliases)
+                assert not _left_join_filters(sql), (cell.id, st.label, _left_join_filters(sql))
+                if st.run != "show":  # the integer-division demo divides integers on purpose
+                    for m in re.finditer(r"/\s*", _strip_comments(sql)):
+                        after = _strip_comments(sql)[m.end():m.end() + 12]
+                        assert after.startswith("NULLIF(") or re.match(r"\d+\.\d", after), (cell.id, st.label, dialect, after)
+            assert "::" not in st.sql["mysql"], (cell.id, st.label)
+            pg = _strip_comments(st.sql["postgres"])
+            assert all(pg[m.end():].startswith("(") for m in re.finditer(r"ROUND\(", pg)), (cell.id, st.label)  # ROUND((x)::numeric, n)
 
 
-def test_notebook_export_is_valid_json(classification_df):
-    d = decide(classification_df, profile_dataset(classification_df), "churn")
-    nb = json.loads(to_notebook(build_cells(d), d, "data.csv"))
-    sources = ["".join(c["source"]) for c in nb["cells"]]
-    assert any('pd.read_csv("data.csv")' in s for s in sources)
-    assert any("What we found" in s for s in sources)
+def test_mysql_and_postgres_parse(case):
+    name, d, cells, *_ = case
+    failures = []
+    for cell in cells:
+        for st in cell.statements:
+            for dialect in ("mysql", "postgres"):
+                try:
+                    sqlglot.parse(st.sql[dialect], read=dialect)
+                except sqlglot.errors.ParseError as error:
+                    failures.append((cell.id, st.label, dialect, str(error)[:200]))
+    assert not failures, failures
 
 
-def test_each_plt_show_is_its_own_figure(classification_df):
-    """Plots must not draw on top of each other (histograms, heatmap, class bars = 3 images)."""
-    d = decide(classification_df, profile_dataset(classification_df), "churn")
-    results, _ = run_cells(build_cells(d), classification_df)
-    eda = next(r for r in results if r.cell_id == "eda")
-    assert len(eda.figures) == 3
-
-
-def test_every_cell_has_a_five_part_story_and_explains_its_result(regression_df, blobs_df):
-    """Before: found / why / action / code. After running: at least one 📌 note."""
-    for df, target in [(regression_df, "price"), (blobs_df[["f1", "f2", "f3"]], None)]:
-        d = decide(df, profile_dataset(df), target)
-        cells = build_cells(d)
-        for c in cells:
-            assert c.story.found and c.story.why and c.story.action and c.story.code, c.id
-        results, _ = run_cells(cells, df)
-        assert not [r.cell_id for r in results if r.error]
-        silent = [r.cell_id for r in results if r.cell_id != "setup" and not r.notes]
-        assert not silent, silent
-
-
-def test_regression_runs_statistical_inference(regression_df):
-    d = decide(regression_df, profile_dataset(regression_df), "price")
-    assert [c.id for c in build_cells(d)][7:10] == ["vif", "ols", "assumptions"]
-    _, _, _, m = execute(regression_df, "price")
-    assert 0 < m["ols_r2"] <= 1 and m["ols_f_pvalue"] < 0.05
-    assert set(m["assumptions"]) == {"Linearity (RESET test)", "Equal spread / homoscedasticity (Breusch-Pagan)",
-                                     "Normal residuals (Jarque-Bera)"}
-    assert len(m["cv_scores"]) == len(d.candidates) >= 5 and "rules_score" in m
-
-
-def test_clustering_runs_pca_and_hierarchical(blobs_df):
-    _, cells, _, m = execute(blobs_df[["f1", "f2", "f3"]], None)
-    assert [c.id for c in cells][-4:] == ["pca", "choose_k", "cluster_fit", "hierarchical"]
-    assert m["pca_n80"] <= 3 and m["cluster_agreement"] > 0.6
-
-
-def test_imbalanced_data_compares_resampling_and_never_crashes():
-    """Regression test: the logit cell crashed when no input was significant; resampling must stay inside the folds."""
-    pytest.importorskip("imblearn")
-    from sklearn.datasets import make_classification
-    X, y = make_classification(1500, 6, n_informative=3, weights=[0.95], random_state=1)
-    df = pd.DataFrame(X, columns=[f"f{i}" for i in range(6)])
-    df["fraud"] = y
-    d, cells, results, m = execute(df, "fraud")
-    assert d.class_weight and d.resample and "resample" in [c.id for c in cells]
-    assert set(m["balance_scores"]) >= {"class weights (current)", "random oversampling", "random undersampling"}
-    assert m["balance_method"] in m["balance_scores"]
-
-
-def test_tuning_never_makes_the_model_worse(classification_df):
-    _, _, results, m = execute(classification_df, "churn")
-    if "tuned_cv" in m:
-        assert m["tuned_cv"] > m["cv_scores"][m["best_model"]]
-    assert next(r for r in results if r.cell_id == "tune").notes
-
-
-def test_many_exact_duplicates_are_kept_not_dropped():
-    """300 rows of 3 small category columns repeat naturally; dropping copies used to leave only 9 rows."""
-    rng = np.random.default_rng(0)
-    df = pd.DataFrame({"colour": rng.choice(list("RGB"), 300), "size": rng.choice(list("SML"), 300), "shop": rng.choice(list("ab"), 300)})
-    d = decide(df, profile_dataset(df), None)
-    assert not d.drop_duplicates and "shop" not in d.drop_cols  # 'shop' is only the last column, not named like an outcome
-    results, _ = run_cells(build_cells(d), df)
-    prepare = next(r for r in results if r.cell_id == "prepare")
-    assert "**300 rows**" in prepare.notes[0]
-
-
-def test_xgboost_handles_text_labels_when_installed():
-    pytest.importorskip("xgboost")
-    rng = np.random.default_rng(0)
-    df = pd.DataFrame({"x": rng.normal(size=400), "z": rng.normal(size=400)})
-    df["label"] = np.where(df["x"] + rng.normal(scale=0.5, size=400) > 0, "yes", "no")
-    d = decide(df, profile_dataset(df), "label")
-    assert "XGBClassifier" in d.candidates
-    _, _, _, m = execute(df, "label")
-    assert m["cv_scores"]["XGBClassifier"] > 0.7
-
-
-def test_every_test_row_having_a_twin_does_not_crash():
-    """Regression test: with few input combinations, no test row is 'unseen'; scoring an empty set used to crash."""
-    rng = np.random.default_rng(0)
-    df = pd.DataFrame({"colour": rng.choice(list("RGB"), 300), "size": rng.choice(list("SML"), 300),
-                       "label": rng.choice(["a", "b"], 300)})
-    d, _, results, m = execute(df, "label")
-    assert d.lookalikes and "test_score_unseen" not in m
-    train = next(r for r in results if r.cell_id == "train")
-    assert any("Every test row has an identical twin" in n for n in train.notes)
-
-
-# ── Regression tests from the thorough audit ──────────────────────────────────
-def test_column_names_never_break_the_generated_code():
-    """A target named with braces and quotes used to crash (f-string injection: `{x}` was executed)."""
-    rng = np.random.default_rng(0)
-    df = pd.DataFrame({"weird col (€)": rng.normal(size=300), "kategorie ü": rng.choice(list("xyz"), 300)})
-    df['target {x} "q"'] = df["weird col (€)"] * 3 + rng.normal(size=300)
-    _, cells, results, _ = execute(df, 'target {x} "q"')
-    assert {"insights", "ols"} <= {c.id for c in cells}
-    assert all(r.notes for r in results if r.cell_id != "setup")
-
-
-def test_infinity_is_treated_as_missing():
-    rng = np.random.default_rng(0)
-    df = pd.DataFrame({"x": rng.normal(size=400), "ratio": np.where(rng.random(400) < 0.05, np.inf, rng.normal(size=400))})
-    df["y"] = df["x"] + rng.normal(size=400)
-    d, cells, _, _ = execute(df, "y")
-    assert d.has_infinite and "replace([np.inf, -np.inf], np.nan)" in cells[1].code
-
-
-def test_insights_with_no_group_large_enough_is_skipped_not_crashed():
-    rng = np.random.default_rng(0)
-    df = pd.DataFrame({"a": rng.normal(size=31), "b": rng.normal(size=31), "c": rng.choice(list("xyz"), 31)})
-    df["label"] = ["p", "q"] * 15 + ["p"]
-    _, _, results, _ = execute(df, "label")
-    insights = next(r for r in results if r.cell_id == "insights")
-    assert any("No group of any column has at least 30 rows" in n for n in insights.notes)
-
-
-def test_near_perfect_score_warns_about_leakage():
-    rng = np.random.default_rng(0)
-    df = pd.DataFrame({"a": rng.normal(size=500), "b": rng.normal(size=500)})
-    df["y"] = df["a"] * 2
-    df["y_copy"] = df["y"]                       # the answer, hiding under another name
-    _, _, results, _ = execute(df, "y")
-    train = next(r for r in results if r.cell_id == "train")
-    assert any("near-perfect score" in n for n in train.notes)
-
-
-# ── A boosting library that is installed but will not load (macOS without libomp) ─
-LIBOMP_ERROR = "dlopen(lib_lightgbm.dylib, 0x0006): Library not loaded: @rpath/libomp.dylib"
-
-
-@pytest.fixture
-def lightgbm_cannot_load(monkeypatch):
-    """Make `import lightgbm` fail the way it does on a Mac without libomp, for the engine and for generated code."""
-    import builtins
-    import importlib
-    import sys
-
-    from automl.decision import library_problem
-
-    real_import, real_import_module = builtins.__import__, importlib.import_module
-
-    def broken(name, *args, **kwargs):
-        if name == "lightgbm" or name.startswith("lightgbm."):
-            raise OSError(LIBOMP_ERROR)
-        return real_import(name, *args, **kwargs)
-
-    def broken_module(name, *args, **kwargs):
-        if name == "lightgbm":
-            raise OSError(LIBOMP_ERROR)
-        return real_import_module(name, *args, **kwargs)
-
-    for mod in [m for m in sys.modules if m == "lightgbm" or m.startswith("lightgbm.")]:
-        monkeypatch.delitem(sys.modules, mod)
-    monkeypatch.setattr(builtins, "__import__", broken)
-    monkeypatch.setattr(importlib, "import_module", broken_module)
-    library_problem.cache_clear()
-    yield
-    library_problem.cache_clear()
-
-
-def test_an_unloadable_lightgbm_is_skipped_and_explained(lightgbm_cannot_load, classification_df):
-    """Regression test: on macOS without libomp, `import lightgbm` raised OSError and stopped the whole run."""
-    d, _, results, m = execute(classification_df, "churn")
-    assert "LGBMClassifier" not in d.candidates and "LGBMClassifier" not in m["cv_scores"]
-    step = next(s for s in d.steps if s.key == "boosting_libs_broken")
-    assert "libomp" in step.found and "brew install libomp" in step.action
-
-
-def test_an_exported_notebook_survives_a_library_that_will_not_load(classification_df, monkeypatch):
-    """The notebook may run on another computer: built where LightGBM works, run where it does not."""
-    pytest.importorskip("lightgbm")
-    d = decide(classification_df, profile_dataset(classification_df), "churn")
-    cells = build_cells(d)
-    assert "LGBMClassifier" in d.candidates
-    import builtins
-    real_import = builtins.__import__
-
-    def broken(name, *args, **kwargs):
-        if name == "lightgbm":
-            raise OSError(LIBOMP_ERROR)
-        return real_import(name, *args, **kwargs)
-
-    monkeypatch.setattr(builtins, "__import__", broken)
-    results, m = run_cells(cells, classification_df)
-    assert not [r.cell_id for r in results if r.error]
-    compare = next(r for r in results if r.cell_id == "compare")
-    assert any("Skipped LGBMClassifier" in n and "brew install libomp" in n for n in compare.notes)
-    assert "LGBMClassifier" not in m["cv_scores"]
+def test_error_skips_later_cells(northwind_catalog):
+    _, d, cells = build("northwind", northwind_catalog)
+    broken = cells[:2] + [cells[2].__class__("boom", "Boom", "x", cells[2].story, cells[2].statements, "raise ValueError('bad')")] + cells[3:]
+    results, _ = run_cells(broken, northwind_catalog)
+    assert results[2].error.startswith("ValueError") and all(r.skipped for r in results[3:])

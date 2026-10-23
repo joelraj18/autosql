@@ -1,46 +1,46 @@
-import numpy as np
 import pandas as pd
 
-from automl.profiling import profile_dataset
+from autosql import profile_catalog
+from conftest import catalog_from
 
 
-def roles(df):
-    return {c.name: c.role for c in profile_dataset(df).columns}
+def test_northwind_keys_and_grain(northwind_catalog):
+    p = profile_catalog(northwind_catalog)
+    keys = {name: t.primary_key for name, t in p.tables.items()}
+    assert keys == {
+        "categories": ("category_id",), "customers": ("customer_id",), "employees": ("employee_id",),
+        "order_details": ("order_id", "product_id"), "orders": ("order_id",), "products": ("product_id",),
+        "shippers": ("shipper_id",), "suppliers": ("supplier_id",),
+    }
+    assert p["order_details"].key_status == "composite"
+    assert p["shippers"].n_rows == 3  # tiny tables still get a key
+    assert p["customers"].col("company_name").role == "attribute"  # unique too, but a name is not a key
+    roles = {c.name: (c.role, c.kind) for c in p["order_details"].columns}
+    assert roles["unit_price"] == ("measure", "price") and roles["quantity"] == ("measure", "quantity")
+    assert roles["discount"] == ("measure", "discount")
+    assert p["orders"].col("freight").kind == "charge"
+    assert p["customers"].col("postal_code").logical_type == "text"
 
 
-def test_messy_columns_get_the_right_roles(classification_df):
-    r = roles(classification_df)
-    assert r["customer_id"] == "id"
-    assert r["signup"] == "datetime"
-    assert r["city"] == "categorical"
-    assert r["source"] == "constant"
-    assert r["f0"] == "numeric"
-
-
-def test_all_unique_float_is_a_quantity_not_an_id():
-    df = pd.DataFrame({"price": np.random.default_rng(0).random(100) * 1000})
-    assert roles(df)["price"] == "numeric"
-
-
-def test_text_high_cardinality_and_string_ids():
-    rng = np.random.default_rng(0)
-    n = 200
+def test_rating_scale_date_parts_and_duplicates():
     df = pd.DataFrame({
-        "review": [f"this product was really quite good, I would buy it again {i}" for i in range(n)],
-        "zip": rng.integers(0, 120, n).astype(str),
-        "order_ref": [f"ORD-{i:05d}" for i in range(n)],
-        "numbers_as_text": rng.integers(0, 5, n).astype(str),
+        "id": list(range(1, 20)) + [19],                  # one duplicated id in 20 rows
+        "feedback": ["Very Bad", "good", "Okay", "Very Good", "Bad"] * 4,
+        "stars": [1, 5, 3, 4, 2] * 4,
+        "order_date": ["2020-01-01"] * 20,
+        "quarter_number": [1] * 20,
+        "country": ["A", "B", "A", "B", "A"] * 4,
     })
-    r = roles(df)
-    assert r["review"] == "text"
-    assert r["zip"] == "high_card_categorical"
-    assert r["order_ref"] == "id"
-    assert r["numbers_as_text"] == "categorical"  # not mistaken for dates
+    t = profile_catalog(catalog_from({"t": df}))["t"]
+    fb = t.col("feedback")
+    assert fb.role == "rating" and dict(fb.scale)["good"] == 4 and dict(fb.scale)["Very Bad"] == 1
+    assert t.col("stars").role == "rating"
+    assert t.col("quarter_number").role in ("date_part", "constant")
+    assert t.col("country").role == "dimension"
+    assert t.key_status == "intended" and t.primary_key == ("id",) and t.duplicate_keys == 1
 
 
-def test_dataset_level_numbers():
-    df = pd.DataFrame({"a": [1, 1, 2, np.nan], "b": ["x", "x", "y", "z"]})
-    p = profile_dataset(df)
-    assert (p.n_rows, p.n_cols, p.duplicate_rows) == (4, 2, 1)
-    assert p.missing_frac == 1 / 8
-    assert list(p.to_frame()["column"]) == ["a", "b"]
+def test_no_key_table():
+    df = pd.DataFrame({"a": ["x", "x", "y"], "b": [1, 1, 2]})
+    t = profile_catalog(catalog_from({"t": df}))["t"]
+    assert t.key_status == "none" and t.exact_duplicates == 1
