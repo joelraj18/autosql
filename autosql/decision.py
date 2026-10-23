@@ -33,6 +33,7 @@ MIN_COMPLETE_QUARTERS = 4     # fewer complete quarters -> months
 YEARS_FOR_YEARLY = 5          # more than 5 years of data -> years
 MIN_LEAD_SHARE = 0.90         # a "ship" date must be on/after the order date in >= 90% of rows
 SMALL_TABLE = 100             # largest table smaller than this -> warn that KPIs are fragile
+PER_YEAR = {"quarter": 4, "month": 12, "year": 1}
 TOP_N = 3
 NTILE_BUCKETS = 5
 MIN_PERIODS_FOR_CORR = 6      # a correlation across fewer periods is noise
@@ -88,6 +89,10 @@ class Period:
     @property
     def complete(self) -> bool:
         return self.coverage >= PERIOD_COVERAGE
+
+    def index(self, unit: str) -> int:
+        """A running number: consecutive periods differ by exactly 1 (year × 4 + quarter, year × 12 + month, year)."""
+        return self.year * PER_YEAR[unit] + self.number if unit in ("quarter", "month") else self.year
 
     def label(self, unit: str) -> str:
         return {"quarter": f"{self.year}-Q{self.number}", "month": f"{self.year}-{self.number:02d}"}.get(unit, str(self.year))
@@ -155,10 +160,27 @@ class Decision:
         return [p for p in self.periods if not p.complete]
 
     @property
+    def missing_periods(self) -> list[str]:
+        """Calendar periods between the first and the last with no rows at all (a gap breaks LAG-based comparisons)."""
+        if not self.periods or not self.period:
+            return []
+        seen = {p.index(self.period) for p in self.periods}
+        first, last = min(seen), max(seen)
+        out = []
+        for i in range(first, last + 1):
+            if i not in seen:
+                if self.period == "year":
+                    out.append(str(i))
+                else:
+                    year, number = divmod(i - 1, PER_YEAR[self.period])
+                    out.append(f"{year}-Q{number + 1}" if self.period == "quarter" else f"{year}-{number + 1:02d}")
+        return out
+
+    @property
     def compare(self) -> tuple[Period, Period] | None:
-        """The last two complete periods, when they are consecutive."""
+        """The last two complete periods, when they are consecutive in the calendar."""
         done = self.complete_periods
-        if len(done) >= 2 and self.periods.index(done[-1]) - self.periods.index(done[-2]) == 1:
+        if len(done) >= 2 and done[-1].index(self.period) - done[-2].index(self.period) == 1:
             return done[-2], done[-1]
         return None
 
@@ -291,7 +313,7 @@ def decide(catalog: Catalog, profile: CatalogProfile, schema: Schema, mode: str 
         elif t.key_status == "intended":
             keep = _dedupe_order(t)
             nulls = f", and {t.null_keys:,} row(s) have none" if t.null_keys else ""
-            d.steps.append(story("grain_intended", table=t.name, key=t.primary_key[0], dups=t.duplicate_keys, extra=t.extra_rows,
+            d.steps.append(story("grain_intended", table=t.name, key="`, `".join(t.primary_key), dups=t.duplicate_keys, extra=t.extra_rows,
                                  nulls=nulls, keep=f"latest by `{keep}`" if keep else "first one found"))
         else:
             d.steps.append(story("grain_none", table=t.name))
@@ -551,6 +573,8 @@ def _choose_period(d: Decision, catalog: Catalog, dcol: ColumnProfile) -> None:
     for p in d.partial_periods:
         d.steps.append(story("partial_period", label=d.label(p), first=max(p.first_seen, p.start), last=min(p.last_seen, p.end),
                              days=p.covered, total=p.days, pct=p.coverage * 100))
+    if d.missing_periods:
+        d.steps.append(story("missing_periods", n=len(d.missing_periods), unit=d.period, labels=", ".join(d.missing_periods[:6])))
 
 
 def _choose_lead(d: Decision, catalog: Catalog) -> None:

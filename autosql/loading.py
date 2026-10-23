@@ -35,6 +35,8 @@ DATE_FORMATS = (
 _INT = re.compile(r"^[+-]?\d+$")
 _NUM = re.compile(r"^[+-]?(\d+\.?\d*|\.\d+)([eE][+-]?\d+)?$")
 _LEADING_ZERO = re.compile(r"^[+-]?0\d")
+_DECIMAL_COMMA = re.compile(r"^[+-]?(\d{1,3}(\.\d{3})+|\d+)(,\d+)?$")  # 1.234,56 or 12,5 (European spreadsheets)
+DELIMITERS = (",", ";", "\t", "|")
 
 
 @dataclass
@@ -114,8 +116,16 @@ def _parse_dates(values: pd.Series) -> tuple[str | None, bool]:
     return best, ambiguous
 
 
-def infer_column(raw: pd.Series) -> tuple[pd.Series, str, str | None, int, bool]:
-    """Type one text column. Returns (values, logical type, date format, unparsed dates, ambiguous day/month)."""
+def infer_column(raw: pd.Series, decimal_comma: bool = False) -> tuple[pd.Series, str, str | None, int, bool]:
+    """Type one text column. Returns (values, logical type, date format, unparsed dates, ambiguous day/month).
+
+    ``decimal_comma``: the file uses ';' between fields, so '12,5' and '1.234,56' are numbers written the European way.
+    """
+    if decimal_comma:
+        present = raw.dropna().astype(str).str.strip()
+        present = present[present != ""]
+        if len(present) and present.str.contains(",").any() and present.str.match(_DECIMAL_COMMA).all():
+            raw = raw.map(lambda v: v if not isinstance(v, str) else v.strip().replace(".", "").replace(",", "."))
     values = raw.dropna().astype(str).str.strip()
     values = values[values != ""]
     blank = raw.isna() | (raw.astype(str).str.strip() == "")
@@ -154,7 +164,7 @@ def infer_column(raw: pd.Series) -> tuple[pd.Series, str, str | None, int, bool]
     return text.astype("object"), "text", None, 0, False
 
 
-def make_table(name: str, source: str, raw: pd.DataFrame, taken: set[str]) -> Table:
+def make_table(name: str, source: str, raw: pd.DataFrame, taken: set[str], decimal_comma: bool = False) -> Table:
     originals = [str(c) for c in raw.columns]
     # a name with no Latin letters or digits (e.g. 城市) becomes column_<position>; the original stays in the profile
     sql_names = unique_names([snake_case(c) if snake_case(c) != "unnamed" or not c.strip() else f"column_{i + 1}"
@@ -163,7 +173,7 @@ def make_table(name: str, source: str, raw: pd.DataFrame, taken: set[str]) -> Ta
     raw.columns = sql_names
     df, types, formats, unparsed, ambiguous = pd.DataFrame(index=raw.index), {}, {}, {}, []
     for col in sql_names:
-        values, logical, fmt, bad, amb = infer_column(raw[col])
+        values, logical, fmt, bad, amb = infer_column(raw[col], decimal_comma)
         df[col] = values
         types[col] = logical
         if fmt:
@@ -177,13 +187,27 @@ def make_table(name: str, source: str, raw: pd.DataFrame, taken: set[str]) -> Ta
 
 
 # ── Files ────────────────────────────────────────────────────────────────
-def _read_text_table(data: bytes, filename: str) -> pd.DataFrame:
-    sep = "\t" if filename.lower().endswith((".tsv", ".txt")) else ","
+def sniff_delimiter(data: bytes, filename: str) -> str:
+    """The field separator: the candidate that appears the same, non-zero number of times on the first lines."""
+    if filename.lower().endswith(".tsv"):
+        return "\t"
+    head = data[:20_000].decode("utf-8", errors="ignore").splitlines()[:20]
+    head = [line for line in head if line.strip()]
+    best, best_count = ",", 0
+    for sep in DELIMITERS:
+        counts = [line.count(sep) for line in head]
+        if counts and counts[0] > 0 and len(set(counts[: min(len(counts), 10)])) == 1 and counts[0] > best_count:
+            best, best_count = sep, counts[0]
+    return best
+
+
+def _read_text_table(data: bytes, filename: str) -> tuple[pd.DataFrame, str]:
+    sep = sniff_delimiter(data, filename)
     last_error = None
     for encoding in ("utf-8-sig", "latin-1"):
         try:
             return pd.read_csv(io.BytesIO(data), sep=sep, dtype=str, keep_default_na=False, na_values=NA_VALUES,
-                               encoding=encoding, low_memory=False)
+                               encoding=encoding, low_memory=False), sep
         except UnicodeDecodeError as error:
             last_error = error
     raise last_error
@@ -226,21 +250,22 @@ def read_files(files: list[tuple[str, bytes]]) -> Catalog:
         try:
             if base.lower().endswith((".xlsx", ".xls")):
                 sheets = _read_excel(data)
-                frames = [(stem if len(sheets) == 1 else f"{stem}_{sheet}", f"{filename} › {sheet}", df)
+                frames = [(stem if len(sheets) == 1 else f"{stem}_{sheet}", f"{filename} › {sheet}", df, False)
                           for sheet, df in sheets.items()]
             elif base.lower().endswith((".csv", ".tsv", ".txt")):
-                frames = [(stem, filename, _read_text_table(data, base))]
+                df, sep = _read_text_table(data, base)
+                frames = [(stem, filename, df, sep == ";")]
             else:
                 catalog.skipped.append((filename, "is not a CSV, TSV, Excel or ZIP file"))
                 continue
         except Exception as error:  # empty, corrupt or password-protected files
             catalog.skipped.append((filename, f"could not be read ({type(error).__name__}: {str(error)[:120]})"))
             continue
-        for name, source, raw in frames:
+        for name, source, raw, decimal_comma in frames:
             if raw.shape[1] == 0:
                 catalog.skipped.append((source, "has no columns"))
                 continue
-            table = make_table(name, source, raw, set(catalog.tables))
+            table = make_table(name, source, raw, set(catalog.tables), decimal_comma)
             catalog.tables[table.name] = table
     return catalog
 

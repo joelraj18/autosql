@@ -83,3 +83,13 @@ def test_iso_timestamps_with_zones_and_non_latin_names():
     t = read_files([("t.csv", as_csv(df))])["t"]
     assert list(t.df.columns) == ["column_1", "created_at"] and t.column_map["column_1"] == "城市"
     assert t.types["created_at"] == "timestamp" and t.df["created_at"].iloc[0] == pd.Timestamp("2022-01-01 10:00:00")
+
+
+def test_semicolon_files_with_decimal_commas():
+    text = "id;amount;big;code\n" + "\n".join(f"{i};{i},5;1.234,{i:02d};0{i}" for i in range(30))
+    t = read_files([("eu.csv", text.encode())])["eu"]
+    assert t.types == {"id": "integer", "amount": "decimal", "big": "decimal", "code": "text"}
+    assert t.df["amount"].iloc[1] == 1.5 and t.df["big"].iloc[1] == 1234.01 and t.df["code"].iloc[0] == "00"
+    quoted = read_files([("q.csv", b'name,city\n"Smith; John",Paris\n"Doe; Jane",Rome\n')])["q"]
+    assert list(quoted.df.columns) == ["name", "city"]  # a separator inside quotes doesn't count
+    assert list(read_files([("p.csv", b"a|b\n1|x\n2|y\n")])["p"].df.columns) == ["a", "b"]

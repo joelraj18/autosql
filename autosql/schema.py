@@ -261,7 +261,7 @@ def to_dot(profile: CatalogProfile, schema: Schema, max_columns: int = 8) -> str
     lines = ["digraph schema {", "  rankdir=LR; bgcolor=transparent;",
              '  node [shape=plain, fontname="Helvetica", fontsize=11];', '  edge [color="#86868b", fontname="Helvetica", fontsize=9];']
     for t in profile.tables.values():
-        rows = [f'<tr><td bgcolor="#0071e3" align="left"><font color="white"><b>{html.escape(t.name)}</b> '
+        rows = [f'<tr><td bgcolor="#2a78d6" align="left"><font color="white"><b>{html.escape(t.name)}</b> '
                 f'({t.n_rows:,} rows)</font></td></tr>']
         shown = [c for c in t.columns if c.name in t.primary_key or (t.name, c.name) in fk_cols]
         shown += [c for c in t.columns if c not in shown][: max(0, max_columns - len(shown))]

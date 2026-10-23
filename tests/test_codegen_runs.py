@@ -54,6 +54,30 @@ def awkward_names_frames():
         "Amount": rng.uniform(1, 9, 120).round(2), "user": rng.integers(1, 20, 120)})}
 
 
+def tickets_frame():
+    """No money column at all: the analysis counts rows (orders) per period."""
+    rng = np.random.default_rng(8)
+    return pd.DataFrame({"ticket_id": range(400), "customer_id": rng.integers(1, 60, 400),
+                         "opened_at": pd.date_range("2022-01-01", periods=400, freq="D").strftime("%Y-%m-%d"),
+                         "status": rng.choice(["open", "closed"], 400)})
+
+
+def gap_quarter_frame():
+    """No orders at all in 2022-Q3: LAG must not compare 2022-Q4 with 2022-Q2."""
+    rng = np.random.default_rng(9)
+    days = pd.date_range("2022-01-01", "2023-06-30", freq="D")
+    days = days[~((days >= "2022-07-01") & (days < "2022-10-01"))]
+    return pd.DataFrame({"order_id": range(len(days)), "customer_id": rng.integers(1, 80, len(days)),
+                         "amount": rng.uniform(1, 9, len(days)).round(2), "order_date": days.strftime("%Y-%m-%d")})
+
+
+def double_loaded_frames():
+    """The shop with five order lines loaded twice: exact copies the views must drop."""
+    frames = shop_frames()
+    frames["order_items"] = pd.concat([frames["order_items"], frames["order_items"].iloc[:5]])
+    return frames
+
+
 CASES = {
     "northwind": (None, "auto", ()),
     "northwind_validate": (None, "validate", ()),
@@ -65,6 +89,9 @@ CASES = {
     "list_price": (list_price_frames, "auto", ()),
     "denormalised_lines": (denormalised_lines, "auto", ()),
     "awkward_names": (awkward_names_frames, "auto", ()),
+    "tickets_count_only": ({"tickets": tickets_frame}, "auto", ()),
+    "gap_quarter": ({"orders": gap_quarter_frame}, "auto", ()),
+    "double_loaded": (double_loaded_frames, "auto", ()),
 }
 
 
@@ -107,7 +134,8 @@ def _left_join_filters(sql: str) -> list[str]:
     bad = []
     for body in re.split(r"\bUNION ALL\b", _strip_comments(sql)):
         for alias in re.findall(r"LEFT\s+JOIN\s+\S+\s+(\w+)\s+ON", body):
-            for where in re.findall(r"\bWHERE\b(.*?)(?=\bGROUP\b|\bORDER\b|\)\s*AS|\Z)", body, re.S):
+            # a WHERE clause ends at GROUP / ORDER / LIMIT, at the ")" closing its CTE or sub-query, or at the next SELECT
+            for where in re.findall(r"\bWHERE\b(.*?)(?=\bGROUP\b|\bORDER\b|\bLIMIT\b|\)\s*(?:AS\b|,|\n|\Z)|\bSELECT\b|\Z)", body, re.S):
                 for m in re.finditer(rf"\b{alias}\.\w+", where):
                     if not re.match(r"\s+IS\s+(NOT\s+)?NULL", where[m.end():]):
                         bad.append(m.group())
@@ -153,3 +181,30 @@ def test_error_skips_later_cells(northwind_catalog):
     broken = cells[:2] + [cells[2].__class__("boom", "Boom", "x", cells[2].story, cells[2].statements, "raise ValueError('bad')")] + cells[3:]
     results, _ = run_cells(broken, northwind_catalog)
     assert results[2].error.startswith("ValueError") and all(r.skipped for r in results[3:])
+
+
+def test_gaps_never_produce_a_wrong_period_comparison(northwind_catalog):
+    catalog, d, cells = build("gap_quarter", northwind_catalog)
+    assert d.missing_periods == ["2022-Q3"] and "missing_periods" in [s.key for s in d.steps]
+    results, metrics = run_cells(cells, catalog)
+    per = next(r for r in results if r.cell_id == "kpi_by_period").statements[0].frame.set_index(["order_year", "quarter_number"])
+    assert pd.isna(per.loc[(2022, 4), "revenue_qoq_pct"])          # its LAG row is 2022-Q2: not a neighbour
+    expected = 100 * (per.loc[(2023, 1), "revenue"] / per.loc[(2022, 1), "revenue"] - 1)
+    assert abs(per.loc[(2023, 1), "revenue_yoy_pct"] - expected) < 0.1  # joined on the same quarter a year earlier
+    assert metrics["missing_periods"] == ["2022-Q3"]
+
+
+def test_double_loaded_lines_are_removed_before_revenue(northwind_catalog):
+    catalog, d, cells = build("double_loaded", northwind_catalog)
+    clean, _, clean_cells = build("shop", northwind_catalog)
+    assert d.dedupe["order_items"][0] == ("order_id", "product_id")
+    _, m = run_cells(cells, catalog)
+    _, m_clean = run_cells(clean_cells, clean)
+    assert m["reconciled"] and round(m["revenue_total"], 2) == round(m_clean["revenue_total"], 2)
+
+
+def test_count_only_data_is_measured_in_rows(northwind_catalog):
+    catalog, d, cells = build("tickets_count_only", northwind_catalog)
+    _, m = run_cells(cells, catalog)
+    assert d.revenue.kind == "count" and m["main_measure"] == "orders" and m["reconciled"]
+    assert any("orders changed" in line for line in __import__("autosql").interpret(m))

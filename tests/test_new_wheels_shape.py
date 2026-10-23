@@ -12,7 +12,8 @@ def test_generated_sql_matches_the_hand_written_query(new_wheels_catalog):
     assert "WHEN 'Very Bad' THEN 1" in view_mysql and "WHEN 'Very Good' THEN 5" in view_mysql
     assert "ship_date - order_date AS ship_days" in cells["base"].statements[0].sql["postgres"]
     per_quarter = cells["kpi_by_period"].statements[0].sql["mysql"]
-    for piece in ("WITH quarterly AS", "with_prev AS", "LAG(revenue) OVER (ORDER BY order_year, quarter_number) AS prev_revenue",
+    for piece in ("WITH quarterly AS", "with_prev AS", "order_year * 4 + quarter_number AS period_index",
+                  "THEN LAG(p.revenue) OVER (ORDER BY p.period_index)",  # LAG, kept only for the calendar neighbour
                   "ROUND(100.0 * (revenue - prev_revenue) / NULLIF(prev_revenue, 0), 1) AS revenue_qoq_pct",
                   "AVG(ship_days) AS avg_ship_days", "AVG(rating_score) AS avg_rating", "COUNT(*) AS orders"):
         assert piece in per_quarter, piece

@@ -25,6 +25,25 @@ from .dialect import DIALECTS, Dialect
 from .narrative import Step
 from .schema import Relationship
 
+# Chart style shared by every check (and the notebook): one palette, hairline axes, no chart junk.
+# Colours follow the reference data-viz palette: slot 1 blue for a single series, slot 2 orange for the suspected
+# driver, a blue <-> red diverging pair for increases / decreases, a neutral ink for totals, a light grey for
+# de-emphasised marks (partial periods), and a one-hue blue ramp for magnitude (heatmaps).
+CHART_SETUP = """
+import matplotlib as mpl
+from matplotlib.colors import LinearSegmentedColormap
+
+C_SERIES, C_DRIVER, C_TOTAL, C_MUTED = "#2a78d6", "#eb6834", "#52514e", "#c3c2b7"
+C_UP, C_DOWN = "#2a78d6", "#e34948"
+C_SEQ = LinearSegmentedColormap.from_list("autosql_blue", ["#cde2fb", "#86b6ef", "#3987e5", "#256abf", "#184f95", "#0d366b"])
+mpl.rcParams.update({
+    "axes.spines.top": False, "axes.spines.right": False, "axes.edgecolor": "#c3c2b7", "axes.linewidth": 0.8,
+    "axes.grid": True, "axes.grid.axis": "y", "grid.color": "#e1e0d9", "grid.linewidth": 0.8, "axes.axisbelow": True,
+    "axes.titlesize": 11, "axes.titleweight": "bold", "axes.labelcolor": "#52514e", "axes.titlecolor": "#0b0b0b",
+    "xtick.color": "#52514e", "ytick.color": "#52514e", "font.size": 9.5, "lines.linewidth": 2, "figure.facecolor": "white",
+})
+""".strip()
+
 SECTIONS = {
     1: "1 · Schema & grain", 2: "2 · Validate", 3: "3 · Build with CTEs", 4: "4 · KPIs",
     5: "5 · Window functions", 6: "6 · Root cause", 7: "7 · Fast & correct",
@@ -552,7 +571,7 @@ def _nulls_cell(b: Builder) -> Cell:
         else:
             top = gappy.head(12).iloc[::-1]
             plt.figure(figsize=(8, max(2.5, 0.35 * len(top))))
-            plt.barh(top["table_name"] + "." + top["column_name"], top["null_pct"], color="#0071e3")
+            plt.barh(top["table_name"] + "." + top["column_name"], top["null_pct"], color=C_SERIES, height=0.6)
             plt.xlabel("% of rows empty"); plt.title("Columns with NULLs")
             plt.tight_layout(); plt.show()
             note(f"{len(gappy)} column(s) have NULLs. Most empty: " + ", ".join(
@@ -674,10 +693,18 @@ def _date_range_cell(b: Builder) -> Cell:
             partial = [label(r) for _, r in per.iterrows() if r["coverage"] < <<cov>>]
             metrics["partial_periods"] = partial
             metrics["periods_seen"] = len(per)
-            gaps = len(per) - len(set(starts))
+            per_year = {"quarter": 4, "month": 12, "year": 1}[unit]
+            index = [int(r.iloc[0]) * per_year + (int(r.iloc[1]) - 1 if unit != "year" else 0) for _, r in per.iterrows()]
+            missing = sorted(set(range(min(index), max(index) + 1)) - set(index)) if index else []
+            missing = [f"{i // 4}-Q{i % 4 + 1}" if unit == "quarter" else f"{i // 12}-{i % 12 + 1:02d}" if unit == "month" else str(i)
+                       for i in missing]
+            metrics["missing_periods"] = missing
+            if missing:
+                note(f"⚠️ **No rows at all in {', '.join(missing[:6])}**. A gap is either a real stop or a loading problem; "
+                     f"period-over-period changes are only computed between neighbouring {unit}s.")
             span = f"{str(ranges['earliest'].min())[:10]} to {str(ranges['latest'].max())[:10]}"
             note(f"{len(per)} {unit}s of data. " + (f"**Partial:** {', '.join(partial)} (less than {<<cov>>:.0%} of its days covered), so "
-                 "it is labelled and left out of period-over-period verdicts." if partial else "Every period is fully covered."))
+                 "it is labelled and left out of period-over-period verdicts." if partial else "The first and last periods are fully covered."))
         if "lead_sanity" in outputs:
             row = outputs["lead_sanity"].iloc[0]
             metrics["negative_lead"] = int(row.iloc[2] or 0)
@@ -984,13 +1011,15 @@ def _reconcile_cell(b: Builder) -> Cell:
             price_join = f"\nLEFT   JOIN {D.ident(r.parent_table)} {price_alias} ON {D.col(price_alias, r.parent_col)} = {D.col(fa, r.child_col)}"
         src_rows = "COUNT(*)"
         src_orders = f"COUNT(DISTINCT {D.col(fa, b.order_key)})" if d.order_key else "COUNT(*)"
+        measure = (lambda expr: D.round(expr, 2)) if b.money else (lambda expr: "COUNT(*)")
+        name = "revenue" if b.money else "row_count"
         fact_part = fill('''
             SELECT <<label>> AS computed_from,
                    <<rows>> AS rows_read,
                    <<orders>> AS orders,
-                   <<rev>> AS revenue
+                   <<rev>> AS <<name>>
             FROM   <<t>> <<fa>><<pj>>''', label=D.literal(f"{fact} (raw table" + (", before de-duplication)" if fact in d.dedupe else ")")),
-                                      rows=src_rows, orders=src_orders, rev=D.round(f"SUM({b.line_revenue(D, fa, price_alias)})", 2),
+                                      rows=src_rows, orders=src_orders, rev=measure(f"SUM({b.line_revenue(D, fa, price_alias)})"), name=name,
                                       t=D.ident(fact), fa=fa, pj=price_join)
         lines = "SUM(line_count)" if d.line_level else "COUNT(*)"
         parts = [fact_part, fill('''
@@ -998,14 +1027,14 @@ def _reconcile_cell(b: Builder) -> Cell:
                    <<lines>>,
                    COUNT(*),
                    <<rev>>
-            FROM   order_facts''', lines=lines, rev=D.round("SUM(revenue)", 2))]
+            FROM   order_facts''', lines=lines, rev=measure("SUM(revenue)") if b.money else lines)]
         if d.line_level:
             parts.append(fill('''
                 SELECT 'line_facts (one row per line)',
                        COUNT(*),
                        COUNT(DISTINCT <<ok>>),
                        <<rev>>
-                FROM   line_facts''', ok=okq, rev=D.round("SUM(revenue)", 2)))
+                FROM   line_facts''', ok=okq, rev=measure("SUM(revenue)")))
         return union_all(parts)
 
     statements = [stmt("totals", "The same totals computed from the raw table and from each view", totals)]
@@ -1061,17 +1090,27 @@ def _reconcile_cell(b: Builder) -> Cell:
     check = fill('''
         totals = outputs["totals"]
         <<src>>
-        sql_values = [float(v) for v in totals["revenue"]]
-        agree = max(sql_values + [source_revenue]) - min(sql_values + [source_revenue]) < 0.01
-        metrics["revenue_total"] = sql_values[0]
+        measure = totals.columns[-1]                         # revenue, or row_count when there is no money column
+        sql_values = [float(v) for v in totals[measure]]
+        deduped = <<deduped>>                                # the raw table still holds the duplicates the views remove
+        compared = sql_values[1:] if deduped else sql_values
+        tolerance = max(0.01, 1e-9 * max(abs(v) for v in compared + [source_revenue]))  # floating-point sums on big data
+        agree = max(compared + [source_revenue]) - min(compared + [source_revenue]) <= tolerance
+        metrics["revenue_total"] = compared[0]
         metrics["revenue_source"] = source_revenue
         metrics["reconciled"] = bool(agree)
+        metrics["main_measure"] = "revenue" if measure == "revenue" else "orders"
+        what = "revenue" if measure == "revenue" else "the row count"
+        fmt = "{:,.2f}" if measure == "revenue" else "{:,.0f}"
         if agree:
-            note(f"**Reconciled:** revenue is **{sql_values[0]:,.2f}** from the raw table, from every view, and from the uploaded file "
-                 "(recomputed in pandas). Nothing was lost or double-counted.")
+            note(f"**Reconciled:** {what} is **" + fmt.format(compared[0]) + "** from " + ("every view" if deduped else "the raw table, from every view")
+                 + ", and from the uploaded file (recomputed in pandas). Nothing was lost or double-counted.")
         else:
-            note("⚠️ The totals differ: " + "; ".join(f"{name}: {value:,.2f}" for name, value in zip(totals["computed_from"], sql_values))
-                 + f"; uploaded file: {source_revenue:,.2f}. Look for orphans or duplicated keys before trusting any KPI.")
+            note("⚠️ The totals differ: " + "; ".join(f"{name}: " + fmt.format(value) for name, value in zip(totals["computed_from"], sql_values))
+                 + "; uploaded file: " + fmt.format(source_revenue) + ". Look for orphans or duplicated keys before trusting any KPI.")
+        if deduped:
+            note("The raw table still contains the duplicated keys: " + fmt.format(sql_values[0] - compared[0])
+                 + f" of {what} disappears when they are removed, which is the point of de-duplicating.")
         if "gross_net" in outputs:
             row = outputs["gross_net"].iloc[0]
             metrics["revenue_gross"] = float(row.gross_revenue)
@@ -1084,7 +1123,7 @@ def _reconcile_cell(b: Builder) -> Cell:
         if "order_conflicts" in outputs:
             n = int(outputs["order_conflicts"].iloc[0, 0])
             note(f"{n:,} order(s) have lines with different dates" + (": the view takes the earliest." if n else "."))
-    ''', src=src_code)
+    ''', src=src_code, deduped=repr(d.fact in d.dedupe))
     return Cell("reconcile", "Reconcile the totals", SECTIONS[2], story, tuple(statements), check)
 
 
@@ -1215,10 +1254,17 @@ def _kpis_cell(b: Builder) -> Cell:
     return Cell("kpis", "Headline KPIs", SECTIONS[4], story, (stmt("kpis", "Headline KPIs", sql),), check)
 
 
+def _period_index(b: Builder) -> str:
+    """year × 4 + quarter (or × 12 + month, or the year): consecutive periods differ by exactly 1, even across a gap."""
+    d = b.d
+    per_year = {"quarter": 4, "month": 12}.get(d.period)
+    return f"{d.year_col} * {per_year} + {d.number_col}" if per_year else d.year_col
+
+
 def _period_ctes(b: Builder, D: Dialect, extra: list[str], name: str | None = None) -> str:
     d = b.d
     name = name or {"quarter": "quarterly", "month": "monthly", "year": "yearly"}[d.period]
-    cols = list(d.period_cols) + extra
+    cols = list(d.period_cols) + [f"{_period_index(b)} AS period_index"] + extra
     return fill('''
         <<name>> AS (
             SELECT <<cols>>
@@ -1246,9 +1292,11 @@ def _kpi_by_period_cell(b: Builder) -> Cell:
         if d.rating:
             measures.append("AVG(rating_score) AS avg_rating")
         main = "revenue" if b.money else "orders"
-        lags = [f"LAG({main}) OVER (ORDER BY {b.period_order()}) AS prev_{main}"]
+        lags = [f"CASE WHEN p.period_index - LAG(p.period_index) OVER (ORDER BY p.period_index) = 1\n"
+                f"                THEN LAG(p.{main}) OVER (ORDER BY p.period_index)\n"
+                f"           END AS prev_{main}"]
         if year_lag:
-            lags.append(f"LAG({main}, {year_lag}) OVER (ORDER BY {b.period_order()}) AS {main}_year_ago")
+            lags.append(f"y.{main} AS {main}_year_ago")
         out = list(d.period_cols)
         partial = b.partial_case()
         if partial:
@@ -1274,8 +1322,10 @@ def _kpi_by_period_cell(b: Builder) -> Cell:
         for p in d.partial_periods:
             comments.append(f"-- {d.label(p)} is partial (data from {max(p.first_seen, p.start)} to {min(p.last_seen, p.end)}): "
                             "its change is missing days, not a trend.")
+        comments.append(f"-- period_index = {_period_index(b)}: LAG() takes the previous *row*, so prev_{main} is kept only when that row is "
+                        f"the calendar neighbour (index - 1); after a missing {d.period} it is NULL, not a wrong comparison.")
         if year_lag:
-            comments.append(f"-- LAG({main}, {year_lag}) is the same {d.period} a year earlier; it assumes no {d.period} is missing (checked in step 2).")
+            comments.append(f"-- {main}_year_ago joins the same {d.period} a year earlier on period_index - {year_lag}, so a gap can't shift it.")
         if d.lead:
             comments.append(f"-- The suspected driver ({d.lead_name}) sits next to the symptom ({main}).")
         return "\n".join(comments + [
@@ -1284,11 +1334,12 @@ def _kpi_by_period_cell(b: Builder) -> Cell:
                 with_prev AS (
                     SELECT p.*,
                            <<lags>>
-                    FROM   <<name>> p
+                    FROM   <<name>> p<<join>>
                 )
                 SELECT <<out>>
                 FROM   with_prev
-                ORDER  BY <<order>>''', lags=",\n           ".join(lags), name=name, out=",\n       ".join(out), order=b.period_order())])
+                ORDER  BY <<order>>''', lags=",\n           ".join(lags), name=name, out=",\n       ".join(out), order=b.period_order(),
+                 join=f"\n    LEFT   JOIN {name} y ON y.period_index = p.period_index - {year_lag}" if year_lag else "")])
 
     story = Step(
         "kpi_by_period",
@@ -1315,22 +1366,24 @@ def _kpi_by_period_cell(b: Builder) -> Cell:
         complete = per[status == "complete"]
         change = f"{main}_<<step>>_pct"
         metrics["periods"] = per[["period", main]].assign(status=status).to_dict("records")
-        fig, ax = plt.subplots(figsize=(10, 4))
-        colors = ["#0071e3" if s == "complete" else "#c7c7cc" for s in status]
-        ax.bar(per["period"], per[main].astype(float), color=colors)
-        ax.set_ylabel(main); ax.tick_params(axis="x", labelrotation=45)
-        ax.set_title(f"{main.capitalize()} per {unit}" + (" (grey = partial)" if (status != "complete").any() else ""))
         driver = <<driver>>
-        if driver and driver in per:
-            ax2 = ax.twinx()
-            ax2.plot(per["period"], per[driver].astype(float), color="#ff9500", marker="o")
-            ax2.set_ylabel(driver, color="#ff9500")
+        # Two stacked panels on one time axis (never two y-scales on one plot): the symptom on top, the driver below.
+        panels = 2 if driver and driver in per else 1
+        fig, axes = plt.subplots(panels, 1, figsize=(10, 2.9 * panels + 0.6), sharex=True, squeeze=False)
+        ax = axes[0][0]
+        ax.bar(per["period"], per[main].astype(float), width=0.6, color=[C_SERIES if s == "complete" else C_MUTED for s in status])
+        ax.set_title(f"{main.capitalize()} per {unit}" + (" (grey = partial period)" if (status != "complete").any() else ""), loc="left")
+        if panels == 2:
+            axes[1][0].plot(per["period"], per[driver].astype(float), color=C_DRIVER, marker="o", markersize=5)
+            axes[1][0].set_title(f"{driver.replace('_', ' ')} per {unit} (the suspected driver)", loc="left")
+        axes[-1][0].tick_params(axis="x", labelrotation=45)
         plt.tight_layout(); plt.show()
         if len(complete) >= 2:
             prev, last = complete.iloc[-2], complete.iloc[-1]
             pct = 100 * (float(last[main]) - float(prev[main])) / float(prev[main]) if float(prev[main]) else float("nan")
             metrics["qoq_last_complete"] = {"from": prev["period"], "to": last["period"], "pct": pct}
-            note(f"Last two complete {unit}s: {main} went from {float(prev[main]):,.2f} ({prev['period']}) to {float(last[main]):,.2f} "
+            show = (lambda v: f"{float(v):,.2f}") if main == "revenue" else (lambda v: f"{float(v):,.0f}")
+            note(f"Last two complete {unit}s: {main} went from {show(prev[main])} ({prev['period']}) to {show(last[main])} "
                  f"({last['period']}), **{pct:+.1f}%**.")
         if (status != "complete").any():
             part = per[status != "complete"].iloc[-1]
@@ -1392,7 +1445,7 @@ def _running_total_cell(b: Builder) -> Cell:
         when = "-".join(str(int(half[c])) for c in cols[:<<n>>])
         metrics["half_reached"] = when
         plt.figure(figsize=(9, 3.5))
-        plt.plot(range(len(run)), run["running_<<main>>"].astype(float), color="#0071e3", marker="o")
+        plt.plot(range(len(run)), run["running_<<main>>"].astype(float), color=C_SERIES, marker="o", markersize=5)
         plt.xticks(range(len(run)), ["-".join(str(int(v)) for v in row) for row in run[cols[:<<n>>]].itertuples(index=False)], rotation=45)
         plt.title("Running total of <<main>>"); plt.tight_layout(); plt.show()
         note(f"Half of all <<main>> had been reached by **{when}** ({float(half['running_pct_of_total']):.1f}% at that point).")
@@ -1570,7 +1623,7 @@ def _rfm_cell(b: Builder) -> Cell:
         top = seg.iloc[0]
         metrics["rfm_top_share"] = (str(top.segment), float(top.revenue_pct), int(top.customers))
         plt.figure(figsize=(8, 3.5))
-        plt.barh(seg["segment"].iloc[::-1], seg["revenue_pct"].astype(float).iloc[::-1], color="#0071e3")
+        plt.barh(seg["segment"].iloc[::-1], seg["revenue_pct"].astype(float).iloc[::-1], color=C_SERIES, height=0.6)
         plt.xlabel("% of revenue"); plt.title("Revenue share by RFM segment"); plt.tight_layout(); plt.show()
         total = int(seg["customers"].sum())
         note(f"**{top.segment}** ({int(top.customers):,} of {total:,} customers) bring **{float(top.revenue_pct):.1f}%** of revenue.")
@@ -1660,9 +1713,9 @@ def _driver_tree_cell(b: Builder) -> Cell:
         level = 0.0
         for i, (name, amount) in enumerate(steps):
             bottom = 0 if i == 0 else level if amount >= 0 else level + amount
-            ax.bar(name, abs(amount), bottom=bottom, color="#0071e3" if i == 0 else "#34c759" if amount >= 0 else "#ff3b30")
+            ax.bar(name, abs(amount), bottom=bottom, width=0.6, color=C_TOTAL if i == 0 else C_UP if amount >= 0 else C_DOWN)
             level = amount if i == 0 else level + amount
-        ax.bar("after", r2, color="#0071e3")
+        ax.bar("after", r2, width=0.6, color=C_TOTAL)
         ax.set_title(<<lb>> + " → " + <<la>> + ": what moved revenue"); plt.tight_layout(); plt.show()
         main = "orders" if abs(volume) >= abs(value) else "order value"
         share = (volume if main == "orders" else value) / delta if delta else float("nan")
@@ -1842,7 +1895,7 @@ def _cohort_cell(b: Builder) -> Cell:
         retention = grid.div(size, axis=0) * 100
         metrics["cohort_sizes"] = {str(k): int(v) for k, v in size.items()}
         plt.figure(figsize=(9, max(3, 0.4 * len(grid))))
-        plt.imshow(retention.to_numpy(dtype=float), aspect="auto", cmap="Blues", vmin=0, vmax=100)
+        plt.imshow(retention.to_numpy(dtype=float), aspect="auto", cmap=C_SEQ, vmin=0, vmax=100)
         plt.colorbar(label="% of cohort active")
         plt.yticks(range(len(grid)), grid.index); plt.xlabel(cols[-2]); plt.title("Retention by cohort")
         plt.tight_layout(); plt.show()

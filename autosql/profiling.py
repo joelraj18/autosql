@@ -285,6 +285,12 @@ def find_primary_key(table: Table, cols: tuple[ColumnProfile, ...]) -> tuple[tup
     found = pair(keyish)
     if found:
         return found
+    if df.duplicated().any():  # two IDs that are unique once exact copies (a double load) are removed
+        distinct = df.drop_duplicates()
+        for a, b in itertools.combinations(keyish, 2):
+            if not distinct.duplicated(subset=[a.name, b.name]).any():
+                return (a.name, b.name), "intended", (f"`{a.name}` + `{b.name}` identify every row once the "
+                                                      f"{int(df.duplicated().sum()):,} exact copies are removed")
     near = [c for c in cols if c.role == "identifier" and c.n_rows and c.n_unique / max(c.n_rows - c.n_null, 1) >= INTENDED_KEY_UNIQUE]
     if near:
         best = max(near, key=lambda c: (_key_score(table.name, c, cols.index(c)), c.n_unique))

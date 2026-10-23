@@ -189,6 +189,11 @@ TEMPLATES: dict[str, dict[str, str]] = {
         "why": "A part-period always looks like a collapse. Comparing it with a full period would report a fall that is just missing days.",
         "action": "We show it, flag it as **partial**, and leave it out of every period-over-period verdict, so that changes compare like with like.",
     },
+    "missing_periods": {
+        "found": "{n} {unit}(s) have no rows at all: {labels}.",
+        "why": "LAG() takes the previous *row*, not the previous {unit}: across a gap it would compare non-adjacent periods and call it '{unit}-over-{unit}'.",
+        "action": "We number the periods (year × 4 + quarter) and only compare periods whose numbers differ by exactly 1, so that a gap shows as 'no comparison' instead of a wrong one.",
+    },
     "lead_time": {
         "found": "`{end}` is a later date than `{start}` in {pct:.0f}% of rows.",
         "why": "The gap between them ({name}) is a classic operational driver: slower shipping often shows up later as lower ratings and repeat sales.",
@@ -312,12 +317,15 @@ GLOSSARY: dict[str, str] = {
 def interpret(metrics: dict) -> list[str]:
     """Turn the numbers produced by the generated checks into a short, ordered summary."""
     m, out = metrics, []
+    main = m.get("main_measure", "revenue")
+    show = (lambda v: f"{v:,.2f}") if main == "revenue" else (lambda v: f"{v:,.0f} rows")
     if "reconciled" in m:
         if m["reconciled"]:
-            out.append(f"✅ **Trustworthy base:** revenue of **{m['revenue_total']:,.2f}** reconciles between the raw table, the analysis "
-                       "views and the uploaded file, so every KPI below is computed on all the data, once.")
+            out.append(f"✅ **Trustworthy base:** {'revenue of' if main == 'revenue' else 'a row count of'} **{show(m['revenue_total'])}** "
+                       "reconciles between the raw table, the analysis views and the uploaded file, so every KPI below is computed on "
+                       "all the data, once.")
         else:
-            out.append(f"⚠️ **Totals don't reconcile** (SQL {m['revenue_total']:,.2f} vs file {m['revenue_source']:,.2f}). Fix orphans or "
+            out.append(f"⚠️ **Totals don't reconcile** (SQL {show(m['revenue_total'])} vs file {show(m['revenue_source'])}). Fix orphans or "
                        "duplicated keys before sharing any KPI.")
     elif "grain_ok" in m:
         out.append("✅ Every table's key is unique." if m["grain_ok"] else "⚠️ Some keys repeat: see the grain and duplicates steps.")
@@ -331,7 +339,7 @@ def interpret(metrics: dict) -> list[str]:
         out.append(f"**{period} is a partial period** and is left out of every trend verdict.{extra}")
     q = m.get("qoq_last_complete")
     if q:
-        out.append(f"**Trend:** from {q['from']} to {q['to']} (the last two complete periods), revenue changed **{q['pct']:+.1f}%**"
+        out.append(f"**Trend:** from {q['from']} to {q['to']} (the last two complete periods), {main} changed **{q['pct']:+.1f}%**"
                    + (f"; year over year {m['yoy']['period']} is **{m['yoy']['pct']:+.1f}%**." if m.get("yoy") else "."))
     split = m.get("driver_split")
     if split and split.get("delta"):
@@ -344,7 +352,7 @@ def interpret(metrics: dict) -> list[str]:
     dv = m.get("driver_vs_symptom")
     if dv:
         if abs(dv["driver_change_pct"]) >= 10:
-            out.append(f"**Suspected driver:** `{dv['driver']}` moved {dv['driver_change_pct']:+.1f}% while revenue moved "
+            out.append(f"**Suspected driver:** `{dv['driver']}` moved {dv['driver_change_pct']:+.1f}% while {main} moved "
                        f"{dv['symptom_change_pct']:+.1f}%. That makes it a candidate cause; confirm it with a controlled test before acting.")
         else:
             out.append(f"`{dv['driver']}` barely moved ({dv['driver_change_pct']:+.1f}%), so it does not explain the change.")
