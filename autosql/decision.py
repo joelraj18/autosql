@@ -23,7 +23,7 @@ import pandas as pd
 from .loading import Catalog
 from .narrative import Step, story
 from .profiling import CatalogProfile, ColumnProfile, TableProfile, singular
-from .schema import FanOut, Relationship, Schema
+from .schema import FanOut, Relationship, Schema, link_roles
 
 MAX_HOPS = 2                  # dimensions are looked for at most two joins away from the order
 MAX_DIM_NULL = 0.30           # a dimension may be empty in at most 30% of rows
@@ -141,6 +141,7 @@ class Decision:
     null_trap: dict = field(default_factory=dict)
     date_parts: list[tuple[str, str, str]] = field(default_factory=list)  # (table, column, unit) stored next to the date
     skipped: dict[str, str] = field(default_factory=dict)
+    quality: dict[str, int] = field(default_factory=dict)       # counts the trust score uses (unparsed dates, …)
     steps: list[Step] = field(default_factory=list)
 
     @property
@@ -278,6 +279,7 @@ def decide(catalog: Catalog, profile: CatalogProfile, schema: Schema, mode: str 
     if mode not in FOCUS_MODES:
         raise ValueError(f"mode must be one of {FOCUS_MODES}, not {mode!r}")
     picks = picks or {}
+    profile = link_roles(profile, schema)
     d = Decision(mode=mode, profile=profile, schema=schema)
     tables = profile.tables
 
@@ -290,6 +292,9 @@ def decide(catalog: Catalog, profile: CatalogProfile, schema: Schema, mode: str 
     renamed = [(t.name, new, old) for t in tables.values() for new, old in t.renamed]
     if renamed:
         d.steps.append(story("renamed", n=len(renamed), examples=", ".join(f"`{old}` → `{new}`" for _, new, old in renamed[:3])))
+    d.quality = {"unparsed_dates": sum(sum(t.unparsed_dates.values()) for t in catalog.tables.values()),
+                 "ambiguous_dates": sum(len(t.ambiguous_dates) for t in catalog.tables.values()),
+                 "type_mismatches": sum(1 for r in schema.accepted if r.type_mismatch)}
     for t in catalog.tables.values():
         for col, n in t.unparsed_dates.items():
             d.steps.append(story("unparsed_dates", table=t.name, col=col, n=n, fmt=t.date_formats.get(col, "")))

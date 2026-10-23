@@ -3,7 +3,7 @@ import json
 import pandas as pd
 import pytest
 
-from autosql import infer_schema, profile_catalog, to_dot, to_mermaid
+from autosql import infer_schema, link_roles, profile_catalog, to_dot, to_mermaid
 from autosql.loading import snake_case
 from conftest import NORTHWIND, catalog_from
 
@@ -24,6 +24,16 @@ def test_northwind_relationships_match_the_source_constraints(nw_schema):
                 for f in json.loads((NORTHWIND / "expected_fks.json").read_text())}
     ticked = schema.with_accepted(["orders.ship_via → shippers.shipper_id"])
     assert {r.key for r in ticked.accepted} == expected  # all 8 FOREIGN KEY constraints of the original script
+
+
+def test_foreign_key_columns_become_identifiers(nw_schema):
+    profile, schema = nw_schema
+    assert profile.col("orders", "ship_via").role == "measure"                # before the schema: just a small integer
+    linked = link_roles(profile, schema)
+    for table, col, parent in (("orders", "ship_via", "shippers.shipper_id"), ("employees", "reports_to", "employees.employee_id")):
+        c = linked.col(table, col)
+        assert (c.role, c.kind, c.reason) == ("identifier", "", f"links to {parent}")
+    assert linked.col("orders", "freight").role == "measure"                  # real measures are untouched
 
 
 def test_cardinality_and_fanout(nw_schema):

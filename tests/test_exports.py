@@ -34,6 +34,18 @@ def test_project_zip_contents(northwind, northwind_catalog, cells):
     load = z.read("02_load.sql").decode()
     assert load.index("data/customers.csv") < load.index("data/orders.csv") < load.index("data/order_details.csv")  # parents first
     assert "SET FOREIGN_KEY_CHECKS = 0;" in load and "NULLIF(@3, '')" in load and load.count("LOAD DATA LOCAL INFILE") == 8
+    assert {"docs/data_dictionary.md", "docs/kpi_dictionary.md"} <= names and "business_brief.html" not in names   # no run, no brief
+    dictionary = z.read("docs/data_dictionary.md").decode()
+    assert "| `ship_via` | ShipVia | integer | identifier | FK? → shippers.shipper_id |" in dictionary   # a link, not a measure
+
+
+def test_project_zip_with_a_run_adds_the_brief(northwind, northwind_catalog, cells):
+    from autosql import run_cells
+    _, metrics = run_cells(cells, northwind_catalog)
+    z = zipfile.ZipFile(io.BytesIO(to_project_zip(cells, northwind, northwind_catalog, "postgres", "Northwind", metrics, "Northwind Traders")))
+    brief = z.read("business_brief.html").decode()
+    assert "<title>Northwind Traders</title>" in brief and "Revenue reached 298,491.55" in brief
+    assert "`business_brief.html`" in z.read("README.md").decode()
 
 
 def test_postgres_load_script(northwind_catalog):

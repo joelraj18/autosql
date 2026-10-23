@@ -20,10 +20,12 @@ import zipfile
 
 import pandas as pd
 
+from .business import data_dictionary_markdown, kpi_dictionary_markdown
 from .codegen import CHART_SETUP, Cell, _topological, assumptions
 from .decision import Decision
 from .dialect import LABELS, Dialect
 from .loading import Catalog
+from .report import to_business_brief
 
 FILES = {
     "01_schema.sql": ("schema",),
@@ -119,7 +121,7 @@ def load_script(catalog: Catalog, dialect: str, order: list[str] | None = None) 
     return "\n".join(parts) + "\n"
 
 
-def readme(d: Decision, dialect: str, source: str) -> str:
+def readme(d: Decision, dialect: str, source: str, brief: bool = False) -> str:
     run = ("mysql --local-infile=1 --default-character-set=utf8mb4 -u USER -p DATABASE < 01_schema.sql\n"
            "mysql --local-infile=1 --default-character-set=utf8mb4 -u USER -p DATABASE < 02_load.sql\n"
            "mysql --default-character-set=utf8mb4 -u USER -p DATABASE < 03_validate.sql   # then 04_analysis.sql and 05_performance.sql"
@@ -137,14 +139,25 @@ def readme(d: Decision, dialect: str, source: str) -> str:
         "| `02_load.sql` | loads `data/*.csv` |",
         "| `03_validate.sql` | grain, cardinality and fan-out, duplicates, NULLs, date ranges, orphans |",
         "| `04_analysis.sql` | the analysis views, reconciliation, KPIs, window functions, root cause |",
-        "| `05_performance.sql` | EXPLAIN, sargable filters, indexes, NULL traps |", ""])
+        "| `05_performance.sql` | EXPLAIN, sargable filters, indexes, NULL traps |",
+        "| `analysis.ipynb` | the same steps in Python + DuckDB, with charts |",
+        "| `docs/data_dictionary.md` | every column: type, role, key, NULLs, distinct values and what the analysis uses it for |",
+        "| `docs/kpi_dictionary.md` | every KPI: definition, SQL, which direction is good, how to read it |",
+        *(["| `business_brief.html` | the one-page business brief: KPIs, what to do, charts, data trust (open in any browser) |"] if brief else []),
+        ""])
 
 
-def to_project_zip(cells: list[Cell], d: Decision, catalog: Catalog, dialect: str, source: str = "uploaded files") -> bytes:
+def to_project_zip(cells: list[Cell], d: Decision, catalog: Catalog, dialect: str, source: str = "uploaded files",
+                   metrics: dict | None = None, title: str = "Business brief") -> bytes:
+    """Everything needed to rerun the analysis on a real database; with ``metrics`` (after a run) also the business brief."""
     by_id = {c.id: (i, c) for i, c in enumerate(cells, 1)}
     buf = io.BytesIO()
     with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as z:
-        z.writestr("README.md", readme(d, dialect, source))
+        z.writestr("README.md", readme(d, dialect, source, brief=metrics is not None))
+        z.writestr("docs/data_dictionary.md", data_dictionary_markdown(d))
+        z.writestr("docs/kpi_dictionary.md", "# KPI dictionary\n\n" + kpi_dictionary_markdown())
+        if metrics is not None:
+            z.writestr("business_brief.html", to_business_brief(d, metrics, title=title, source=source))
         for name in catalog.names:
             z.writestr(f"data/{name}.csv", clean_csv(catalog, name))
         z.writestr("02_load.sql", load_script(catalog, dialect, _topological(d)))

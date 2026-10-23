@@ -208,3 +208,13 @@ def test_count_only_data_is_measured_in_rows(northwind_catalog):
     _, m = run_cells(cells, catalog)
     assert d.revenue.kind == "count" and m["main_measure"] == "orders" and m["reconciled"]
     assert any("orders changed" in line for line in __import__("autosql").interpret(m))
+
+
+def test_technical_notes(northwind, new_wheels_catalog):
+    cells = {c.id: c for c in build_cells(northwind)}
+    assert {"CTE (WITH)", "window function", "LAG / LEAD", "LEFT JOIN", "NULLIF division guard"} <= set(cells["kpi_by_period"].techniques())
+    assert "anti-join" in cells["orphans"].techniques() and "NTILE" in cells["rfm"].techniques()
+    assert ("ROUND(revenue, 2) AS revenue,", "ROUND((revenue)::numeric, 2) AS revenue,") in cells["kpi_by_period"].dialect_diff()
+    assert cells["grain"].dialect_diff() == []                                   # fully portable SQL: nothing to translate
+    base = {c.id: c for c in build_cells(analyse(new_wheels_catalog))}["base"]
+    assert any("DATEDIFF(ship_date, order_date)" in a and "ship_date - order_date" in b for a, b in base.dialect_diff())

@@ -3,14 +3,19 @@
 All the logic lives in the ``autosql`` package; this file only lays out the page:
 upload tables → see their keys and links → choose what to measure → read/run the SQL → understand the results.
 """
+import math
 from pathlib import Path
 
 import pandas as pd
 import streamlit as st
+import streamlit.components.v1 as components
 
-from autosql import (GLOSSARY, LABELS, assumptions, build_cells, decide, infer_schema, interpret, profile_catalog, read_files,
-                     read_folder, run_cells, to_dot)
+from autosql import (GLOSSARY, LABELS, assumptions, build_cells, decide, infer_schema, interpret, link_roles, profile_catalog,
+                     read_files, read_folder, run_cells, to_dot)
+from autosql.business import (BUSINESS_QUESTIONS, KPI_DICTIONARY, TILE_SPECS, data_dictionary, data_dictionary_markdown,
+                               executive_summary, kpi_dictionary_markdown)
 from autosql.exports import to_notebook, to_project_zip, to_sql_script
+from autosql.report import tile_value, to_business_brief
 
 EXAMPLE = Path(__file__).resolve().parent / "examples" / "northwind"
 
@@ -46,7 +51,8 @@ def load_catalog(key: tuple, _files: list[tuple[str, bytes]] | None):
 @st.cache_data(show_spinner="Profiling tables and finding keys…", max_entries=3)
 def get_profile_and_schema(key: tuple, _catalog):
     profile = profile_catalog(_catalog)
-    return profile, infer_schema(_catalog, profile)
+    schema = infer_schema(_catalog, profile)
+    return link_roles(profile, schema), schema
 
 
 @st.cache_data(show_spinner="Deciding the analysis…", max_entries=10)
@@ -201,6 +207,10 @@ with st.sidebar:
     with st.expander("📚 Glossary"):
         for term, meaning in GLOSSARY.items():
             st.markdown(f"**{term}** - {meaning}")
+    with st.expander("📐 KPI dictionary"):
+        for k in KPI_DICTIONARY:
+            better = {"up": "higher is better", "down": "lower is better"}.get(k.direction, "context, not a target")
+            st.markdown(f"**{k.name}**: {k.definition} *({better})*  \n`{k.formula}`")
 
 if decision.halted:
     st.error(decision.steps[-1].markdown())
@@ -220,6 +230,11 @@ else:
 for col, (label, value) in zip(st.columns([0.9, 1.3, 2, 1]), summary.items()):
     col.caption(label)
     col.markdown(f"**{value}**")
+
+with st.expander("📖 Data dictionary: every column, its role, and what the analysis uses it for"):
+    dictionary = data_dictionary(decision)
+    st.dataframe(dictionary, hide_index=True, width="stretch")
+    st.download_button("⬇ Data dictionary (.md)", data_dictionary_markdown(decision), file_name="data_dictionary.md", mime="text/markdown")
 
 if beginner:
     with st.expander("How the engine reached this decision", expanded=False):
@@ -253,11 +268,14 @@ if b1.button("▶ Run all SQL", type="primary"):
         status.update(label="Finished with an error - see below." if failed else "All SQL ran.", state="error" if failed else "complete")
     run = st.session_state["run"] = {"key": run_key, "results": results, "metrics": metrics}
 stem = "northwind" if payload is None else Path(files[0].name).stem
+brief_title = "Northwind Traders" if payload is None else stem.replace("_", " ").title()
 b2.download_button(f"⬇ {LABELS[dialect]} script (.sql)", to_sql_script(cells, decision, dialect, source),
                    file_name=f"{stem}_autosql_{dialect}.sql", mime="text/x-sql")
-b3.download_button("⬇ Project: SQL files + data (.zip)", to_project_zip(cells, decision, catalog, dialect, source),
+b3.download_button("⬇ Project: SQL files + data (.zip)",
+                   to_project_zip(cells, decision, catalog, dialect, source, run["metrics"] if run else None, brief_title),
                    file_name=f"{stem}_autosql_{dialect}.zip", mime="application/zip",
-                   help="CREATE TABLE, load, validation, analysis and performance scripts, the cleaned CSVs and a notebook.")
+                   help="CREATE TABLE, load, validation, analysis and performance scripts, the cleaned CSVs, a notebook, the data and KPI "
+                        "dictionaries and (after a run) the business brief.")
 b4.download_button("⬇ Notebook (.ipynb)", to_notebook(cells, decision, catalog, source), file_name=f"{stem}_autosql.ipynb",
                    mime="application/x-ipynb+json", help="Runs on DuckDB; expects the cleaned CSVs in data/ (they are in the project ZIP).")
 
@@ -267,11 +285,27 @@ for i, cell in enumerate(cells):
         section = cell.section
         st.markdown(f"### {section}")
     st.markdown(f"#### {i + 1}. {cell.title}")
+    question, asked_by = BUSINESS_QUESTIONS.get(cell.id, ("", ""))
+    if question:
+        st.caption(f"💼 **Business question:** {question} · asked by {asked_by}")
     if beginner:
         with st.container(border=True):
             st.markdown(cell.story.markdown())
         st.markdown(f"🛠 **What this SQL does:** {cell.story.code}")
     st.code(cell.code(dialect), language="sql")
+    with st.expander("🔧 Technical notes: techniques, MySQL vs PostgreSQL, run time"):
+        st.markdown("**Techniques:** " + " · ".join(f"`{t}`" for t in cell.techniques()))
+        diff = cell.dialect_diff()
+        if diff:
+            st.markdown(f"**{len(diff)} line(s) differ between MySQL 8 and PostgreSQL:**")
+            st.dataframe(pd.DataFrame(diff[:15], columns=["MySQL 8", "PostgreSQL"]), hide_index=True, width="stretch")
+        else:
+            st.markdown("**Identical in MySQL 8 and PostgreSQL**: only portable SQL is used.")
+        if run and not run["results"][i].skipped:
+            st.dataframe(pd.DataFrame([{"statement": sr.title, "ran on": {"query": "DuckDB", "scratch": "empty DuckDB (DDL check)",
+                                                                          "show": "not run"}[sr.run],
+                                        "rows": sr.rows, "seconds": round(sr.seconds, 3)} for sr in run["results"][i].statements]),
+                         hide_index=True, width="stretch")
     with st.expander("What ran here (DuckDB) · how the 📌 findings are computed"):
         st.code("\n\n".join(f"-- {s.title}\n{s.sql['duckdb']};" for s in cell.statements if s.run != "show"), language="sql")
         st.code(cell.check, language="python")
@@ -308,10 +342,44 @@ for i, cell in enumerate(cells):
 
 # ── Step 4: what it all means ─────────────────────────────────────────────
 if run:
-    lines = interpret(run["metrics"])
+    metrics = run["metrics"]
+    summary = executive_summary(decision, metrics, brief_title)
+    GOOD_DIRECTION = {key: direction for key, _, _, direction in TILE_SPECS}
     st.subheader("4. What the results mean")
-    with st.container(border=True):
-        for line in lines:
+    st.markdown(f"##### {summary.headline}")
+    if summary.tiles:
+        st.caption(f"Latest complete period: **{summary.period}**" + (f", compared with {summary.compared_with}." if summary.compared_with else "."))
+        for row in range(0, len(summary.tiles), 4):
+            for col, t in zip(st.columns(4), summary.tiles[row:row + 4]):
+                delta = None if t.delta_pct is None else (f"{t.delta_pct:+.1f} pts" if t.unit == "pct" else f"{t.delta_pct:+.1f}%")
+                col.metric(t.label, tile_value(t) + (" days" if t.unit == "days" else ""), delta,
+                           delta_color="inverse" if GOOD_DIRECTION[t.key] == "down" else "normal", border=True)
+
+    st.markdown("#### What to do")
+    names = {1: "🔴 Act now", 2: "🟠 Plan", 3: "🟢 Monitor"}
+    for ins in summary.insights:
+        with st.container(border=True):
+            st.markdown(f"**{names[ins.priority]} · {ins.headline}**  \n{ins.evidence}. {ins.implication}  \n**Next step:** {ins.action}")
+            st.caption(f"{ins.area} · confidence: {ins.confidence} · from SQL step `{ins.source}`")
+
+    t = summary.trust
+    st.markdown(f"#### Can we trust these numbers? Trust score **{math.floor(t.score)}/100: {t.grade}**")
+    for dim in t.dimensions:
+        st.progress(min(1.0, dim.score / 100), text=f"**{dim.name}** {math.floor(dim.score)}/100: {dim.detail}")
+
+    brief = to_business_brief(decision, metrics, title=brief_title, source=source)
+    c1, c2, c3 = st.columns(3)
+    c1.download_button("⬇ Business brief (.html)", brief, file_name=f"{stem}_business_brief.html", mime="text/html", type="primary",
+                       help="One self-contained page with the KPIs, recommendations, charts and data trust. Opens offline in any browser.")
+    c2.download_button("⬇ KPI dictionary (.md)", "# KPI dictionary\n\n" + kpi_dictionary_markdown(), file_name="kpi_dictionary.md",
+                       mime="text/markdown")
+    c3.download_button("⬇ Data dictionary (.md)", data_dictionary_markdown(decision), file_name="data_dictionary.md", mime="text/markdown",
+                       key="dd-step4")
+    with st.expander("📄 Preview the business brief", expanded=False):
+        components.html(brief, height=900, scrolling=True)
+
+    with st.expander("🔬 Technical reading of every result", expanded=beginner):
+        for line in interpret(metrics):
             st.markdown(f"- {line}")
     with st.expander("Assumptions behind these numbers", expanded=beginner):
         for line in assumptions(decision):

@@ -25,6 +25,14 @@ def test_northwind_end_to_end():
     assert "4. What the results mean" in [s.value for s in at.subheader]
     text = " ".join(m.value for m in at.markdown)
     assert "1,265,793.04" in text and "NOT IN returns 0, NOT EXISTS returns 7" in text
+    # the business layer: headline, KPI tiles with deltas, recommendations, trust score, brief download
+    assert "Revenue reached 298,491.55 in 1998-Q1" in text and "What to do" in text and "Act now · 1998-Q2 is incomplete" in text
+    tiles = {m.label: m for m in at.metric}
+    assert tiles["Revenue"].value == "298K" and tiles["Days to ship"].value == "8.6 days"
+    assert "Trust score **99/100: High**" in text
+    assert any("Business brief" in b.label for b in at.get("download_button"))
+    assert any("Business question:" in c.value for c in at.caption)
+    assert any("ROUND((revenue)::numeric, 2)" in str(df.value.values) for df in at.dataframe)   # MySQL vs PostgreSQL line diff
     at.sidebar.radio[1].set_value("postgres").run()                           # switching dialect keeps the results
     assert not at.exception and "4. What the results mean" in [s.value for s in at.subheader]
     assert any("o.shipped_date - o.order_date" in c.value for c in at.code)

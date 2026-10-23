@@ -156,6 +156,18 @@ def _measure(catalog: Catalog, child: str, col: str, parent: str, pcol: str, kin
     )
 
 
+def link_roles(profile: CatalogProfile, schema: Schema) -> CatalogProfile:
+    """A foreign-key column is an identifier, whatever its name: `orders.ship_via` (1, 2, 3) and `employees.reports_to` look like
+    numbers to add up until the schema shows they point at a key. Profiling runs before the schema, so the role is fixed here."""
+    links = {(r.child_table, r.child_col): r for r in schema.relationships}
+    tables = {}
+    for name, t in profile.tables.items():
+        cols = tuple(replace(c, role="identifier", kind="", reason=f"links to {links[name, c.name].parent_table}.{links[name, c.name].parent_col}")
+                     if (name, c.name) in links and c.role == "measure" else c for c in t.columns)
+        tables[name] = replace(t, columns=cols)
+    return CatalogProfile(tables)
+
+
 def infer_schema(catalog: Catalog, profile: CatalogProfile) -> Schema:
     keys = {t.name: t.primary_key[0] for t in profile.tables.values() if len(t.primary_key) == 1 and t.key_status in ("single", "intended")}
     found: list[Relationship] = []

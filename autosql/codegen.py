@@ -15,6 +15,7 @@ window functions → root cause → fast and correct.
 """
 from __future__ import annotations
 
+import difflib
 import re
 import textwrap
 from dataclasses import dataclass
@@ -52,6 +53,18 @@ MAX_NULL_COLUMNS = 60      # more columns than this: the NULL profile lists only
 DISPLAY_LIMIT = 20         # rows listed by "show me examples" queries
 
 
+# SQL techniques, detected in the generated MySQL text (keywords are always upper case there)
+TECHNIQUES = (
+    ("CTE (WITH)", r"\bWITH\b"), ("view", r"CREATE OR REPLACE VIEW"), ("CREATE TABLE + keys", r"CREATE TABLE"),
+    ("window function", r"\bOVER\s*\("), ("LAG / LEAD", r"\b(LAG|LEAD)\("), ("ROW_NUMBER", r"\bROW_NUMBER\("),
+    ("RANK / DENSE_RANK", r"\b(DENSE_)?RANK\("), ("NTILE", r"\bNTILE\("), ("window frame", r"\b(ROWS|RANGE) BETWEEN\b"),
+    ("PARTITION BY", r"\bPARTITION\s+BY\b"), ("LEFT JOIN", r"\bLEFT\s+JOIN\b"), ("anti-join", r"\bNOT EXISTS\b|LEFT\s+JOIN[^;]*IS NULL"),
+    ("conditional aggregation", r"\b(SUM|COUNT|AVG)\(\s*CASE\b"), ("CASE", r"\bCASE\b"), ("GROUP BY … HAVING", r"\bHAVING\b"),
+    ("UNION ALL", r"\bUNION\s+ALL\b"), ("COUNT(DISTINCT)", r"COUNT\(DISTINCT\b"), ("NULLIF division guard", r"\bNULLIF\("),
+    ("EXPLAIN", r"\bEXPLAIN\b"), ("CREATE INDEX", r"\bCREATE INDEX\b"),
+)
+
+
 @dataclass(frozen=True)
 class Statement:
     label: str                 # key of the result in ``outputs`` (check code and notebook)
@@ -68,6 +81,23 @@ class Cell:
     story: Step
     statements: tuple[Statement, ...]
     check: str                 # Python: reads ``outputs`` / ``result``, writes ``note()`` and ``metrics``
+
+    def techniques(self) -> list[str]:
+        """The SQL techniques the cell uses (comments ignored), for the app's technical notes."""
+        sql = "\n".join(re.sub(r"--[^\n]*", "", s.sql["mysql"]) for s in self.statements)
+        return [name for name, pattern in TECHNIQUES if re.search(pattern, sql)]
+
+    def dialect_diff(self, a: str = "mysql", b: str = "postgres") -> list[tuple[str, str]]:
+        """The lines that differ between two dialects, side by side: what changes when you move the query."""
+        out = []
+        for st in self.statements:
+            la, lb = st.sql[a].splitlines(), st.sql[b].splitlines()
+            for tag, i1, i2, j1, j2 in difflib.SequenceMatcher(None, la, lb, autojunk=False).get_opcodes():
+                if tag == "replace" and i2 - i1 == j2 - j1:          # line for line where the blocks align
+                    out += [(x.strip(), y.strip()) for x, y in zip(la[i1:i2], lb[j1:j2])]
+                elif tag != "equal":
+                    out.append(("\n".join(x.strip() for x in la[i1:i2]), "\n".join(x.strip() for x in lb[j1:j2])))
+        return out
 
     def code(self, dialect: str) -> str:
         """The cell's SQL in one dialect, with a 'Why' header and one numbered block per statement."""
@@ -713,6 +743,7 @@ def _date_range_cell(b: Builder) -> Cell:
                  f"lead times run from {row.min_days} to {row.max_days} days.")
         for label in [k for k in outputs if k.startswith("part_")]:
             row = outputs[label].iloc[0]
+            metrics["date_part_mismatches"] = metrics.get("date_part_mismatches", 0) + int(row.mismatched or 0)
             note(f"{label[5:]}: {int(row.mismatched or 0):,} row(s) disagree with the date they were derived from.")
     ''', unit=repr(d.period or "quarter"), cov=0.9, end=repr(d.lead[2] if d.lead else ""), start=repr(d.lead[1] if d.lead else ""))
     return Cell("date_range", "Date ranges and partial periods", SECTIONS[2], story, tuple(statements), check)
@@ -1366,6 +1397,8 @@ def _kpi_by_period_cell(b: Builder) -> Cell:
         complete = per[status == "complete"]
         change = f"{main}_<<step>>_pct"
         metrics["periods"] = per[["period", main]].assign(status=status).to_dict("records")
+        metrics["period_table"] = [{k: (None if pd.isna(v) else (str(v) if isinstance(v, str) else float(v))) for k, v in row.items()}
+                                   for row in per.assign(period_status=status).to_dict("records")]
         driver = <<driver>>
         # Two stacked panels on one time axis (never two y-scales on one plot): the symptom on top, the driver below.
         panels = 2 if driver and driver in per else 1
@@ -1717,11 +1750,12 @@ def _driver_tree_cell(b: Builder) -> Cell:
             level = amount if i == 0 else level + amount
         ax.bar("after", r2, width=0.6, color=C_TOTAL)
         ax.set_title(<<lb>> + " → " + <<la>> + ": what moved revenue"); plt.tight_layout(); plt.show()
-        main = "orders" if abs(volume) >= abs(value) else "order value"
-        share = (volume if main == "orders" else value) / delta if delta else float("nan")
+        sizes = {"orders": abs(volume), "order value": abs(value), "both": abs(both)}
+        main = "orders" if sizes["orders"] >= sizes["order value"] else "order value"
+        share = sizes[main] / (sum(sizes.values()) or 1.0)   # share of the movement by size: never above 100%
         note(f"Revenue moved **{delta:+,.2f}** ({100 * delta / r1:+.1f}%): **{volume:+,.2f}** from the number of orders "
              f"({int(o1):,} → {int(o2):,}), **{value:+,.2f}** from the average order value ({a1:,.2f} → {a2:,.2f}), and {both:+,.2f} from both together. "
-             f"About {abs(share):.0%} of the change comes from **{main}**.")
+             f"**{main.capitalize()}** accounts for about {share:.0%} of the movement.")
         if "orders_per_customer" in tree:
             note(f"Orders = customers × orders per customer: customers {int(before.customers):,} → {int(after.customers):,}, "
                  f"orders per customer {float(before.orders_per_customer):.2f} → {float(after.orders_per_customer):.2f}.")
@@ -1731,6 +1765,9 @@ def _driver_tree_cell(b: Builder) -> Cell:
             col = seg.columns[0]
             top = seg.iloc[0]
             contributors[col] = {"segment": str(top[col]), "change": float(top.revenue_change), "share": float(top.share_of_change_pct)}
+            metrics.setdefault("segment_changes", {})[col] = [
+                {"segment": str(r[0]), "before": float(r.revenue_before), "after": float(r.revenue_after), "change": float(r.revenue_change)}
+                for r in seg.itertuples(index=False)]
             note(f"By `{col}`: **{top[col]}** moved most ({float(top.revenue_change):+,.2f}, {float(top.share_of_change_pct):.0f}% of the change).")
         metrics["top_contributors"] = contributors
     ''', lb=repr(lb), la=repr(la))
@@ -2164,6 +2201,8 @@ def _discounts_cell(b: Builder) -> Cell:
         plt.bar(bands["discount_band"], bands["discount_given"].astype(float), width=0.6, color=C_SERIES)
         plt.title("Revenue given away, by discount band", loc="left"); plt.tight_layout(); plt.show()
         dm = metrics["discounts"]
+        dm["bands"] = [{"band": str(r.discount_band), "lines_pct": float(r.lines_pct), "given": float(r.discount_given),
+                        "qty": float(r.avg_quantity_per_line)} for r in bands.itertuples()]
         note(f"Discounts gave away **{total_given:,.2f}** ({dm['pct_of_gross']:.1f}% of gross revenue) on {dm['discounted_lines_pct']:.1f}% of lines.")
         if dm["qty_discounted"] is not None and dm["qty_full_price"] is not None:
             lift = 100 * (dm["qty_discounted"] / dm["qty_full_price"] - 1) if dm["qty_full_price"] else float("nan")
@@ -2328,6 +2367,8 @@ def _pareto_cell(b: Builder) -> Cell:
                 "a_revenue_pct": float(a["revenue_pct"]) if a is not None else 0.0,
             }
             p = metrics["pareto"][name]
+            step = max(1, len(x) // 60)                       # up to ~60 points for the curve in the business brief
+            p["curve"] = [(0.0, 0.0)] + [(float(a), float(b)) for a, b in zip(x[::step], y[::step])] + [(float(x[-1]), float(y[-1]))]
             note(f"The top 20% of {name} bring **{top20:.0f}%** of revenue. Class A ({p['a_entities']:,} {name}, {p['a_entities_pct']:.0f}% of them) "
                  f"brings {p['a_revenue_pct']:.0f}%.")
         first = <<names>>[0]
