@@ -20,7 +20,6 @@ import itertools
 import re
 from dataclasses import dataclass, field
 
-import numpy as np
 import pandas as pd
 
 from .loading import Catalog, Table
@@ -159,9 +158,9 @@ def singular(name: str) -> str:
     return name
 
 
-def _norm(value: str) -> str:
+def _norm(value: str, synonyms: bool) -> str:
     text = re.sub(r"\s+", " ", str(value).strip().lower())
-    return SCALE_SYNONYMS.get(text, text)
+    return SCALE_SYNONYMS.get(text, text) if synonyms else text
 
 
 def match_scale(values: pd.Series) -> tuple[tuple[str, int], ...]:
@@ -170,11 +169,12 @@ def match_scale(values: pd.Series) -> tuple[tuple[str, int], ...]:
     if labels.empty:
         return ()
     distinct = labels.unique()
-    for scale in SCALES:
-        index = {label: i + 1 for i, label in enumerate(scale)}
-        inside = labels.map(lambda v: _norm(v) in index)
-        if inside.mean() >= 0.95 and len({_norm(v) for v in distinct if _norm(v) in index}) >= 3:
-            return tuple(sorted(((v, index[_norm(v)]) for v in distinct if _norm(v) in index), key=lambda p: (p[1], p[0])))
+    for i, scale in enumerate(SCALES):
+        index = {label: n + 1 for n, label in enumerate(scale)}
+        norm = lambda v: _norm(v, synonyms=i == 0)  # noqa: E731  ("ok", "average", "fair" stand for "okay" on the first scale only)
+        inside = labels.map(lambda v: norm(v) in index)
+        if inside.mean() >= 0.95 and len({norm(v) for v in distinct if norm(v) in index}) >= 3:
+            return tuple(sorted(((v, index[norm(v)]) for v in distinct if norm(v) in index), key=lambda p: (p[1], p[0])))
     return ()
 
 
@@ -314,6 +314,3 @@ def profile_table(table: Table) -> TableProfile:
 def profile_catalog(catalog: Catalog) -> CatalogProfile:
     return CatalogProfile({name: profile_table(t) for name, t in catalog.tables.items()})
 
-
-def numeric_range(col: ColumnProfile) -> tuple[float, float]:
-    return float(np.nan if col.minimum is None else col.minimum), float(np.nan if col.maximum is None else col.maximum)

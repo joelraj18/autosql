@@ -76,3 +76,10 @@ def test_database_is_typed_and_locked():
         raise AssertionError("local files must not be readable")
     except Exception as error:
         assert "disabled" in str(error) or "Permission" in type(error).__name__
+
+
+def test_iso_timestamps_with_zones_and_non_latin_names():
+    df = pd.DataFrame({"城市": ["北京", "上海"] * 15, "created_at": [f"2022-01-{1 + i % 28:02d}T10:00:00Z" for i in range(30)]})
+    t = read_files([("t.csv", as_csv(df))])["t"]
+    assert list(t.df.columns) == ["column_1", "created_at"] and t.column_map["column_1"] == "城市"
+    assert t.types["created_at"] == "timestamp" and t.df["created_at"].iloc[0] == pd.Timestamp("2022-01-01 10:00:00")

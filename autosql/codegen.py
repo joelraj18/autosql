@@ -20,10 +20,9 @@ import textwrap
 from dataclasses import dataclass
 from typing import Callable
 
-from .decision import CELL_TITLES, MIN_PERIODS_FOR_CORR, NTILE_BUCKETS, TOP_N, Decision, Dimension, Period
+from .decision import MIN_PERIODS_FOR_CORR, NTILE_BUCKETS, TOP_N, Decision, Dimension, Period
 from .dialect import DIALECTS, Dialect
 from .narrative import Step
-from .profiling import singular
 from .schema import Relationship
 
 SECTIONS = {
@@ -77,10 +76,6 @@ def render(fn: Callable[[Dialect], str]) -> dict[str, str]:
 
 def stmt(label: str, title: str, fn: Callable[[Dialect], str], run: str = "query") -> Statement:
     return Statement(label, title, render(fn), run)
-
-
-def indent(text: str, spaces: int) -> str:
-    return textwrap.indent(text, " " * spaces)
 
 
 def union_all(parts: list[str]) -> str:
@@ -236,13 +231,6 @@ class Builder:
                 clauses.append(f"LEFT   JOIN {self.src(D, r.parent_table)} {pa} ON {cond}")
                 where[r.parent_table] = pa
         return clauses, where
-
-    def label_col(self) -> tuple[str, str] | None:
-        """(table, column) of the item label used by top-N, and its alias in the views."""
-        if not self.d.item:
-            return None
-        table, label, _ = self.d.item
-        return table, label
 
 
 # ═════════════════════════════════════════════════════════════════════════
@@ -1194,7 +1182,7 @@ def _kpis_cell(b: Builder) -> Cell:
 
     story = Step(
         "kpis",
-        f"`order_facts` has one row per order and reconciles to the source.",
+        "`order_facts` has one row per order and reconciles to the source.",
         "Headline KPIs answer 'how big is the business?' and become the baseline for every trend. Each must be computed at the right grain: "
         "average order value is revenue ÷ distinct orders, not the average of order lines.",
         "We compute the headline KPIs in one query, so that every later breakdown can be compared with the overall figure.",
@@ -1302,7 +1290,6 @@ def _kpi_by_period_cell(b: Builder) -> Cell:
                 FROM   with_prev
                 ORDER  BY <<order>>''', lags=",\n           ".join(lags), name=name, out=",\n       ".join(out), order=b.period_order())])
 
-    cmp, yoy = d.compare, d.yoy
     story = Step(
         "kpi_by_period",
         f"Orders run over {len(d.periods)} {d.period}s" + (f"; {', '.join(d.label(p) for p in d.partial_periods)} is partial" if d.partial_periods else "") + ".",
@@ -1377,7 +1364,7 @@ def _running_total_cell(b: Builder) -> Cell:
 
     def sql(D: Dialect) -> str:
         order = b.period_order()
-        frame = f"ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW"
+        frame = "ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW"
         running = f"SUM({main}) OVER (ORDER BY {order}\n                             {frame})"
         return fill('''
             WITH <<cte>>
@@ -1838,7 +1825,7 @@ def _cohort_cell(b: Builder) -> Cell:
 
     story = Step(
         "cohort",
-        f"Each customer has a first order date.",
+        "Each customer has a first order date.",
         "Averages mix old and new customers. A cohort table follows each group of customers from their first order, so you can see whether newer "
         "customers come back as often as older ones did.",
         f"We group customers by the {unit} of their first order and count how many are active in each later {unit}, so that retention is measured per cohort.",
@@ -1933,7 +1920,7 @@ def _explain_cell(b: Builder) -> Cell:
         "(able to use an index). EXPLAIN shows the plan before you wait for it.",
         "We read the plan, show that a function wrapped around a column returns the same rows as a range filter but blocks the index, and "
         "propose indexes, so that the queries stay fast on large tables.",
-        f"EXPLAIN prints the operators the engine will use (scans, joins, aggregations). "
+        "EXPLAIN prints the operators the engine will use (scans, joins, aggregations). "
         + (f"The second query counts the same {year} rows twice: YEAR({d.date[1]}) = {year} must compute YEAR() for every row, while the range "
            f"{d.date[1]} >= '{year}-01-01' AND < '{year + 1}-01-01' can seek an index. " if year else "")
         + "The CREATE INDEX statements are for your MySQL / PostgreSQL database; the in-memory engine here does not need them.",

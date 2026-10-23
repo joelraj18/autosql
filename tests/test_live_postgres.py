@@ -10,7 +10,6 @@ import shutil
 import socket
 import subprocess
 import tempfile
-import time
 import zipfile
 from pathlib import Path
 

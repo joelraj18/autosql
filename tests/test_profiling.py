@@ -44,3 +44,13 @@ def test_no_key_table():
     df = pd.DataFrame({"a": ["x", "x", "y"], "b": [1, 1, 2]})
     t = profile_catalog(catalog_from({"t": df}))["t"]
     assert t.key_status == "none" and t.exact_duplicates == 1
+
+
+def test_every_rating_scale_is_recognised():
+    from autosql.profiling import SCALES, match_scale
+    for scale in SCALES:
+        values = pd.Series([label.title() for label in scale] * 3)
+        pairs = dict(match_scale(values))
+        assert [pairs[label.title()] for label in scale] == [1, 2, 3, 4, 5], scale
+    assert dict(match_scale(pd.Series(["Bad", "OK", "Good", "Very Good", "Very Bad"])))["OK"] == 3
+    assert match_scale(pd.Series(["red", "green", "blue"])) == ()

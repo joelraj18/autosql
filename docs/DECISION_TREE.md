@@ -1,235 +1,313 @@
-# AutoML Explorer: decision tree specification
+# AutoSQL Explorer: decision tree specification
 
-This page documents **exactly** how the engine decides what to do with an uploaded file. Every threshold below is a constant in the code:
+This page documents **exactly** how the engine turns uploaded tables into SQL. Every threshold below is a constant in the code:
 
-- `automl/profiling.py`: column roles, target suggestion, split dates, duplicates
-- `automl/decision.py`: quality gates, task, rule-of-thumb model, sampling, model constructors (`MODELS`)
-- `automl/codegen.py`: the notebook cells each branch generates, tuning search spaces (`SEARCH_SPACES`)
-- `automl/narrative.py`: wording thresholds used in the plain-English summary (`interpret`)
+- `autosql/loading.py`: reading files, typing columns, names, the DuckDB database
+- `autosql/profiling.py`: column roles, primary keys, grain
+- `autosql/schema.py`: foreign keys, cardinality, fan-out, diagrams
+- `autosql/decision.py`: focus, fact table, revenue, time, drivers, dimensions, NULL traps, indexes, skipped cells
+- `autosql/dialect.py`: how one statement differs between MySQL 8, PostgreSQL and DuckDB
+- `autosql/codegen.py`: the cells each branch generates; `autosql/narrative.py`: wording thresholds in `interpret()`
 
 If you change a constant in the code, update this page too.
 
-## Stage P: Profiling (runs once per file, cached)
+## Stage L: Loading (once per upload, cached)
 
-### P1. Column roles (`_profile_column`), checked in this order, first match wins
-| # | Condition | Role | What happens to it |
+### L1. Files
+| Input | Becomes |
+|---|---|
+| `.csv`, `.tsv`, `.txt` | one table (encoding `utf-8-sig`, then `latin-1`) |
+| `.xlsx`, `.xls` | one table per non-empty sheet, named `<file>_<sheet>` when there are several |
+| `.zip` | each CSV / Excel member as above. **Limits:** ≤ **50** members, ≤ **500 MB** unzipped; `__MACOSX/` and hidden files skipped; read in memory, never extracted |
+| anything else, or unreadable | skipped, with a warning and a `skipped_file` story |
+
+### L2. Types (every column is read as **text first**)
+Blank, `NULL`, `NA`, `N/A`, `\N`, `None`, `nan` → NULL. Then, first match wins:
+
+| # | Condition on the non-empty values | Type |
+|---|---|---|
+| 1 | all whole numbers, **no leading zero** (`05021` is a code), ≤ 18 digits | `integer` |
+| 2 | all numbers, no leading zero; whole numbers written `5.0` | `integer` |
+| 3 | all numbers with ≤ 4 decimals | `decimal` (money) |
+| 4 | other numbers | `float` |
+| 5 | only `true` / `false` | `boolean` |
+| 6 | ≥ **95%** of a 500-value sample parses with **one** format (ISO, ISO with time, `m/d/Y`, `d/m/Y`, `Y/m/d`, `d-m-Y`, `d.m.Y`, `d Mon Y`, …), or as ISO 8601 with a time zone (stored as UTC) | `date` if every time is midnight, else `timestamp` |
+| 7 | otherwise | `text` |
+
+- If both `m/d` and `d/m` parse every value (no day above 12), `m/d` is used and an `ambiguous_dates` story warns.
+- Values that look like dates but don't parse become NULL and are counted (`unparsed_dates`).
+- Leading zeros, codes and IDs stay text, so `05021` round-trips unchanged into the exports.
+
+### L3. Names
+- Columns and tables become `snake_case`: `OrderID → order_id`, `Order Details → order_details`, `HTTPStatus → http_status`,
+  `Größe → grosse`, `2nd value → c_2nd_value`.
+- A name with no Latin letters or digits (`城市`) becomes `column_<position>`.
+- Collisions get `_2`, `_3` (`Order ID`, `order_id`, `ORDER-ID` → `order_id`, `order_id_2`, `order_id_3`).
+- The original names are kept (`renamed from` in the profile, `renamed` story, export header).
+
+### L4. Database
+- Each run builds a fresh in-memory DuckDB with one typed table per upload.
+- Then `SET enable_external_access = false` and `SET lock_configuration = true`, so generated SQL can't read or write local files.
+- Each statement times out after **60 s** (`con.interrupt()`).
+
+---
+
+## Stage P: Profiling
+
+### P1. Column roles (`profile_column`), first match wins
+| # | Condition | Role |
+|---|---|---|
+| 1 | ≤ 1 distinct non-null value | `constant` |
+| 2 | type `date` / `timestamp` | `datetime` |
+| 3 | type `boolean` | `dimension` |
+| 4 | integer or text **and** name matches `KEY`¹ **and** not `NOT_KEY`² **and** not a date part | `identifier` |
+| 5 | number named like a phone / postal / extension | `attribute` |
+| 6 | integer 0–10 named like `rating`, `score`, `stars`, `review`, `feedback`, `satisfaction`, `csat`, `nps` | `rating` (`1-5` or `1-10`) |
+| 7 | integer named `year`, `quarter`, `month`, `week`, `day` (`_number` / `_num` / `_no`) | `date_part` |
+| 8 | integer with exactly the values 0 and 1 | `dimension` (flag) |
+| 9 | any other number | `measure`, with a **kind**: `discount` › `quantity` › `price` › `charge` (freight, shipping, tax, fee…) › `amount` (amount, revenue, sales, total, net, gross…, but not names containing count / num / qty / id / pct / rate / share) › `other` |
+| 10 | text where ≥ 95% of values belong to one ordered scale³ (≥ 3 of its labels present) | `rating` (`scale`, mapped to 1–5) |
+| 11 | text averaging > **30** characters with spaces in > 50% of values | `text` |
+| 12 | text named like contact or descriptive details (phone, fax, email, address, postal, zip, url, description, notes, comment) | `attribute` |
+| 13 | text with > **50** distinct values | `attribute` |
+| 14 | otherwise | `dimension` |
+
+¹ `KEY`: names ending in `id`, `key`, `code`, `no`, `num`, `number`, `uuid`, `guid`, `sku`, or starting with `id_`.
+² `NOT_KEY`: names containing postal, zip, phone, fax, email, address, url, path, area_code.
+³ Scales: very bad…very good (with `ok` / `average` / `fair` read as `okay`), very poor…excellent, poor…excellent,
+very dissatisfied…very satisfied, strongly disagree…strongly agree, very unlikely…very likely.
+
+### P2. Primary key and grain (`find_primary_key`), checked in this order
+There is **no minimum row count**: a 3-row lookup table still gets its key.
+
+1. **Single column:** unique and never empty, integer or text, with a score ≥ **2**. The score is:
+   - **+4** named `<table_singular>_id` / `_key` / `_code` / `_no` or `id`;
+   - **+3** identifier role;
+   - **+2** first column;
+   - **+1** integer;
+   - **−5** named like a name, title, phone, email, address, postal code or description.
+
+   The best score wins; ties go to the leftmost column. Northwind `customers`: `customer_id` (score 9) beats `company_name`,
+   which is unique too.
+2. **Two identifier columns together** (≤ **15** candidates, every pair) → `composite`. Example: `order_details(order_id, product_id)`.
+3. An identifier unique in ≥ **90%** of its non-empty rows → `intended`. It is the key the table was meant to have; its
+   duplicates are listed and removed with `ROW_NUMBER()`.
+4. An identifier, dimension or date together with another → `composite` (one row per store per day).
+5. Otherwise `none`: exact duplicate rows are counted instead.
+
+The **grain sentence** comes from the key: "one row per `order_id` × `product_id`".
+
+---
+
+## Stage S: Relationships (`infer_schema`)
+
+Only single-column keys (`single` or `intended`) can be pointed at; composite foreign keys are not inferred.
+
+| Kind | Condition | Result |
+|---|---|---|
+| `name` | child column = the parent key's name, or `<parent_singular>_<key>`, or `<parent>_<key>` (and `<parent_singular>_id` when the key is `id`); containment ≥ **95%** of distinct values | **accepted** |
+| `name` | as above but containment < 95% | suggested only (`fk_low`): "possibly a different code list" |
+| `self` | name `reports_to`, `manager(_id)`, `parent(_id)`, `parent_*_id`, `supervisor(_id)`, `boss(_id)`, `managed_by`; same type; every value is a key of the same table | **accepted** |
+| `value` | no name match; child is an identifier **or** shares a stem of ≥ **4** characters with the parent table name; **every** value exists in the parent key; **and** the two value sets are equal **or** the stem matches. Best candidate only (set equality › stem length › smaller parent) | **suggested only**: the user ticks it |
+
+- Keys are compared as trimmed text, so `7` matches `'7'`; a type mismatch adds a `type_mismatch` story, and the generated joins
+  cast both sides to text.
+- When both tables are keyed by the column (1:1), the bigger table is the parent.
+
+For each relationship the engine computes:
+- **containment**;
+- **orphan rows** (child values with no parent);
+- **child NULLs**;
+- **children per parent** (max, average, parents without children);
+- **cardinality** (`1:1` when max ≤ 1, else `1:N`).
+
+**Fan-out risks** (`find_fanouts`): numeric non-price measures of the parent in a `1:N` link, excluding link columns. Each records
+its total, and its total after the join (value × children per parent). They are sorted amount › charge › quantity › other, then
+by factor.
+
+**Northwind:**
+- 7 accepted: 6 by name + `employees.reports_to` (self).
+- 1 suggested: `orders.ship_via → shippers.shipper_id`. The value sets {1, 2, 3} are equal, and the names share "ship". The
+  same values are also valid employee, category, product and supplier keys, which is why it is only suggested.
+- Accepted + ticked = the 8 FOREIGN KEY constraints of Microsoft's script (`examples/northwind/expected_fks.json`, checked by
+  `tests/test_schema.py`).
+
+---
+
+## Stage D: Decision (`decide`)
+
+### D0. Gates
+| Condition | Result |
+|---|---|
+| no table, or every table empty | **HALT** (`halt_empty`) |
+| the largest table has < **100** rows | warning (`small_tables`), everything still runs |
+| a manual pick that isn't a numeric column / a date of the order tables / a table | **HALT** (`halt_pick`) with the reason |
+
+### D1. Focus (three modes, `FOCUS_MODES`)
+| Mode in the app | What happens |
+|---|---|
+| 🤖 **Let the engine decide** (default) | stages D2–D7. **If the fact table has no money measure and no date, it falls back to validation** (`focus_auto_validate`) |
+| 🎯 **I'll choose** | you pick the fact table; revenue as price × quantity (× (1 − discount)), an amount, or a row count; the date; the order key; the customer; up to 3 dimensions. Everything you don't pick is decided as in auto |
+| 🔍 **Just validate the data** | schema, grain, cardinality, duplicates, NULLs, dates, orphans, EXPLAIN and NULL traps; all KPI cells are skipped |
+
+### D2. Fact table and grain
+- **Fact table:** the highest score of (sales measures, has a date itself or one join away, is a child in a link, rows). The
+  sales-measure score is 3 for price + quantity, 2 for an amount, 1 for price or quantity, 0 otherwise. A single table is its
+  own fact table.
+- **Order key**, first match:
+  1. a column named like `order|invoice|transaction|txn|receipt|basket|booking|sale|purchase` + `id|key|no|num|number|code`;
+  2. the single-column key;
+  3. the part of a composite key that points at a table with a date.
+- **Line level** when the order key repeats in the fact table. Then:
+  - the **order table** (`header`) is the parent the order key points at;
+  - lines are rolled up to orders **before** any order-level table is joined;
+  - without an order table, order-level columns are taken per order with `MIN()`, and the reconciliation counts orders whose
+    lines disagree on the date.
+
+### D3. Revenue
+| Fact table has | Revenue |
+|---|---|
+| price **and** quantity (+ optional discount) | `SUM(price × quantity × (1 − COALESCE(discount, 0)))`: **net** of discount; gross is shown in the reconciliation |
+| discount with a maximum in (1, 100] | it is a percentage: `discount / 100.0` (`discount_percent` story) |
+| quantity only, price in a parent table | that parent's price (a **list price**, with a warning and an assumption) |
+| an amount column | `SUM(amount)` |
+| none of these | **row counts** (orders per period); RFM and the driver tree are skipped |
+
+The price on the line wins over a parent's list price: in Northwind 30.5% of lines differ from today's list price.
+
+### D4. Time
+- **Date:** among the date columns of the fact and order tables, the highest of: +2 named like an order/sale/created date, −3
+  named like a ship or required date; then fewest NULLs; then the fact table first.
+- **Period:**
+  - **year** when the data spans > **5** years;
+  - otherwise **quarter** when there are ≥ **4** complete quarters;
+  - otherwise **month**.
+
+  When the data spans more than one calendar year, periods are grouped and ordered by year *and* quarter (or month).
+- **Partial periods:** only the first and the last period can be cut off. A period with data on < **90%** of its days is
+  `partial`. It is shown and labelled, but excluded from every period-over-period verdict.
+- **Comparisons:** the last two **complete** periods, when they are consecutive. Year over year: the last complete quarter (or
+  month) vs the same one a year earlier.
+- **Date parts:** a `year` / `quarter` / `month` column stored next to a real date is checked against it.
+
+### D5. Drivers and the customer
+| Driver | Condition | Column in the views |
+|---|---|---|
+| lead time | a date in the same table named `ship|dispatch|deliver|fulfil|arriv|receiv|sent` (not required/due) that is on or after the order date in ≥ **90%** of rows | `ship_days` / `delivery_days` / `lead_days`. MySQL `DATEDIFF(end, start)`; PostgreSQL `end - start` (or `end::date - start::date` for timestamps) |
+| late flag | a date named `required|due|promised|expected|sla|deadline` | `shipped_late` = 1 when shipped after it, NULL when either date is missing |
+| rating | a `rating` column in the fact or order table | `rating_score`, mapped with `CASE` for text scales |
+
+- **Customer:** a column named like `customer|client|user|account|buyer|member|shopper|guest|patient` (+ optional
+  `id|key|no|code`) in the fact or order table, other than that table's own key.
+- An empty driver value (e.g. 21 unshipped orders) is reported, because AVG() skips NULLs.
+
+### D6. Dimensions (at most **3**)
+- **Candidates:** `dimension` columns with 2–50 values and ≤ **30%** NULL, in tables reachable along accepted links within **2**
+  joins of the fact or order table.
+- **Level:** `line` when the column varies within an order (product side), `order` otherwise.
+- **Groups**, at most one each, in this order: geography (country, state, region, city…), product (category, segment, type,
+  brand, maker…), channel / status, fulfilment (shipper, carrier, warehouse), people (employee, salesperson, rep), other.
+- **Ranking within a group:**
+  1. the customer table first, for geography;
+  2. fewer joins;
+  3. fewer NULLs;
+  4. closest to 10 values.
+
+  People and "other" groups only use the table's **label column** (`<table>_name`, `name`, the table's singular, `company_name`,
+  `full_name`, `last_name`, `title`).
+- **Top-N item:** the label of the table inside the first line-level dimension (products in a category); otherwise customers
+  within the first order-level dimension.
+- **Aliases in the views:**
+  - columns of the fact / order table keep their names;
+  - columns already starting with the table's singular keep theirs (`category_name`);
+  - others become `<singular>_<column>` (`customer_country`, `employee_last_name`).
+
+**Northwind:** `customers.country` (geography), `categories.category_name` (product), `employees.last_name` (people). Ticking
+the `ship_via` link replaces the person with `shippers.company_name` (fulfilment).
+
+### D7. Correctness and speed
+- **De-duplication:** every table with an `intended` key keeps one row per key with
+  `ROW_NUMBER() OVER (PARTITION BY key ORDER BY ts IS NULL, ts DESC)`. `ts` is a column named updated/modified/loaded/created,
+  else any date; without one the copy kept is arbitrary, and that is stated.
+- **NOT IN trap:**
+  - prefer an accepted link whose child column has NULLs (self-references first);
+  - otherwise inject a NULL into the first link (`UNION ALL SELECT NULL`) to show what one NULL would do.
+- **COUNT trap:** the lead-time end column if it has NULLs, else the rating, else the first nullable measure or date.
+- **Indexes proposed:** every foreign key column that is not the first column of its table's key, plus the analysis date.
+- **Skipped cells** and why:
+
+  | Cell | Skipped when |
+  |---|---|
+  | cardinality, orphans | no relationships |
+  | date range | no date anywhere |
+  | per-period cells, running total, recency, RFM, cohorts, driver tree, drill-down | no date |
+  | recency, RFM, cohorts | no customer |
+  | driver tree, drill-down | fewer than 2 complete periods, or the last two aren't consecutive |
+  | drill-down | no driver and no dimension |
+  | top N | no group-and-item pair |
+  | RFM, driver tree | no money measure |
+
+---
+
+## Stage C: The generated cells (`codegen.py`)
+
+Every cell has a six-part story and one or more statements, each rendered for MySQL 8, PostgreSQL and DuckDB, and a Python check
+that writes the 📌 findings from the result.
+
+| # | Cell | Section | SQL pattern |
 |---|---|---|---|
-| 1 | distinct non-null values ≤ 1 | `constant` | dropped |
-| 2 | dtype is datetime64 | `datetime` | expanded to `_year`, `_month`, `_weekday` |
-| 3 | dtype is bool | `categorical` | one-hot |
-| 4 | numeric **and** integer **and** unique ratio > 0.95 **and** rows ≥ 30 **and** (values are consecutive *or* the name matches the ID pattern¹) | `id` | dropped |
-| 5 | any other numeric | `numeric` | median-imputed and standardised |
-| 6 | text: ≥ 90% of a 200-row sample parses as dates, and ≤ 50% parses as plain numbers | `datetime` | expanded |
-| 7 | text: average length > 30 characters **and** > 50% of values contain a space (2,000-row sample) | `text` | dropped |
-| 8 | text: unique ratio > 0.95 **and** rows ≥ 30 | `id` | dropped |
-| 9 | text: distinct values > 50 | `high_card_categorical` | one-hot, capped at 20 columns |
-| 10 | otherwise | `categorical` | one-hot, capped at 20 columns |
+| 1 | `schema` | Schema & grain | `CREATE TABLE` parents first; `NOT NULL` when no NULLs; `PRIMARY KEY`; inline `FOREIGN KEY` only for trusted links with no orphans and a unique parent. Run on an empty database |
+| 2 | `grain` | Schema & grain | `COUNT(*)` vs `COUNT(DISTINCT key)` (pairs: `SELECT COUNT(*) FROM (SELECT DISTINCT a, b …)`), NULL keys; `UNION ALL` |
+| 3 | `cardinality` | Schema & grain | children per parent with `LEFT JOIN … GROUP BY`; fan-out demo: a parent column summed alone vs after joining (first 2 risks) |
+| 4 | `duplicates` | Validate | `GROUP BY key HAVING COUNT(*) > 1`; listing of the most repeated keys (top **20**) |
+| 5 | `nulls` | Validate | `COUNT(*) - COUNT(col)` per column; with > **60** columns, only those that had NULLs |
+| 6 | `date_range` | Validate | MIN/MAX per date; rows, first and last date per period (coverage computed in the check); lead-time sanity (negative, > 365 days); date-part consistency |
+| 7 | `orphans` | Validate | `LEFT JOIN … WHERE parent.key IS NULL` and `NOT EXISTS` (both directions); examples |
+| 8 | `base` | Build with CTEs | `order_facts` (one row per order: `line_revenue → order_totals → LEFT JOIN`s, `COALESCE(…, 'Unknown')`) and `line_facts` (one row per line) |
+| 9 | `reconcile` | Validate | rows, orders and revenue from the raw table and each view (`UNION ALL`) + pandas from the uploaded rows; gross vs net; price paid vs list price |
+| 10 | `kpis` | KPIs | revenue, orders, AOV = revenue ÷ orders, average line value (contrast), customers, orders per customer, repeat-customer %, units per order, average lead time, late %, rating |
+| 11 | `kpi_by_period` | KPIs | `quarterly` CTE → `with_prev` (`LAG`, and `LAG(…, 4)` / `LAG(…, 12)` for year over year) → `% change` with `100.0 * (new − old) / NULLIF(old, 0)`; `period_status` for partial periods |
+| 12 | `running_total` | Window functions | `SUM() OVER (ORDER BY … ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW)`, share of `SUM() OVER ()` |
+| 13 | `top_n` | Window functions | `DENSE_RANK()` and `ROW_NUMBER()` `OVER (PARTITION BY group ORDER BY revenue DESC)`, filtered in an outer query (top **3**) |
+| 14 | `latest_record` | Window functions | `ROW_NUMBER() OVER (PARTITION BY customer ORDER BY date DESC, order DESC) = 1`; recency measured to the last date in the data |
+| 15 | `rfm` | Window functions | view `customer_rfm`: `NTILE(5)` for recency / frequency / monetary (ties broken by customer), `CASE` segments; summary per segment |
+| 16 | `driver_tree` | Root cause | drivers for the two compared periods; Δ per member of each dimension with conditional aggregation and `SUM() OVER ()` |
+| 17 | `drilldown` | Root cause | symptom and drivers per complete period (correlation if ≥ **6** periods); per segment, before vs after, `AVG(CASE WHEN … THEN x END)` |
+| 18 | `cohort` | Root cause | first-order period × periods since (year × 4 + quarter arithmetic, no date spine) |
+| 19 | `explain` | Fast & correct | `EXPLAIN` (`EXPLAIN FORMAT=TREE` in MySQL); `YEAR(col) = y` vs a sargable date range; `CREATE INDEX` proposals (shown, not run) |
+| 20 | `null_traps` | Fast & correct | NOT IN vs NOT EXISTS; `COUNT(*)` vs `COUNT(col)` vs `AVG`; integer division (shown, not run) |
 
-¹ ID name pattern: `…_id`, `…_uuid`, `…_guid`, `…_key`, `…_index`, `id_…`, `id`, `index`, `Unnamed: 0` (case-insensitive).
-The unique ratio is distinct values ÷ non-null values.
+**Driver-tree arithmetic** (in the check). For the compared periods, with O = orders and A = average order value:
 
-### P2. Dataset-level facts
-- **Exact duplicates:** rows identical in every column (their share decides what happens; see Stage 0b).
-- **Look-alike rows:** rows identical once the `id` columns are removed, minus the exact duplicates.
-- **Missing fraction:** the share of all cells that are empty.
+- volume = (O₂ − O₁) · A₁
+- order value = O₁ · (A₂ − A₁)
+- interaction = (O₂ − O₁) · (A₂ − A₁)
 
-### P3. Choosing the target: three modes (`resolve_target` in `automl/decision.py`)
-| Mode in the app | What happens | First line of the trace after the overview |
-|---|---|---|
-| 🤖 **Let the engine decide** (default) | uses the suggestion below; **if there is none, the engine chooses clustering** | `target_auto_found` or `target_auto_none` |
-| 🎯 **I'll pick the target** | your column always wins; the trace notes when the engine would have picked a different one | `target_manual` |
-| 🔍 **No target: just find groups** | clustering; a column *named* like an outcome is still left out of the inputs | `target_none` |
+The three add up to the revenue change exactly.
 
-A manually picked target that can't be predicted (free text, a date, a single value) still stops with an explanation.
+## Dialect rules (`dialect.py`; enforced by `tests/test_codegen_runs.py`)
+| Construct | MySQL 8 | PostgreSQL | DuckDB (runs in the app) |
+|---|---|---|---|
+| quoted identifier | `` `order` `` | `"order"` | `"order"` |
+| string literal | `'O''Brien'`, backslash doubled | `'O''Brien'` | `'O''Brien'` |
+| days between dates | `DATEDIFF(b, a)` | `b - a` (`b::date - a::date` for timestamps) | `b - a` / `date_diff('day', a, b)` |
+| year / quarter | `YEAR(d)`, `QUARTER(d)` | `EXTRACT(QUARTER FROM d)::int` | as PostgreSQL |
+| rounding | `ROUND(x, k)` | `ROUND((x)::numeric, k)` | `ROUND(x, k)` |
+| ratio / percentage | `ROUND(1.0 * a / NULLIF(b, 0), k)`, `ROUND(100.0 * a / NULLIF(b, 0), 1)` | same, `::numeric` before rounding | same |
+| plan | `EXPLAIN FORMAT=TREE` | `EXPLAIN` | `EXPLAIN` |
+| keys | never `TEXT` (MySQL can't index it without a prefix) | | |
 
-### P3b. Target suggestion (`suggest_target`), used by "Let the engine decide"
-1. Usable columns are those with role `categorical` or `numeric` **and** 2–15 distinct values.
-2. If a usable column, **or a numeric column with any number of values**, has a name matching `status | target | label | class | churn | outcome | default | fraud | cancel | survived | result | response | y`,
-   the **last** such column is chosen. Reason: "its name looks like an outcome…".
-3. Otherwise, if the **last column** is usable and categorical, it is chosen.
-4. Otherwise no suggestion is made, and the default is clustering.
+- **Never generated:** `FILTER (WHERE …)`, `NULLS FIRST/LAST`, `QUALIFY`, `FULL [OUTER] JOIN`, `ILIKE`, `generate_series`,
+  `PERCENTILE_CONT`, `COUNT(DISTINCT a, b)`, a reserved word as an alias, `::` in MySQL, a division without `NULLIF` or a
+  decimal literal, a `WHERE` filter on a LEFT-joined table other than `IS NULL`.
+- **Verified on real servers:** `tests/test_live_postgres.py` (PostgreSQL 16) and `tests/test_live_mysql.py` (MySQL 8.4) run the
+  exported project for 10 dataset shapes and compare every query result with DuckDB.
 
-### P4. Split dates (`find_date_parts`)
-- Applies to numeric columns named `<prefix>[_]year` that also have `<prefix>[_]month` and `<prefix>[_]date` or `<prefix>[_]day`.
-- They are combined into a real date, and impossible combinations (e.g. 29 Feb 2018) are counted.
-
----
-
-## Stage 0: Quality gates (any failure → **HALT**, with an explanation)
-| Gate | Threshold |
+## Stage I: plain-English summary (`interpret`)
+| Wording | Threshold |
 |---|---|
-| Too few rows | rows < **30** |
-| Too few columns | columns < **2** |
-| Too empty | > **60%** of all cells missing |
-| Bad target | target role is `text`, `datetime`, `constant` or `id` (a different value in almost every row) |
-| No usable inputs (checked after clean-up) | 0 features, or **< 2** features when there is no target |
-| *(warning, not a stop)* Small data | fewer than **200 rows** → a story explains that one test row moves the score a lot, so cross-validated scores are steadier |
-| Single class (classification, after removing rare classes) | fewer than 2 classes left |
-
-## Stage 0b: Clean-up (applied to every non-target column, in this order)
-1. When **no target** is chosen, the suggested target column is **excluded** from the clustering inputs, but **only if it was
-   suggested because of its name** (P3 step 2). Being the last column is too weak a reason to drop a real feature.
-2. Role `id` → drop.
-3. Role `constant` → drop.
-4. Role `text` → drop.
-5. Missing in **> 40%** of rows → drop.
-6. Role `datetime` → `_year`, `_month`, `_weekday` (0 = Monday).
-7. Role `numeric` → numeric feature.
-8. Role `categorical` or `high_card_categorical` → categorical feature.
-
-Then:
-- **Exact duplicates:** if they are **≤ 5%** of rows they look like accidental double entries and are **dropped**.
-  Above 5% they are real repeats (e.g. many identical bookings, or category-only data) and are **kept**. Supervised runs then also
-  report the unseen-row score.
-- **Look-alike rows** are kept, but flagged (supervised only), and an extra score on unseen rows is reported.
-- **Split dates** (P4) add `<prefix>_weekday`.
-- **±Infinity** (usually a division by zero upstream) is counted while profiling and replaced by a missing value in the prepare cell.
-- Remaining gaps are filled with the **median** (numbers) or a **"missing"** category.
-
----
-
-## Stage 1: Task
-```
-target chosen?
-├─ NO  → CLUSTERING (Branch A)
-└─ YES → drop rows where the target is empty
-         target numeric (not bool) AND distinct values > 15 ?
-         ├─ YES → REGRESSION (Branch B1)
-         └─ NO  → CLASSIFICATION (Branch B2)
-```
-
-### Branch A: Clustering
-| Setting | Rule |
-|---|---|
-| Algorithm | rows > 10,000 → `MiniBatchKMeans(n_init=3, batch_size=2048)`; otherwise `KMeans(n_init=10)`; both use k-means++ and Euclidean distance |
-| k range | 2 … max(2, min(8, rows ÷ 10)) |
-| Sampling | rows > 100,000 → random sample of 100,000 |
-| Choosing k | highest **silhouette** on a 5,000-row sample; inertia (elbow) is shown alongside |
-
-Generated cells: setup → prepare → EDA → scale/one-hot → **PCA** (components for 80% of the variance, plus loadings) → **choose k** (elbow and
-silhouette) → **fit + profiles** (PCA map with centroids; per-cluster means as z-scores) → **hierarchical**.
-
-The hierarchical cell uses ward linkage on 1,500 rows and draws a dendrogram cut at k. It compares `AgglomerativeClustering` with K-Means by
-silhouette and adjusted Rand index: ARI > 0.6 means "robust".
-
-### Branch B1: Regression
-| Decision | Rule |
-|---|---|
-| Log target | \|skew\| > 1 **and** min ≥ 0 → `TransformedTargetRegressor(log1p / expm1)` for every candidate; OLS on log1p(y) |
-| Rule-of-thumb model, < 1,000 rows | inputs > 30 → `LassoCV(cv=5)`; otherwise max \|r\| between numeric inputs > 0.9 (5k-row sample, first 50 columns) → `RidgeCV(α = 10⁻³…10³, 13 values)`; otherwise `LinearRegression` |
-| Rule-of-thumb model, 1,000–100,000 rows | `RandomForestRegressor` |
-| Rule-of-thumb model, > 100,000 rows | `HistGradientBoostingRegressor` |
-| Candidates actually compared | [the linear model above, or `LinearRegression`], `DecisionTreeRegressor`, `RandomForestRegressor`, `AdaBoostRegressor`, `HistGradientBoostingRegressor`, plus `XGBRegressor` and `LGBMRegressor` **when installed** |
-| Metric | R² (and MAE reported) |
-
-### Branch B2: Classification
-| Decision | Rule |
-|---|---|
-| Rare classes | classes with **< 2** rows are dropped |
-| Subtype | 2 classes → binary; otherwise multiclass |
-| Stratified split | if ⌊rows × 0.2⌋ ≥ number of classes |
-| Imbalance | smallest class share ÷ largest < **0.25** → `class_weight="balanced"` (on LR, tree, RF, HGB and LightGBM; AdaBoost and XGBoost have none), and the metric becomes **Macro F1**. If `imbalanced-learn` is installed, a **resampling** step also compares oversampling, undersampling and SMOTE |
-| Metric | **Macro F1** if the smallest class is under 40% × (2 ÷ number of classes) (e.g. under 40% for binary, under 20% with 4 classes) or the data are imbalanced; otherwise **Accuracy**. Reason: accuracy flatters a model that always predicts the big class |
-| Positive class (binary only) | the **rarer** class. It drives the insights, logit odds ratios, ROC and threshold tuning |
-| Rule-of-thumb model | < 1,000 rows → `LogisticRegression`; 1,000–100,000 → `RandomForestClassifier`; > 100,000 → `HistGradientBoostingClassifier` |
-| Candidates actually compared | `LogisticRegression`, `DecisionTreeClassifier`, `RandomForestClassifier`, `AdaBoostClassifier`, `HistGradientBoostingClassifier`, plus `XGBClassifier` (wrapped in `LabelEncoded`, because XGBoost needs classes numbered 0, 1, 2…) and `LGBMClassifier` **when installed** |
-| Optional libraries | "Installed" means the library **imports without error**, not just that its files exist. On macOS without `libomp`, `import lightgbm` raises `OSError`: the engine skips it with the `boosting_libs_broken` step ("run `brew install libomp`"). The exported notebook also adds each XGBoost/LightGBM model inside its own `try`, so a notebook built on one computer still runs on another computer where the library won't load |
-
-> The rule-of-thumb model is the engine's *first guess*. It is explained in the decision trace and sets the sampling limit, but the
-> **model that is actually used is the cross-validation winner** among the five candidates.
-
----
-
-## Stage 3: Speed (supervised)
-The row cap depends on the family of the rule-of-thumb model:
-- tree (random forest) → **50,000**
-- linear, boosting or HGB → **100,000**
-
-Classification samples are stratified.
-
----
-
-## Fixed model specifications (`MODELS` in `automl/decision.py`)
-| Model | Constructor |
-|---|---|
-| LogisticRegression | `max_iter=1000` (+ `class_weight` if imbalanced) |
-| DecisionTree (Clf/Reg) | `max_depth=8, min_samples_leaf=20, random_state=42` |
-| RandomForest (Clf/Reg) | `n_estimators=200, min_samples_leaf=2, oob_score=True, n_jobs=-1, random_state=42` |
-| AdaBoost (Clf/Reg) | `n_estimators=100, random_state=42` |
-| XGBoost (Clf/Reg), optional | `n_estimators=300, learning_rate=0.1, max_depth=6, subsample=0.8, colsample_bytree=0.8, n_jobs=-1, random_state=42` |
-| LightGBM (Clf/Reg), optional | `n_estimators=300, learning_rate=0.05, num_leaves=31, subsample=0.8, subsample_freq=1, colsample_bytree=0.8, n_jobs=-1, verbose=-1, random_state=42` (+ `class_weight`) |
-| HistGradientBoosting (Clf/Reg) | `random_state=42` (defaults otherwise) |
-| LinearRegression / RidgeCV / LassoCV | see B1 |
-| KMeans / MiniBatchKMeans | see Branch A |
-
-## Preprocessing (inside every pipeline, so nothing leaks)
-- **Numbers:** `SimpleImputer(median)` → `StandardScaler`.
-- **Categories:** `OneHotEncoder(handle_unknown="infrequent_if_exist", max_categories=20, sparse_output=False)`.
-- The readable-rules tree uses the same steps **without** scaling, so its thresholds are in real units.
-
-## Supervised evaluation pipeline (generated cells, in order)
-| # | Cell | Specification |
-|---|---|---|
-| 1 | Setup | `metrics` dictionary; `note()` |
-| 2 | Prepare | the clean-up above, plus the sample |
-| 3 | EDA | 5,000-row sample; histograms (≤ 12 columns), correlation heatmap (≤ 15), target plot |
-| 4 | Insights (regression, or binary classification) | outcome by group: categories as-is, numbers with > 10 distinct values cut into 5 quantile bands; groups under 30 rows hidden; top 4 columns by spread |
-| 5 | Split | `test_size=0.2, random_state=42`, stratified if allowed |
-| 6 | Preprocess | fitted on training rows |
-| 7 | Baseline | `DummyRegressor(mean)` or `DummyClassifier(most_frequent)` |
-| 8 (regression) | VIF | 20,000-row statsmodels sample; reference category = mode; top-10 categories (rest = "other"); VIF on 5,000 rows; drop the max while VIF > 10 |
-| 9 (regression) | OLS | `sm.OLS` (log target if skewed); R², adjusted R², F p-value, coefficients with 95% CI and p-values; test R² |
-| 10 (regression) | Assumptions | RESET (power 2, F), Breusch-Pagan, Jarque-Bera: p ≥ 0.05 = OK; Durbin-Watson in 1.5–2.5 = OK; residual, histogram and Q-Q plots |
-| 8 (binary) | Logit | `sm.Logit(maxiter=300)` on 20,000 rows; odds ratios with 95% CI and p-values; warns if it doesn't converge (perfect separation) |
-| – | Compare | 10,000-row training sample, `cross_val_score(cv=3)` per candidate; winner = highest mean |
-| – | Resample (imbalanced + `imblearn`) | the winner under class weights vs `RandomOverSampler`, `RandomUnderSampler`, `SMOTE` (class weights switched off for the samplers), 3-fold CV, using imblearn's `Pipeline`, so resampling happens **only inside training folds**; if a sampler wins, `make_pipe` is redefined so tuning, training and threshold all use it |
-| – | Tune | `RandomizedSearchCV(n_iter=min(8, grid size), cv=3)` on the same sample, trials run **one after another** (each model already uses all cores; parallel trials on top deadlocked); spaces below. **New settings are adopted only if they beat the defaults' CV score**; otherwise the defaults are kept |
-| – | Train | refit the tuned winner on **all** training rows; train/test gap ≤ 0.05 "generalises", ≤ 0.15 "mild overfitting", > 0.15 "overfitting"; test set < 100 rows → noise warning; test score ≥ 0.99 with a baseline under 0.9 → **leakage warning** (check for a column that gives away the answer); OOB score for forests; unseen-row score when look-alike rows exist; MAE and predicted-vs-actual (regression); report, confusion matrix and ROC-AUC (classification) |
-| – | Threshold (binary) | out-of-fold probabilities (`cv=3`, ≤ 20,000 training rows); threshold = argmax F1 on the precision-recall curve; test table at 0.50 vs tuned |
-| – | Rules | `DecisionTree(max_depth=3)` on unscaled inputs; `plot_tree`; the root split phrased as a question (a one-hot column becomes "is `plan` = basic?"); score ≤ baseline + 0.01 → "no better than the baseline"; within 0.005 of the winner (or better) → "as good as the full model: these rules are enough"; within 0.05 → "most"; else "part" |
-| – | Explain | `permutation_importance(n_repeats=3)` on ≤ 2,000 test rows, original columns |
-
-### Tuning search spaces (`SEARCH_SPACES` in `automl/codegen.py`)
-| Model | Space |
-|---|---|
-| LogisticRegression | C ∈ {0.01, 0.1, 1, 10, 100} |
-| DecisionTree | max_depth ∈ {3, 5, 8, 12, None}, min_samples_leaf ∈ {1, 5, 20, 50}, ccp_alpha ∈ {0, 1e-4, 1e-3} |
-| RandomForest | n_estimators ∈ {100, 200, 400}, max_features ∈ {sqrt, 0.5, 1.0}, min_samples_leaf ∈ {1, 2, 5} |
-| AdaBoost | n_estimators ∈ {50, 100, 200}, learning_rate ∈ {0.05, 0.1, 0.5, 1.0} |
-| HistGradientBoosting | learning_rate ∈ {0.03, 0.05, 0.1, 0.2}, max_leaf_nodes ∈ {15, 31, 63}, l2_regularization ∈ {0, 0.1, 1} |
-| LinearRegression / RidgeCV / LassoCV | not tuned (they fit their own α, or have none) |
-
-## Interpretation thresholds used in the plain-English text
-| Measure | Threshold and meaning |
-|---|---|
-| Model vs baseline | gain ≤ 0.01: "not better than guessing"; < 0.10: "small but real"; otherwise "clearly learning" |
-| Train − test gap | ≤ 0.05 generalises; ≤ 0.15 mild overfitting; > 0.15 overfitting (same thresholds in the train cell and the summary) |
-| Tuned threshold | if it lowers test F1, the note recommends keeping 0.50 |
-| Silhouette | ≥ 0.5 strong; ≥ 0.25 reasonable; otherwise weak |
-| ROC-AUC | ≥ 0.9 "very well"; ≥ 0.75 "reasonably"; otherwise "weakly" |
-| Unseen-row gap | > 0.02 → "duplicates flatter the score" |
-| VIF | < 5 safe; 5–10 "read with care"; > 10 dropped |
-| p-values | < 0.05 significant |
-
-## Worked trace: INN Hotels (`booking_status`)
-- **Profile:** 36,275 rows; `Booking_ID` is an ID (100% unique text); 10,275 look-alike rows; arrival year/month/date detected as a split date, with 37 impossible dates.
-- **Target:** `booking_status` was suggested by name.
-- **Task:** 2 classes → binary; share ratio 0.33 ÷ 0.67 = 0.49 is not < 0.25, so no class weights, but 32.8% < 40%, so the metric is
-  **Macro F1** (baseline 0.402); the positive class is `Canceled`.
-- **Model:** the rule-of-thumb pick is RandomForest (1,000–100,000 rows), so the cap is 50,000 and no sampling is needed.
-- **Cells:** logit odds → compare 7 (with XGBoost and LightGBM installed), by CV macro F1: LightGBM 0.862 > random forest 0.858 >
-  XGBoost 0.857 > gradient boosting 0.855 > tree 0.816 > AdaBoost 0.776 > logistic 0.761 → tuning tried 8 combinations, none beat
-  the defaults (0.859 vs 0.862), so the defaults are kept → test macro F1 0.884, ROC-AUC 0.956, unseen rows 0.841 → threshold 0.44
-  lifts recall for Canceled 0.81 → 0.82, but its F1 dips 0.841 → 0.837, so the note recommends keeping 0.50.
-
-## Known limits / quirks worth knowing
-- `n_features > 30` (the Lasso rule) counts input columns *before* one-hot encoding.
-- The collinearity check (Ridge rule) only looks at original numeric columns, not derived date features.
-- Multiclass targets get no insights, logit or threshold cells; only the comparison, report and confusion matrix.
-- Column and class names enter the generated code only as quoted values (`repr`), never pasted into code text, so names with quotes or braces are safe.
-- Runs in the app take turns (one lock per server process), because matplotlib's chart list is shared by everyone using the same server.
-- Hierarchical clustering is limited to 1,500 rows, and the statsmodels cells to 20,000 rows (sampled).
-- Plain SMOTE treats one-hot columns as numbers. For data with many categories, SMOTENC is better; the beginner roadmap has
-  the code.
-- Early stopping with a validation-loss curve, `BaggingClassifier`, and cost-based thresholds are not automated; the roadmap
-  ("Going further") gives ready-to-paste code.
+| reconciled | all totals within **0.01** |
+| a driver "moved" (candidate cause) vs "barely moved" | change of ≥ **10%** between the two compared periods |
+| correlation described as "move together" / "move against each other" | r > **0.5** / r < **−0.5**; only with ≥ **6** complete periods |
+| lapsed customer | no order in the last **180** days of the data |
+| the main driver of a revenue change | the larger of the volume and order-value effects; its share of the total change is reported |

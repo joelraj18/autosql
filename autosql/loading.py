@@ -103,6 +103,11 @@ def _parse_dates(values: pd.Series) -> tuple[str | None, bool]:
             rates[fmt] = pd.to_datetime(sample, format=fmt, errors="coerce").notna().mean()
     best = max(rates, key=rates.get)
     if rates[best] < DATE_PARSE_SHARE:
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore")
+            iso = pd.to_datetime(sample, format="ISO8601", errors="coerce", utc=True)  # e.g. 2022-01-01T10:00:00Z
+        if iso.notna().mean() >= DATE_PARSE_SHARE and not sample.str.fullmatch(r"\d+").any():
+            return "ISO8601", False
         return None, False
     swapped = best.replace("%m/%d", "%D/%M").replace("%d/%m", "%m/%d").replace("%D/%M", "%d/%m")
     ambiguous = swapped != best and rates.get(swapped, 0) >= rates[best]
@@ -138,7 +143,10 @@ def infer_column(raw: pd.Series) -> tuple[pd.Series, str, str | None, int, bool]
     if fmt:
         with warnings.catch_warnings():
             warnings.simplefilter("ignore")
-            when = pd.to_datetime(text, format=fmt, errors="coerce")
+            if fmt == "ISO8601":  # time-zone aware: stored as UTC without the zone
+                when = pd.to_datetime(text, format=fmt, errors="coerce", utc=True).dt.tz_convert(None)
+            else:
+                when = pd.to_datetime(text, format=fmt, errors="coerce")
         unparsed = int((when.isna() & ~blank).sum())
         times = when.dropna()
         is_date = bool((times == times.dt.normalize()).all())
@@ -148,7 +156,9 @@ def infer_column(raw: pd.Series) -> tuple[pd.Series, str, str | None, int, bool]
 
 def make_table(name: str, source: str, raw: pd.DataFrame, taken: set[str]) -> Table:
     originals = [str(c) for c in raw.columns]
-    sql_names = unique_names([snake_case(c) for c in originals])
+    # a name with no Latin letters or digits (e.g. 城市) becomes column_<position>; the original stays in the profile
+    sql_names = unique_names([snake_case(c) if snake_case(c) != "unnamed" or not c.strip() else f"column_{i + 1}"
+                              for i, c in enumerate(originals)])
     raw = raw.copy()
     raw.columns = sql_names
     df, types, formats, unparsed, ambiguous = pd.DataFrame(index=raw.index), {}, {}, {}, []

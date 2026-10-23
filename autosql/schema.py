@@ -17,7 +17,7 @@ from __future__ import annotations
 import html
 import re
 from collections import deque
-from dataclasses import dataclass, field, replace
+from dataclasses import dataclass, replace
 
 import pandas as pd
 
