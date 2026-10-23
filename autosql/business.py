@@ -180,9 +180,12 @@ def trust_score(d: Decision, metrics: dict) -> TrustScore:
     tables = [t for t in p.tables.values() if t.n_rows]
     clean = [t for t in tables if t.key_status in ("single", "composite") and not t.exact_duplicates]
     dup_rows = sum(t.extra_rows for t in tables if t.key_status == "intended") + sum(t.exact_duplicates for t in tables if t.key_status == "none")
+    removed = sum(t.extra_rows for t in tables if t.key_status == "intended" and t.name in d.dedupe) if d.kpi else 0
     score = 100 * len(clean) / len(tables) if tables else 100.0
     detail = (f"{len(clean)} of {len(tables)} tables have a unique key and no copied rows"
-              + (f"; {dup_rows:,} duplicate row(s) found and removed in the analysis" if dup_rows else "") + ".")
+              + (f"; {dup_rows:,} duplicate row(s) found" if dup_rows else "")
+              + ((f", {removed:,} of them removed in the analysis views" if removed else ", listed in the duplicates step") if dup_rows else "")
+              + ".")
     dims.append(TrustDimension("Uniqueness", score, TRUST_WEIGHTS["Uniqueness"], detail))
 
     rels = [r for r in d.schema.accepted]
@@ -266,10 +269,19 @@ def insights(d: Decision, metrics: dict) -> list[Insight]:
     for label in [d.label(x) for x in d.partial_periods][-1:]:
         naive = m.get("naive_change") or {}
         p = next(x for x in d.partial_periods if d.label(x) == label)
+        if p is d.periods[0] and len(d.periods) > 1:     # the data starts part-way through it: it will never be complete
+            out.append(Insight("Data", f"{label} is incomplete", f"the data starts part-way through it: {p.covered} of {p.days} days",
+                               "Its totals are low only because the extract starts late; a trend starting there begins with a fake jump.",
+                               f"Start trends and year-over-year comparisons after {label}.", 2, "measured", "date_range"))
+            continue
         out.append(Insight(
             "Data", f"{label} is incomplete", f"only {p.covered} of {p.days} days have data"
             + (f"; a naive report would show {naive['pct']:+.1f}%" if naive.get("period") == label else ""),
-            "Any report that includes it will show a fall that is just missing days.",
+            ("Its totals are low only because days are missing: any report that includes it shows a fall that isn't real."
+             if naive.get("period") == label and naive["pct"] < 0 else
+             f"It is up even with days missing, so a comparison that includes it understates the real level of the {d.period}."
+             if naive.get("period") == label else
+             f"Its totals cover only part of the {d.period}, so any comparison that includes it is distorted."),
             f"Report {label} only once it is complete, or compare it with the same days a year earlier.", 1, "measured", "date_range"))
     if m.get("missing_periods"):
         out.append(Insight("Data", "Periods with no data at all", ", ".join(m["missing_periods"][:6]),
@@ -319,14 +331,15 @@ def insights(d: Decision, metrics: dict) -> list[Insight]:
 
     dv = m.get("driver_vs_symptom")
     if dv:
-        if abs(dv["driver_change_pct"]) >= 10 and (dv["driver_change_pct"] > 0) != (dv["symptom_change_pct"] > 0):
-            out.append(Insight("Operations", f"{dv['driver'].replace('avg_', '').replace('_', ' ')} moved {dv['driver_change_pct']:+.0f}% "
-                               f"while {main} moved {dv['symptom_change_pct']:+.0f}%",
+        name = dv["driver"].replace("avg_", "").replace("_", " ")
+        if dv.get("candidate"):
+            test = ("improve service for a random half of customers" if dv["driver"].endswith("rating") else
+                    "a faster shipping promise for a random half of orders")
+            out.append(Insight("Operations", f"{name} moved {dv['driver_change_pct']:+.0f}% while {main} moved {dv['symptom_change_pct']:+.0f}%",
                                "last two complete periods", "Operations is a candidate cause of the change, but correlation is not proof.",
-                               "Run a controlled test: e.g. a faster shipping promise for a random half of orders, then compare.", 1,
-                               "needs a test", "drilldown"))
+                               f"Run a controlled test: e.g. {test}, then compare.", 1, "needs a test", "drilldown"))
         else:
-            out.append(Insight("Operations", f"{dv['driver'].replace('avg_', '').replace('_', ' ')} did not explain the change",
+            out.append(Insight("Operations", f"{name} did not explain the change",
                                f"{dv['driver_change_pct']:+.1f}% vs {main} {dv['symptom_change_pct']:+.1f}%",
                                "The cause lies elsewhere (volume, mix, segments).", "Keep monitoring it; look at the driver tree instead.",
                                3, "measured", "drilldown"))
@@ -375,7 +388,8 @@ def insights(d: Decision, metrics: dict) -> list[Insight]:
                            "Cap or target discounts; measure the effect on volume.", 2, "indicative", "discounts"))
 
     for u in (m.get("unusual_periods") or [])[-1:]:
-        out.append(Insight("Growth", f"{u['period']} is far from its recent trend", f"z = {u['z']:+.1f} against the previous four periods",
+        out.append(Insight("Growth", f"{u['period']} is far from its recent trend",
+                           f"z = {u['z']:+.1f} against the {u['baseline']} complete periods before it (99% limit: {u['limit']:.2f})",
                            "A break like this is either a new level or a one-off (a large order, a promotion, a data issue).",
                            "Check the largest orders of that period before planning on it.", 2, "indicative", "trend_signals"))
 

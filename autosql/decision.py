@@ -777,6 +777,11 @@ CELL_TITLES = {
     "purchase_gaps": "Time between orders, and overdue customers",
 }
 MIN_PERIODS_FOR_SIGNALS = 5   # a trailing average and spread need at least 4 earlier periods
+TREND_WINDOW = 8              # the baseline: up to 8 earlier complete periods (4 alone give a very noisy spread)
+TREND_MIN_BASELINE = 4        # no z-score from fewer than 4 earlier complete periods
+# |z| a period needs to fall outside the 99% prediction interval of a baseline of n earlier periods: t(0.995, n - 1) * sqrt(1 + 1/n).
+# A fixed limit would be wrong: a spread measured on 4 points is so noisy that |z| > 2 happens by chance in about 1 period in 6.
+TREND_Z_LIMIT = {4: 6.53, 5: 5.04, 6: 4.36, 7: 3.96, 8: 3.71}
 
 
 def _skip_kpi_cells(d: Decision, reason: str) -> None:

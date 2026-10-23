@@ -218,3 +218,29 @@ def test_technical_notes(northwind, new_wheels_catalog):
     assert cells["grain"].dialect_diff() == []                                   # fully portable SQL: nothing to translate
     base = {c.id: c for c in build_cells(analyse(new_wheels_catalog))}["base"]
     assert any("DATEDIFF(ship_date, order_date)" in a and "ship_date - order_date" in b for a, b in base.dialect_diff())
+
+
+def _monthly_orders(seed: int, spike: str | None = None) -> pd.DataFrame:
+    rng = np.random.default_rng(seed)
+    n = 4000
+    dates = pd.Timestamp("2020-01-01") + pd.to_timedelta(np.sort(rng.integers(0, 1096, n)), unit="D")
+    amount = rng.gamma(2, 50, n).round(2)
+    if spike:
+        amount = np.where(dates.strftime("%Y-%m") == spike, amount * 3, amount)
+    return pd.DataFrame({"order_id": range(n), "amount": amount, "order_date": dates.strftime("%Y-%m-%d")})
+
+
+def test_trend_signals_ignore_noise_and_find_a_real_break():
+    flagged = 0
+    for seed in range(6):                                   # three years of i.i.d. monthly revenue: nothing is unusual
+        catalog = catalog_from({"orders": _monthly_orders(seed)})
+        d = analyse(catalog, "manual", {"fact": "orders", "measure": "amount", "amount": "amount", "date": "orders.order_date"})
+        _, m = run_cells([c for c in build_cells(d) if c.id in ("base", "trend_signals")], catalog)
+        flagged += len(m.get("unusual_periods", []))
+    assert flagged <= 1                                      # ~48 quarters judged; |z| >= 2 on a 4-period baseline would flag ~8
+    catalog = catalog_from({"orders": _monthly_orders(0, spike="2021-08")})
+    d = analyse(catalog)
+    results, m = run_cells([c for c in build_cells(d) if c.id in ("base", "trend_signals")], catalog)
+    assert [u["period"] for u in m["unusual_periods"]] == ["2021-Q3"] and m["unusual_periods"][0]["baseline"] >= 4
+    sql = {c.id: c for c in build_cells(d)}["trend_signals"].statements[0].sql["mysql"]
+    assert "RANGE BETWEEN 8 PRECEDING AND 1 PRECEDING" in sql and "COUNT(baseline_value) OVER" in sql

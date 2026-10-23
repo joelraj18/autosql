@@ -83,3 +83,56 @@ def test_dictionaries(nw):
     assert "## `order_details`" in data_dictionary_markdown(d)
     assert kpi_dictionary_markdown().count("\n") == len(KPI_DICTIONARY) + 1
     assert set(BUSINESS_QUESTIONS) == set(ORDER)
+
+
+def test_wording_follows_the_data(nw, shop_catalog):
+    d, _ = nw
+    # a partial last period that is still up must not be described as a fall
+    found = insights(d, {"naive_change": {"period": "1998-Q2", "pct": 12.0}, "main_measure": "revenue"})
+    assert found[0].headline == "1998-Q2 is incomplete" and "understates" in found[0].implication and "fall" not in found[0].implication
+    found = insights(d, {"naive_change": {"period": "1998-Q2", "pct": -52.4}, "main_measure": "revenue"})
+    assert "shows a fall that isn't real" in found[0].implication
+    # duplicates are only "removed" when the analysis views really de-duplicate
+    for mode, wording in (("validate", "2 duplicate row(s) found, listed in the duplicates step"),
+                          ("auto", "2 duplicate row(s) found, 2 of them removed in the analysis views")):
+        ds = analyse(shop_catalog, mode=mode)
+        _, ms = run_cells(build_cells(ds), shop_catalog)
+        assert wording in next(x for x in trust_score(ds, ms).dimensions if x.name == "Uniqueness").detail
+
+
+def _rating_falls_with_revenue() -> dict:
+    """Synthetic: the data starts mid-quarter; from 2023-Q2 order values drop 30% and ratings fall with them."""
+    import numpy as np
+    import pandas as pd
+    rng = np.random.default_rng(3)
+    n = 2400
+    dates = pd.Timestamp("2021-02-20") + pd.to_timedelta(np.sort(rng.integers(0, 860, n)), unit="D")
+    late = dates >= pd.Timestamp("2023-04-01")
+    rating = np.where(late, rng.choice(["Bad", "Okay", "Good"], n, p=[.5, .3, .2]),
+                      rng.choice(["Bad", "Okay", "Good", "Very Good"], n, p=[.1, .2, .4, .3]))
+    return {"orders": pd.DataFrame({"order_id": range(n), "amount": (rng.gamma(2, 50, n) * np.where(late, 0.7, 1.0)).round(2),
+                                    "order_date": dates.strftime("%Y-%m-%d"), "customer_feedback": rating})}
+
+
+def test_a_falling_rating_is_a_candidate_cause_and_a_late_start_is_not_a_trend():
+    from conftest import catalog_from
+    catalog = catalog_from(_rating_falls_with_revenue())
+    d = analyse(catalog)
+    results, m = run_cells(build_cells(d), catalog)
+    dv = m["driver_vs_symptom"]
+    assert dv["driver"] == "avg_rating" and dv["driver_change_pct"] < -10 and dv["symptom_change_pct"] < 0 and dv["candidate"]
+    found = {i.area + ": " + i.headline: i for i in insights(d, m)}
+    ops = next(i for k, i in found.items() if k.startswith("Operations"))
+    assert ops.priority == 1 and ops.confidence == "needs a test" and "service" in ops.action
+    first = found["Data: 2021-Q1 is incomplete"]                                 # the extract starts on 20 Feb
+    assert first.priority == 2 and "starts part-way" in first.evidence and first.action == "Start trends and year-over-year comparisons after 2021-Q1."
+    drill = " ".join(n for r in results if r.cell_id == "drilldown" for n in r.notes)
+    assert "the way that would explain it" in drill
+
+
+def test_a_driver_that_improved_cannot_explain_a_fall(nw):
+    d, _ = nw
+    m = {"driver_vs_symptom": {"driver": "avg_ship_days", "driver_change_pct": -15.0, "symptom_change_pct": -12.0, "candidate": False},
+         "main_measure": "revenue"}
+    ops = next(i for i in insights(d, m) if i.area == "Operations")
+    assert ops.headline == "ship days did not explain the change" and ops.priority == 3

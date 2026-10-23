@@ -21,7 +21,8 @@ import textwrap
 from dataclasses import dataclass
 from typing import Callable
 
-from .decision import MIN_PERIODS_FOR_CORR, NTILE_BUCKETS, TOP_N, Decision, Dimension, Period
+from .decision import (MIN_PERIODS_FOR_CORR, NTILE_BUCKETS, TOP_N, TREND_MIN_BASELINE, TREND_WINDOW, TREND_Z_LIMIT, Decision, Dimension,
+                       Period)
 from .dialect import DIALECTS, Dialect
 from .narrative import Step
 from .schema import Relationship
@@ -1418,6 +1419,9 @@ def _kpi_by_period_cell(b: Builder) -> Cell:
             show = (lambda v: f"{float(v):,.2f}") if main == "revenue" else (lambda v: f"{float(v):,.0f}")
             note(f"Last two complete {unit}s: {main} went from {show(prev[main])} ({prev['period']}) to {show(last[main])} "
                  f"({last['period']}), **{pct:+.1f}%**.")
+        else:
+            note(f"Only {len(complete)} complete {unit} so far: nothing to compare yet. The table still gives the level per {unit}; "
+                 f"period-over-period verdicts start once a second complete {unit} arrives.")
         if (status != "complete").any():
             part = per[status != "complete"].iloc[-1]
             idx = per.index.get_loc(part.name)
@@ -1858,11 +1862,17 @@ def _drilldown_cell(b: Builder) -> Cell:
             x = drivers[0]
             change_main = 100 * (float(last[main]) - float(first[main])) / float(first[main]) if float(first[main]) else float("nan")
             change_x = 100 * (float(last[x]) - float(first[x])) / float(first[x]) if float(first[x]) else float("nan")
-            metrics["driver_vs_symptom"] = {"driver": x, "driver_change_pct": change_x, "symptom_change_pct": change_main}
             moved = abs(change_x) >= 10
+            # more days or more late orders is worse; a higher rating is better. A candidate cause got worse while the symptom fell,
+            # or better while it grew; a driver that moved the other way cannot explain the change.
+            worse = change_x < 0 if x.endswith("rating") else change_x > 0
+            candidate = moved and worse == (change_main < 0)
+            metrics["driver_vs_symptom"] = {"driver": x, "driver_change_pct": change_x, "symptom_change_pct": change_main, "candidate": candidate}
             note(f"Last two complete periods: {main} **{change_main:+.1f}%**, {x} **{change_x:+.1f}%** "
                  f"({float(first[x]):.1f} → {float(last[x]):.1f}). "
-                 + (f"The driver moved too: a candidate cause, to confirm with a controlled test (e.g. a service-level target for a random half of orders)."
+                 + ("The driver moved the way that would explain it: a candidate cause, to confirm with a controlled test "
+                    "(e.g. a service-level target for a random half of orders)." if candidate else
+                    f"{x} moved, but in the direction that would push {main} the other way, so it does not explain this change."
                     if moved else f"{x} barely moved, so it does not explain this change; look at the segments in the driver tree instead."))
         if "by_segment" in outputs:
             seg = outputs["by_segment"]
@@ -2217,40 +2227,54 @@ def _trend_signals_cell(b: Builder) -> Cell:
     d = b.d
     main = "revenue" if b.money else "orders"
     agg = "SUM(revenue)" if b.money else "COUNT(*)"
+    partial = [b.period_where(p, "p.") for p in d.partial_periods]
 
     def sql(D: Dialect) -> str:
         z = D.round(f"(p.{main} - p.trailing_avg) / NULLIF(p.trailing_sd, 0)", 2)
+        window = f"ORDER BY period_index RANGE BETWEEN {TREND_WINDOW} PRECEDING AND 1 PRECEDING"
         return fill('''
             -- RANGE frames count period_index values, not rows, so a missing period is skipped instead of pulling an older one in.
+            -- Partial periods are shown but never enter a baseline: baseline_value is NULL for them, and AVG / STDDEV / COUNT skip NULLs.
             WITH <<cte>>,
-            framed AS (
-                SELECT p.*,
-                       AVG(<<main>>) OVER (ORDER BY period_index RANGE BETWEEN 2 PRECEDING AND CURRENT ROW) AS moving_avg_3,
-                       AVG(<<main>>) OVER (ORDER BY period_index RANGE BETWEEN 4 PRECEDING AND 1 PRECEDING) AS trailing_avg,
-                       STDDEV_SAMP(<<main>>) OVER (ORDER BY period_index RANGE BETWEEN 4 PRECEDING AND 1 PRECEDING) AS trailing_sd
+            marked AS (
+                SELECT p.*, <<baseline>> AS baseline_value
                 FROM   per_period p
+            ),
+            framed AS (
+                SELECT m.*,
+                       AVG(<<main>>) OVER (ORDER BY period_index RANGE BETWEEN 2 PRECEDING AND CURRENT ROW) AS moving_avg_3,
+                       AVG(baseline_value) OVER (<<window>>) AS trailing_avg,
+                       STDDEV_SAMP(baseline_value) OVER (<<window>>) AS trailing_sd,
+                       COUNT(baseline_value) OVER (<<window>>) AS baseline_periods
+                FROM   marked m
             )
             SELECT <<cols>>,
                    <<main_r>> AS <<main>>,
                    <<ma>> AS moving_avg_3,
-                   <<ta>> AS trailing_avg_4,
-                   <<z>> AS z_score
+                   <<ta>> AS trailing_avg,
+                   p.baseline_periods,
+                   CASE WHEN p.baseline_periods >= <<min_base>> THEN <<z>> END AS z_score
             FROM   framed p
-            ORDER  BY <<order>>''', cte=_period_ctes(b, D, [f"{agg} AS {main}"], "per_period").strip(), main=main,
+            ORDER  BY <<order>>''', cte=_period_ctes(b, D, [f"{agg} AS {main}"], "per_period").strip(), main=main, window=window,
+                    baseline=f"CASE WHEN {' OR '.join(partial)} THEN NULL ELSE p.{main} END" if partial else f"p.{main}",
                     cols=", ".join(f"p.{c}" for c in d.period_cols), main_r=D.round(f"p.{main}", 2), ma=D.round("p.moving_avg_3", 2),
-                    ta=D.round("p.trailing_avg", 2), z=z, order=", ".join(f"p.{c}" for c in d.period_cols))
+                    ta=D.round("p.trailing_avg", 2), z=z, min_base=TREND_MIN_BASELINE, order=", ".join(f"p.{c}" for c in d.period_cols))
 
     story = Step(
         "trend_signals",
         f"There are {len(d.periods)} {d.period}s of {main}.",
         "One period up or down proves little. A moving average shows the underlying direction, and comparing each period with the spread of the "
-        "previous ones (a z-score) separates an unusual period from normal noise. Frames matter: ROWS counts rows, RANGE counts values, so "
-        "RANGE stays correct when a period is missing.",
-        f"We add a 3-{d.period} moving average and flag {d.period}s more than 2 standard deviations from their 4-{d.period} trailing average, "
-        "so that real breaks stand out from normal movement.",
-        "AVG(…) OVER (ORDER BY period_index RANGE BETWEEN 2 PRECEDING AND CURRENT ROW) is the moving average; the same window shifted to "
-        "'4 PRECEDING AND 1 PRECEDING' gives the trailing average and STDDEV_SAMP, and the z-score is (value − trailing average) ÷ trailing "
-        "standard deviation, guarded with NULLIF.",
+        "previous ones (a z-score) separates an unusual period from normal noise. A fixed limit such as |z| > 2 is wrong on short series: a "
+        "spread measured on 4 points is so noisy that it is crossed by chance in about one period in six. Frames matter too: ROWS counts rows, "
+        "RANGE counts values, so RANGE stays correct when a period is missing.",
+        f"We add a 3-{d.period} moving average and flag a {d.period} only when it falls outside the 99% prediction interval of up to "
+        f"{TREND_WINDOW} earlier complete {d.period}s (at least {TREND_MIN_BASELINE}), so that normal noise is flagged about once in a hundred "
+        f"{d.period}s whatever the baseline length.",
+        "AVG(…) OVER (ORDER BY period_index RANGE BETWEEN 2 PRECEDING AND CURRENT ROW) is the moving average. The window "
+        f"'{TREND_WINDOW} PRECEDING AND 1 PRECEDING' over baseline_value (NULL for partial periods, which AVG, STDDEV_SAMP and COUNT skip) "
+        "gives the trailing average, its spread and how many periods it rests on; the z-score is (value − trailing average) ÷ trailing "
+        f"standard deviation, guarded with NULLIF and left NULL below {TREND_MIN_BASELINE} baseline periods. The check compares |z| with "
+        "t(0.995, n − 1) × √(1 + 1/n) for a baseline of n periods (6.53 for 4, 4.36 for 6, 3.71 for 8).",
     )
     check = fill('''
         sig = result.copy()
@@ -2260,22 +2284,32 @@ def _trend_signals_cell(b: Builder) -> Cell:
                          for r in sig[cols[:n]].itertuples(index=False)]
         partial = set(<<partial>>)
         sig["partial"] = sig["period"].isin(partial)
-        unusual = sig[(sig["z_score"].abs() >= 2) & ~sig["partial"]]
-        metrics["unusual_periods"] = [{"period": r.period, "z": float(r.z_score), "value": float(r.<<main>>)} for r in unusual.itertuples()]
+        z = sig["z_score"].astype(float)
+        limits = <<limits>>   # 99% prediction interval: t(0.995, n - 1) * sqrt(1 + 1/n) for a baseline of n periods
+        sig["z_limit"] = [limits.get(int(k)) if pd.notna(k) else None for k in sig["baseline_periods"]]
+        unusual = sig[(z.abs() >= sig["z_limit"].astype(float)) & ~sig["partial"]]
+        metrics["unusual_periods"] = [{"period": r.period, "z": float(r.z_score), "value": float(r.<<main>>),
+                                       "baseline": int(r.baseline_periods), "limit": float(r.z_limit)} for r in unusual.itertuples()]
         fig, ax = plt.subplots(figsize=(10, 3.4))
         ax.bar(sig["period"], sig["<<main>>"].astype(float), width=0.6, color=[C_MUTED if p else C_SERIES for p in sig["partial"]])
         ax.plot(sig["period"], sig["moving_avg_3"].astype(float), color=C_TOTAL, marker="o", markersize=4)
         ax.set_title("<<main>> per <<unit>> (bars) and its 3-<<unit>> moving average (line)", loc="left")
         ax.tick_params(axis="x", labelrotation=45); plt.tight_layout(); plt.show()
         last = sig[~sig["partial"]].iloc[-1]
+        judged = int(z[~sig["partial"]].notna().sum())
         note(f"Moving average at the last complete <<unit>> ({last.period}): **{float(last.moving_avg_3):,.2f}**.")
         if len(unusual):
-            note("Unusual <<unit>>s (|z| ≥ 2 against the previous 4): " + ", ".join(f"**{r.period}** (z = {r.z_score:+.1f})" for r in unusual.itertuples())
+            note(f"Unusual <<unit>>s (outside the 99% prediction interval of up to <<window>> earlier complete <<unit>>s): "
+                 + ", ".join(f"**{r.period}** (z = {r.z_score:+.1f}; the limit for a baseline of {int(r.baseline_periods)} is {r.z_limit:.2f})"
+                             for r in unusual.itertuples())
                  + ". Look for a one-off event (a big order, a promotion, a loading problem) before reading a trend into it.")
+        elif judged:
+            note(f"None of the {judged} <<unit>>s with a baseline of <<min_base>>+ earlier periods falls outside its 99% prediction interval: "
+                 "the movement is within normal noise.")
         else:
-            note("No complete <<unit>> is more than 2 standard deviations from its trailing average: the movement is within normal noise.")
+            note(f"No <<unit>> has <<min_base>> earlier complete <<unit>>s yet, so no z-score is computed; the moving average still shows the direction.")
     ''', n=len(d.period_cols), quarter=d.period == "quarter", partial=repr([d.label(p) for p in d.partial_periods]), main=main,
-        unit=d.period)
+        unit=d.period, limits=repr(TREND_Z_LIMIT), window=TREND_WINDOW, min_base=TREND_MIN_BASELINE)
     return Cell("trend_signals", "Moving average and unusual periods", SECTIONS[5], story,
                 (stmt("trend_signals", f"Moving average and z-score per {d.period} (RANGE frames)", sql),), check)
 
