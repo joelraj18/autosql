@@ -99,3 +99,11 @@ def test_helpers():
     assert nice_ticks(9.6, 6.9, 4)[0] <= 6.9 and nice_ticks(9.6, 6.9, 4)[-1] >= 9.6
     assert [compact(v, True) for v in (298_491.55, 1_640.06, 12_000_000, 0.4)] == ["298K", "1.6K", "12M", "0"]
     assert period_parts("1996-Q3") == ("Q3", "1996") and period_parts("2018-07") == ("Jul", "2018") and period_parts("1997") == ("1997", "")
+
+
+def test_committed_example_brief_is_current(nw):
+    from pathlib import Path
+    d, m = nw
+    committed = (Path(__file__).resolve().parents[1] / "examples" / "northwind" / "business_brief.html").read_text(encoding="utf-8")
+    assert committed == to_business_brief(d, m, title="Northwind Traders", source="the Northwind sample (8 CSV files)"), \
+        "regenerate with: python examples/northwind/build_notebook.py"

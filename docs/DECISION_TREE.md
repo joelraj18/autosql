@@ -8,6 +8,7 @@ This page documents **exactly** how the engine turns uploaded tables into SQL. E
 - `autosql/decision.py`: focus, fact table, revenue, time, drivers, dimensions, NULL traps, indexes, skipped cells
 - `autosql/dialect.py`: how one statement differs between MySQL 8, PostgreSQL and DuckDB
 - `autosql/codegen.py`: the cells each branch generates; `autosql/narrative.py`: wording thresholds in `interpret()`
+- `autosql/business.py`, `autosql/report.py`: the trust score, recommendations and the business brief
 
 If you change a constant in the code, update this page too.
 
@@ -245,7 +246,10 @@ the `ship_via` link replaces the person with `shippers.company_name` (fulfilment
   | driver tree, drill-down | fewer than 2 complete periods, or the last two aren't consecutive |
   | drill-down | no driver and no dimension |
   | top N | no group-and-item pair |
-  | RFM, driver tree | no money measure |
+  | RFM, driver tree, Pareto | no money measure |
+  | Pareto, purchase gaps | no customer (purchase gaps also need a date) |
+  | discounts | no discount column |
+  | trend signals | fewer than **5** periods (`MIN_PERIODS_FOR_SIGNALS`) |
 
 ---
 
@@ -266,16 +270,20 @@ that writes the 📌 findings from the result.
 | 8 | `base` | Build with CTEs | `order_facts` (one row per order: `line_revenue → order_totals → LEFT JOIN`s, `COALESCE(…, 'Unknown')`) and `line_facts` (one row per line) |
 | 9 | `reconcile` | Validate | rows, orders and revenue from the raw table and each view (`UNION ALL`) + pandas from the uploaded rows; gross vs net; price paid vs list price |
 | 10 | `kpis` | KPIs | revenue, orders, AOV = revenue ÷ orders, average line value (contrast), customers, orders per customer, repeat-customer %, units per order, average lead time, late %, rating |
-| 11 | `kpi_by_period` | KPIs | `quarterly` CTE → `with_prev` (`LAG`, and `LAG(…, 4)` / `LAG(…, 12)` for year over year) → `% change` with `100.0 * (new − old) / NULLIF(old, 0)`; `period_status` for partial periods |
-| 12 | `running_total` | Window functions | `SUM() OVER (ORDER BY … ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW)`, share of `SUM() OVER ()` |
-| 13 | `top_n` | Window functions | `DENSE_RANK()` and `ROW_NUMBER()` `OVER (PARTITION BY group ORDER BY revenue DESC)`, filtered in an outer query (top **3**) |
-| 14 | `latest_record` | Window functions | `ROW_NUMBER() OVER (PARTITION BY customer ORDER BY date DESC, order DESC) = 1`; recency measured to the last date in the data |
-| 15 | `rfm` | Window functions | view `customer_rfm`: `NTILE(5)` for recency / frequency / monetary (ties broken by customer), `CASE` segments; summary per segment |
-| 16 | `driver_tree` | Root cause | drivers for the two compared periods; Δ per member of each dimension with conditional aggregation and `SUM() OVER ()` |
-| 17 | `drilldown` | Root cause | symptom and drivers per complete period (correlation if ≥ **6** periods); per segment, before vs after, `AVG(CASE WHEN … THEN x END)` |
-| 18 | `cohort` | Root cause | first-order period × periods since (year × 4 + quarter arithmetic, no date spine) |
-| 19 | `explain` | Fast & correct | `EXPLAIN` (`EXPLAIN FORMAT=TREE` in MySQL); `YEAR(col) = y` vs a sargable date range; `CREATE INDEX` proposals (shown, not run) |
-| 20 | `null_traps` | Fast & correct | NOT IN vs NOT EXISTS; `COUNT(*)` vs `COUNT(col)` vs `AVG`; integer division (shown, not run) |
+| 11 | `discounts` | KPIs | lines per discount band (`CASE`), gross vs net revenue, discount given, units per line; each band's share of lines with `SUM(COUNT(*)) OVER ()` |
+| 12 | `kpi_by_period` | KPIs | `quarterly` CTE with `period_index = year × 4 + quarter` (× 12 + month) → `with_prev`: `CASE WHEN period_index − LAG(period_index) = 1 THEN LAG(revenue) …` (the previous value only when it is the calendar neighbour), year over year by `LEFT JOIN … ON y.period_index = p.period_index − 4` → `% change` with `100.0 * (new − old) / NULLIF(old, 0)`; `period_status` for partial periods |
+| 13 | `running_total` | Window functions | `SUM() OVER (ORDER BY … ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW)`, share of `SUM() OVER ()` |
+| 14 | `trend_signals` | Window functions | 3-period moving average (`RANGE BETWEEN 2 PRECEDING AND CURRENT ROW` on `period_index`); baseline `AVG` / `STDDEV_SAMP` / `COUNT` over `RANGE BETWEEN 8 PRECEDING AND 1 PRECEDING` of `baseline_value` (NULL for partial periods); z only with ≥ **4** baseline periods |
+| 15 | `top_n` | Window functions | `DENSE_RANK()` and `ROW_NUMBER()` `OVER (PARTITION BY group ORDER BY revenue DESC)`, filtered in an outer query (top **3**) |
+| 16 | `pareto` | Window functions | `ROW_NUMBER()` by revenue, cumulative share with `SUM() OVER (ORDER BY … ROWS UNBOUNDED PRECEDING)` ÷ `SUM() OVER ()`; ABC classes at **80%** / **95%** of revenue |
+| 17 | `latest_record` | Window functions | `ROW_NUMBER() OVER (PARTITION BY customer ORDER BY date DESC, order DESC) = 1`; recency measured to the last date in the data |
+| 18 | `purchase_gaps` | Window functions | `LAG(date) OVER (PARTITION BY customer ORDER BY date, order)` → days between orders; overdue = silent for more than **2 ×** the customer's own average gap (3+ orders) |
+| 19 | `rfm` | Window functions | view `customer_rfm`: `NTILE(5)` for recency / frequency / monetary (ties broken by customer), `CASE` segments; summary per segment |
+| 20 | `driver_tree` | Root cause | drivers for the two compared periods; Δ per member of each dimension with conditional aggregation and `SUM() OVER ()` |
+| 21 | `drilldown` | Root cause | symptom and drivers per complete period (correlation if ≥ **6** periods); per segment, before vs after, `AVG(CASE WHEN … THEN x END)` |
+| 22 | `cohort` | Root cause | first-order period × periods since (year × 4 + quarter arithmetic, no date spine) |
+| 23 | `explain` | Fast & correct | `EXPLAIN` (`EXPLAIN FORMAT=TREE` in MySQL); `YEAR(col) = y` vs a sargable date range; `CREATE INDEX` proposals (shown, not run) |
+| 24 | `null_traps` | Fast & correct | NOT IN vs NOT EXISTS; `COUNT(*)` vs `COUNT(col)` vs `AVG`; integer division (shown, not run) |
 
 **Driver-tree arithmetic** (in the check). For the compared periods, with O = orders and A = average order value:
 
@@ -283,7 +291,12 @@ that writes the 📌 findings from the result.
 - order value = O₁ · (A₂ − A₁)
 - interaction = (O₂ − O₁) · (A₂ − A₁)
 
-The three add up to the revenue change exactly.
+The three add up to the revenue change exactly. "How much of the movement" is each effect's share **by size**
+(|effect| ÷ Σ|effects|), so the shares never exceed 100% when effects pull in opposite directions.
+
+**Unusual periods** (in the check). A complete period is flagged when |z| ≥ t(0.995, n − 1) × √(1 + 1/n) for a baseline of n
+earlier complete periods: the edge of the 99% prediction interval (`TREND_Z_LIMIT`: 6.53 for 4, 5.04 for 5, 4.36 for 6,
+3.96 for 7, 3.71 for 8). A fixed |z| ≥ 2 on 4 periods would flag pure noise in about 1 period in 6.
 
 ## Dialect rules (`dialect.py`; enforced by `tests/test_codegen_runs.py`)
 | Construct | MySQL 8 | PostgreSQL | DuckDB (runs in the app) |
@@ -301,13 +314,23 @@ The three add up to the revenue change exactly.
   `PERCENTILE_CONT`, `COUNT(DISTINCT a, b)`, a reserved word as an alias, `::` in MySQL, a division without `NULLIF` or a
   decimal literal, a `WHERE` filter on a LEFT-joined table other than `IS NULL`.
 - **Verified on real servers:** `tests/test_live_postgres.py` (PostgreSQL 16) and `tests/test_live_mysql.py` (MySQL 8.4) run the
-  exported project for 10 dataset shapes and compare every query result with DuckDB.
+  exported project for 12 dataset shapes and compare every query result with DuckDB.
 
 ## Stage I: plain-English summary (`interpret`)
 | Wording | Threshold |
 |---|---|
 | reconciled | all totals within **0.01** |
-| a driver "moved" (candidate cause) vs "barely moved" | change of ≥ **10%** between the two compared periods |
+| a driver is a candidate cause | it moved ≥ **10%** between the two compared periods **in the direction that would explain the change** (more days to ship / late orders while revenue fell, fewer while it grew; a rating that fell while revenue fell). Otherwise: "moved the other way" or "barely moved" |
 | correlation described as "move together" / "move against each other" | r > **0.5** / r < **−0.5**; only with ≥ **6** complete periods |
 | lapsed customer | no order in the last **180** days of the data |
-| the main driver of a revenue change | the larger of the volume and order-value effects; its share of the total change is reported |
+| the main driver of a revenue change | the larger of the volume and order-value effects; its share by size is reported |
+
+## Stage B: the business layer (`business.py`, `report.py`)
+
+| Output | Rule |
+|---|---|
+| trust score | weighted average of Completeness **25%**, Uniqueness **20%**, Integrity **20%**, Validity **15%**, Consistency **20%** (dimensions that don't apply are left out and the weights rescaled); **≥ 90** High, **≥ 75** Good with caveats, else Use with care; shown rounded down |
+| tiles | the last two complete periods; a change in a percentage is in points; "good" follows each KPI's direction (fewer days to ship is good) |
+| headline | level of the last complete period, change on the previous one and year over year, and the larger driver effect |
+| recommendations | one rule per area (Data, Growth, Drivers, Customers, Operations, Pricing) with priority 1–3 and confidence measured / indicative / needs a test; every rule and threshold is listed in [business_guide.md](business_guide.md#recommendation-rules) |
+| brief charts | one y-axis per chart (the driver gets its own chart), partial periods grey, increases blue and decreases red, totals neutral, a table view per chart |

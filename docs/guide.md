@@ -34,10 +34,12 @@ quarter-over-quarter change. `tests/test_new_wheels_shape.py` checks it on a syn
 
 ```
 upload ─▶ loading.py ─▶ profiling.py ─▶ schema.py ─▶ decision.py ─▶ codegen.py ─▶ runner.py ─▶ narrative.interpret()
-          text first,    roles, keys,    foreign keys,  fact, revenue,  20 cells ×      DuckDB, then   plain-English
+          text first,    roles, keys,    foreign keys,  fact, revenue,  24 cells ×      DuckDB, then   plain-English
           then types;    grain           cardinality,   periods,        3 dialects      each cell's    summary
-          snake_case                     fan-out        drivers, dims   (dialect.py)    check → 📌
-                                                                              │
+          snake_case                     fan-out;       drivers, dims   (dialect.py)    check → 📌           │
+                                         FK columns                           │                              ▼
+                                         become IDs                           │          business.py: trust score, recommendations,
+                                                                              │          KPI and data dictionaries ─▶ report.py: brief
                                                                               └─▶ exports.py: .sql · project ZIP · notebook
 ```
 
@@ -117,7 +119,13 @@ Design choices worth defending:
 - **Rule:** the first and last period are partial when < 90% of their days have data. They are labelled `period_status =
   'partial'` and excluded from verdicts.
 - **Measured:** naive "latest quarter" **−52.4%**; last two complete quarters (1997-Q4 → 1998-Q1) **+64.3%**; year over year
-  (`LAG(revenue, 4)`) 1998-Q1 vs 1997-Q1 **+115.8%**.
+  1998-Q1 vs 1997-Q1 **+115.8%**.
+- **Gap-safe:** each period gets `period_index = year × 4 + quarter`. `LAG(revenue)` is kept only when
+  `period_index − LAG(period_index) = 1`, and year over year joins on `period_index − 4` instead of `LAG(revenue, 4)`. With a
+  quarter missing, `LAG` would silently compare with the quarter *before* the gap; the `gap_quarter` test case proves it doesn't.
+- **Unusual periods:** a 3-period moving average with `RANGE` frames, and a period is flagged only outside the 99% prediction
+  interval of up to 8 earlier complete periods, `t(0.995, n − 1) × √(1 + 1/n)`. Northwind 1998-Q1: z = +4.8 against a limit of
+  4.36 (6 earlier quarters). A fixed |z| > 2 against the last 4 periods would flag pure noise in about 1 period in 6.
 
 ### 3.8 Window functions
 | Technique | Cell | Northwind |
@@ -138,7 +146,20 @@ Design choices worth defending:
 - **New Wheels-shaped test table** (synthetic): revenue falls 17% while ship days rise 15% (40 → 46). The app calls it a
   candidate cause and says to confirm it with a controlled test.
 
-### 3.10 Fast and correct
+### 3.10 The business layer: from query results to a decision
+- **Trust score** (0–100): Completeness 25%, Uniqueness 20%, Integrity 20%, Validity 15%, Consistency 20%. Northwind:
+  **99/100, High** (the only deduction: `orders.shipped_date` is 2.5% empty, 21 unshipped orders).
+- **Recommendations:** rules over the metrics, each with evidence, an implication, a next step, a priority (Act now / Plan /
+  Monitor), a confidence (measured / indicative / needs a test) and the SQL step behind it. Northwind's first one is a data
+  warning: 1998-Q2 is incomplete. Every rule is listed in [business_guide.md](business_guide.md#recommendation-rules).
+- **Wording follows the data.** A driver is a "candidate cause" only if it moved the way that would explain the change: more
+  ship days while revenue fell, or a falling rating while revenue fell. Effect shares are computed by size, so they never read
+  "145% of the change".
+- **The brief:** one offline HTML page with inline SVG charts (no chart library): KPI tiles, the revenue waterfall, change by
+  segment, the concentration curve, RFM and discount bands, the trust meters. One y-axis per chart, a table view per chart,
+  keyboard tooltips, light and dark themes.
+
+### 3.11 Fast and correct
 | Point | Measured on Northwind |
 |---|---|
 | `NOT IN` vs `NOT EXISTS` (employees who manage nobody; `reports_to` has one NULL) | **0 vs 7** |
@@ -164,8 +185,10 @@ Design choices worth defending:
 ## 5. Performance and quality
 
 ### Tests
-- `pytest -q`: about 80 tests.
-- **Every generated cell runs** on 10 dataset shapes in 2 modes.
+- `pytest -q`: about 130 tests.
+- **Every generated cell runs** on 13 cases: 10 datasets, in auto and validate mode, plus a ticked link. They include a missing
+  quarter, count-only data and a fact table loaded twice.
+- **Statistics are tested:** pure noise is not flagged as an unusual period; a planted spike is.
 - Every MySQL / PostgreSQL statement **parses** (`sqlglot`).
 - **Dialect rules are enforced:**
   - no banned construct;
@@ -175,13 +198,17 @@ Design choices worth defending:
   - no `WHERE` on a LEFT-joined table.
 - The exported **notebook executes**, and the **Streamlit page** is driven headlessly.
 - **Live databases:** the exported project runs on **PostgreSQL 16** (`test_live_postgres.py`) and **MySQL 8.4 in Docker**
-  (`test_live_mysql.py`) for 9 dataset shapes. About 200 query results are compared with DuckDB, and all match.
+  (`test_live_mysql.py`) for 12 cases. About 250 query results are compared with DuckDB, and all match.
+- The **business brief** is tested for being self-contained (no external resources), a table view per chart, focusable marks
+  and escaped text, and it was checked in a browser in light and dark themes, at desktop and phone width.
 
 ### Speed (measured by hand, this container)
 | Data | Load | Profile + links | Decide + write SQL | Run all cells | Total |
 |---|---|---|---|---|---|
-| Northwind (8 tables, 3,202 rows) | 0.80 s | 0.35 s | 0.03 s | 1.47 s (20 cells) | 2.7 s |
-| 1,000,000 orders (1 table) | 9.1 s | 6.8 s | 0.44 s | 1.47 s (18 cells) | 17.8 s |
+| Northwind (8 tables, 3,202 rows) | 0.84 s | 0.31 s | 0.03 s | 2.01 s (24 cells) | 3.2 s |
+| 1,000,000 orders (1 table) | 6.9 s | 6.7 s | 0.41 s | 2.10 s (21 cells) | 16.1 s |
+
+Writing the business brief takes under 10 ms.
 
 DuckDB makes the SQL itself fast; at a million rows, reading and profiling the CSV in pandas dominates.
 
@@ -199,6 +226,12 @@ DuckDB makes the SQL itself fast; at a million rows, reading and profiling the C
 | "average" and "fair" mapped to "okay" broke the Poor…Excellent scales | a test of every scale | synonyms only apply to the first scale |
 | a unit *cost* treated as a list price | the shop fixture said 100% of prices differ | the list-price check needs "price" in the name |
 | ISO timestamps with a `Z` stayed text | the awkward-dataset sweep | ISO 8601 parsed as UTC |
+| with a quarter missing, `LAG` compared across the gap | a test case with a deleted quarter | `period_index` adjacency, and a year-ago join |
+| a fact table loaded twice doubled revenue silently | a test case with every line twice | an ID pair unique after `drop_duplicates()` is an intended key, de-duplicated in the views |
+| "145% of the change came from volume" | reading the New Wheels-shaped summary | effect shares by size |
+| the unusual-period rule flagged pure noise | a simulation: 20 noise datasets | a baseline of up to 8 periods and a 99% prediction-interval limit |
+| a falling rating with falling revenue was "not the cause" | a test where both fall | direction-aware verdicts: up is bad for days, good for ratings |
+| `orders.ship_via` (1, 2, 3) profiled as a measure | the data dictionary showed it | a column the schema links to a key is an identifier |
 
 ---
 
@@ -288,14 +321,31 @@ rows: 1,265,793.04 four times. A mismatch points at orphans (dropped by inner jo
 - `LOAD DATA` needs `NULLIF(@col, '')` for empty fields;
 - InnoDB checks foreign keys row by row while loading.
 
+**Q: Revenue jumped this quarter. How do you tell a manager whether it's real?**
+Four checks, in order. Is the quarter complete (Northwind's last quarter has 36 of 91 days)? Does it hold year over year, so
+it isn't seasonality (+115.8%)? Which lever moved: orders or order value (80% orders)? And is the jump outside normal
+variation for this business? For that I use a prediction interval from up to 8 earlier quarters, not a fixed "2 sigma",
+because a spread measured on 4 points is too noisy. Then one sentence: the level, the change, the driver, the caveat.
+
+**Q: Your dashboard says shipping time and revenue moved together. Is shipping the cause?**
+Not proven. First check the direction: shipping can explain a fall only if it got *worse* while revenue fell. If it improved,
+it can't be the cause, and the app says so. If the direction fits, it is a candidate cause, labelled "needs a test". The next
+step is a controlled test, such as a faster shipping promise for a random half of orders. New Wheels was exactly this case: a
+60% rise in shipping time alongside a 39% revenue fall, and I proposed a 25-day SLA with a test.
+
+**Q: How do you make a KPI trustworthy for people who can't read SQL?**
+Write down the definition, the formula, which direction is good and the classic pitfall (the KPI dictionary). Reconcile the
+total to the source file. Show a trust score that explains every deduction. And trace every recommendation to the query
+that produced it, so anyone can rerun it.
+
 ---
 
 ## 7. Next steps (not built yet)
 - Profile large CSVs with DuckDB's own reader instead of pandas: loading and profiling dominate at a million rows.
 - Composite foreign keys (e.g. `(region, store_no)`).
 - A direct read-only connection to a live database, as well as uploads.
-- Forecasting the next period, and statistical tests for "is this change significant?" (see the Statistics & A/B Testing
-  project).
+- Forecasting the next period, and a significance test for the change between two periods (the unusual-period check is
+  a prediction interval, not a test of the difference).
 
 ---
 
@@ -308,6 +358,8 @@ rows: 1,265,793.04 four times. A mismatch points at orphans (dropped by inner jo
 5. **(2:50)** KPIs per quarter: the grey partial bar, "+64.3%, not −52.4%". Switch the sidebar to PostgreSQL: `DATEDIFF`
    becomes `shipped_date - order_date`, with no re-run.
 6. **(3:40)** Driver tree waterfall: 80% volume, Beverages 57%. Drill-down: ship days didn't move.
-7. **(4:20)** NULL traps: NOT IN 0 vs NOT EXISTS 7. Step 4 summary.
-8. **(4:45)** Download the project ZIP: schema, load, validate, analysis and performance scripts, cleaned data and a notebook.
-   "The tests run this exact ZIP on PostgreSQL and MySQL."
+7. **(4:00)** NULL traps: NOT IN 0 vs NOT EXISTS 7. Open a cell's 🔧 technical notes: the MySQL vs PostgreSQL lines side by side.
+8. **(4:20)** Step 4: the headline, the KPI tiles (fewer ship days is green), "What to do" (the partial quarter comes first),
+   trust 99/100. Open the brief preview: "this is what a manager gets".
+9. **(4:45)** Download the project ZIP: schema, load, validate, analysis and performance scripts, cleaned data, a notebook,
+   the data and KPI dictionaries and the brief. "The tests run this exact ZIP on PostgreSQL and MySQL."

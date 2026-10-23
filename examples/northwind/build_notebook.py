@@ -9,6 +9,8 @@ The notebook has two parts:
    same data, so that the size of every error is printed rather than claimed.
 2. The full AutoSQL Explorer analysis of the 8 Northwind tables (the same cells the app generates), with every
    step explained and the MySQL / PostgreSQL versions of each query.
+3. The business reading: the headline, KPI tiles, recommendations and data-trust score computed from the metrics
+   above, and `business_brief.html` written next to the notebook.
 """
 from __future__ import annotations
 
@@ -144,6 +146,40 @@ note(f"Employees who manage nobody: NOT IN says **{row.not_in}**, NOT EXISTS say
 ]
 
 
+PART3 = """
+# Part 3: the business reading
+
+Every step above stored its key numbers in `metrics`. The business layer turns them into what a manager reads: one headline,
+KPI tiles for the last complete quarter, recommendations ordered by urgency (each with its evidence, a confidence level and
+the SQL step it comes from) and a data-trust score. The same page is written to `business_brief.html` next to this notebook:
+open it in any browser. How to read it, and every rule behind it: `docs/business_guide.md`.
+"""
+
+BUSINESS = '''
+from autosql import decide, infer_schema, profile_catalog
+from autosql.business import executive_summary
+from autosql.report import to_business_brief
+
+profile = profile_catalog(catalog)
+decision = decide(catalog, profile, infer_schema(catalog, profile))
+summary = executive_summary(decision, metrics, "Northwind Traders")
+note(f"**{summary.headline}**")
+tiles = pd.DataFrame([{"KPI": t.label, summary.period: round(t.value, 2),
+                       f"vs {summary.compared_with}": (f"{t.delta_pct:+.1f} pts" if t.unit == "pct" else f"{t.delta_pct:+.1f}%")
+                       if t.delta_pct is not None else "",
+                       "for the business": {True: "better", False: "worse", None: ""}[t.good]} for t in summary.tiles])
+display(tiles)
+names = {1: "Act now", 2: "Plan", 3: "Monitor"}
+display(pd.DataFrame([{"priority": names[i.priority], "recommendation": i.headline, "evidence": i.evidence, "next step": i.action,
+                       "confidence": i.confidence, "SQL step": i.source} for i in summary.insights]))
+note(f"Data trust: **{int(summary.trust.score)}/100, {summary.trust.grade}**. "
+     + " ".join(f"{x.name} {int(x.score)}: {x.detail}" for x in summary.trust.dimensions))
+Path("business_brief.html").write_text(to_business_brief(decision, metrics, title="Northwind Traders",
+                                                         source="the Northwind sample (8 CSV files)"), encoding="utf-8")
+note("Wrote `business_brief.html`: the one-page brief with the charts.")
+'''
+
+
 def build() -> nbformat.NotebookNode:
     catalog = read_folder(HERE, "*.csv")
     profile = profile_catalog(catalog)
@@ -157,7 +193,7 @@ def build() -> nbformat.NotebookNode:
         cells.append(new_markdown_cell(f"### {title}\n\n🔍 **What we found before:** {found}  \n💡 **Why it matters:** {why}"))
         cells.append(new_code_cell(code.strip()))
     cells.append(new_markdown_cell("# Part 2: the AutoSQL Explorer analysis\n\n" + nb.cells[0].source.split("\n\n", 1)[1]))
-    nb.cells = cells + generated
+    nb.cells = cells + generated + [new_markdown_cell(PART3.strip()), new_code_cell(BUSINESS.strip())]
     return nb
 
 

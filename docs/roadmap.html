@@ -235,10 +235,16 @@ pre { margin: 0; overflow-x: auto; background: var(--chip); border-radius: 8px; 
           <p class="kicker">KPIs · 3</p><h3>KPIs per period, driver next to symptom</h3>
           <ul class="rules">
             <li><span class="if">PERIOD</span><span>&gt; 5 years <b>→ year</b>; ≥ 4 complete quarters <b>→ quarter</b>; else <b>→ month</b></span></li>
-            <li><span class="if">ALWAYS</span><span>AOV = revenue ÷ COUNT(DISTINCT order); <code>LAG</code> for QoQ, <code>LAG(…, 4)</code> for YoY; partial periods labelled</span></li>
+            <li><span class="if">ALWAYS</span><span>AOV = revenue ÷ COUNT(DISTINCT order); <code>period_index = year × 4 + quarter</code>; <code>LAG</code> kept only for the calendar neighbour (QoQ), YoY by joining on <code>period_index − 4</code>; partial periods labelled</span></li>
           </ul>
           <p class="ex" data-ex="nw">AOV 1,525.05 (a line: 587.37). 1997-Q4 → 1998-Q1 +64.3%; naive 1998-Q2 −52.4% (partial).</p>
           <p class="ex" data-ex="wheels">Revenue falls each quarter while ship days rise (40 → 46 in the last two).</p>
+        </article>
+        <article class="stop on optional" data-routes="nw wheels">
+          <p class="kicker">KPIs · 4</p><h3>What discounts cost</h3>
+          <ul class="rules"><li><span class="if">IF</span><span>a discount column <b>→</b> lines per band (<code>CASE</code>), gross − net given away, units per line; band shares with <code>SUM(COUNT(*)) OVER ()</code></span></li></ul>
+          <p class="ex" data-ex="nw">6.5% of gross revenue given away on 39% of lines; discounted lines are 25% bigger.</p>
+          <p class="ex" data-ex="wheels">7.3% of gross revenue given away.</p>
         </article>
       </div>
 
@@ -249,20 +255,40 @@ pre { margin: 0; overflow-x: auto; background: var(--chip); border-radius: 8px; 
           <p class="ex" data-ex="nw">Half of all revenue reached by 1997-Q3.</p>
           <p class="ex" data-ex="wheels">Cumulative revenue per quarter.</p>
         </article>
+        <article class="stop on optional" data-routes="nw">
+          <p class="kicker">Windows · 2</p><h3>Moving average and unusual periods</h3>
+          <ul class="rules">
+            <li><span class="if">IF</span><span>≥ 5 periods <b>→</b> 3-period moving average (<code>RANGE BETWEEN 2 PRECEDING AND CURRENT ROW</code>)</span></li>
+            <li><span class="if">THEN</span><span>flag a period only outside the 99% prediction interval of up to 8 earlier complete periods: |z| ≥ t(0.995, n−1)·√(1 + 1/n)</span></li>
+          </ul>
+          <p class="ex" data-ex="nw">1998-Q1: z = +4.8 against a limit of 4.36 (6 earlier quarters).</p>
+        </article>
         <article class="stop on optional" data-routes="nw wheels">
-          <p class="kicker">Windows · 2</p><h3>Top N per group</h3>
+          <p class="kicker">Windows · 3</p><h3>Top N per group</h3>
           <ul class="rules"><li><span class="if">IF</span><span>items inside a group (products in a category; else customers in a region) <b>→</b> <code>DENSE_RANK</code> next to <code>ROW_NUMBER</code>, ties reported</span></li></ul>
           <p class="ex" data-ex="nw">Top 3 products per category; Côte de Blaye leads Beverages.</p>
           <p class="ex" data-ex="wheels">Top 3 customers per state.</p>
         </article>
         <article class="stop on optional" data-routes="nw wheels">
-          <p class="kicker">Windows · 3</p><h3>Latest record and RFM</h3>
+          <p class="kicker">Windows · 4</p><h3>Pareto / ABC concentration</h3>
+          <ul class="rules"><li><span class="if">IF</span><span>money and a customer <b>→</b> cumulative share with <code>SUM() OVER (ORDER BY … ROWS UNBOUNDED PRECEDING)</code> ÷ <code>SUM() OVER ()</code>; A / B / C at 80% / 95%</span></li></ul>
+          <p class="ex" data-ex="nw">Top 20% of customers → 60% of revenue; class A is 34 customers.</p>
+          <p class="ex" data-ex="wheels">Top 20% of customers → 39% of revenue: no dependence.</p>
+        </article>
+        <article class="stop on optional" data-routes="nw wheels">
+          <p class="kicker">Windows · 5</p><h3>Latest record and RFM</h3>
           <ul class="rules">
             <li><span class="if">IF</span><span>a customer and a date <b>→</b> <code>ROW_NUMBER() … = 1</code> per customer; recency to the last date in the data</span></li>
             <li><span class="if">IF</span><span>and money <b>→</b> <code>NTILE(5)</code> R / F / M scores and named segments</span></li>
           </ul>
           <p class="ex" data-ex="nw">Champions: 22 of 89 customers, 52.2% of revenue.</p>
           <p class="ex" data-ex="wheels">Recency and RFM for each customer.</p>
+        </article>
+        <article class="stop on optional" data-routes="nw wheels">
+          <p class="kicker">Windows · 6</p><h3>Days between orders, overdue customers</h3>
+          <ul class="rules"><li><span class="if">IF</span><span>a customer and a date <b>→</b> <code>LAG(date) OVER (PARTITION BY customer ORDER BY date)</code>; overdue = silent for more than 2 × their own usual gap (3+ orders)</span></li></ul>
+          <p class="ex" data-ex="nw">Reorders every 59 days on average; 5 of 86 repeat customers overdue.</p>
+          <p class="ex" data-ex="wheels">16 of 49 repeat customers overdue: a third of their revenue.</p>
         </article>
       </div>
 
@@ -277,7 +303,7 @@ pre { margin: 0; overflow-x: auto; background: var(--chip); border-radius: 8px; 
           <p class="kicker">Root cause · 2</p><h3>Drill down: symptom next to driver</h3>
           <ul class="rules">
             <li><span class="if">IF</span><span>a driver (ship days, late %, rating) <b>→</b> both per complete period and per segment; correlation only with ≥ 6 periods</span></li>
-            <li><span class="if">THEN</span><span>driver moved ≥ 10% <b>→ candidate cause: confirm with a controlled test</b>; else <b>→ not the cause</b></span></li>
+            <li><span class="if">THEN</span><span>driver moved ≥ 10% <b>in the direction that would explain it</b> (more days while revenue fell; a falling rating while revenue fell) <b>→ candidate cause: confirm with a controlled test</b>; else <b>→ not the cause</b></span></li>
           </ul>
           <p class="ex" data-ex="nw">Ship days 9.2 → 8.6 while revenue +64%: not the cause.</p>
           <p class="ex" data-ex="wheels">Ship days +15% while revenue −17%: a candidate cause, to test.</p>
@@ -320,6 +346,42 @@ pre { margin: 0; overflow-x: auto; background: var(--chip); border-radius: 8px; 
         <p class="ex" data-ex="nw">Employees who manage nobody: NOT IN 0, NOT EXISTS 7. COUNT(*) 830 vs COUNT(shipped_date) 809.</p>
         <p class="ex" data-ex="wheels">No NULLs here, so only the integer-division demo applies.</p>
         <p class="ex" data-ex="staff">NOT IN returns 0 because of the one NULL <code>manager_id</code>.</p>
+      </article>
+    </div>
+  </section>
+
+  <!-- ═════════════ BUSINESS BRIEF ═════════════ -->
+  <section class="section">
+    <header>
+      <p class="eyebrow">Part 4 · for the people who decide</p>
+      <h2>From results to a business brief</h2>
+    </header>
+    <div class="line">
+      <article class="stop on" data-routes="nw wheels staff">
+        <p class="kicker">Stop 7</p><h3>Data-trust score</h3>
+        <ul class="rules">
+          <li><span class="if">ALWAYS</span><span>Completeness 25% · Uniqueness 20% · Integrity 20% · Validity 15% · Consistency 20%, each 0–100 with its reason</span></li>
+          <li><span class="if">THEN</span><span>≥ 90 <b>→ High</b>; ≥ 75 <b>→ Good, with caveats</b>; else <b>→ Use with care</b></span></li>
+        </ul>
+        <p class="ex" data-ex="nw">99 / 100, High: only <code>shipped_date</code> is 2.5% empty.</p>
+        <p class="ex" data-ex="wheels">100 / 100, High.</p>
+        <p class="ex" data-ex="staff">Scored on keys, links and completeness; no KPI totals to reconcile.</p>
+      </article>
+      <article class="stop on" data-routes="nw wheels">
+        <p class="kicker">Stop 8</p><h3>Recommendations</h3>
+        <ul class="rules">
+          <li><span class="if">ALWAYS</span><span>evidence → implication → next step, with a priority (Act now / Plan / Monitor), a confidence (measured / indicative / needs a test) and its SQL step</span></li>
+          <li><span class="if">IF</span><span>a partial period <b>→</b> it leads, as a data warning</span></li>
+        </ul>
+        <p class="ex" data-ex="nw">Act now: 1998-Q2 is incomplete. Plan: Beverages drove 57% of the change.</p>
+        <p class="ex" data-ex="wheels">Act now: revenue fell 17%; 16 customers overdue; ship days +15% (needs a test).</p>
+      </article>
+      <article class="stop on" data-routes="nw wheels staff">
+        <p class="kicker">Stop 9</p><h3>One-page brief</h3>
+        <ul class="rules"><li><span class="if">ALWAYS</span><span>one offline HTML page: KPI tiles, what to do, trend with the driver on its own axis, revenue waterfall, segments, concentration, RFM, discounts, trust, method; a table view per chart</span></li></ul>
+        <p class="ex" data-ex="nw">"Revenue reached 298,491.55 in 1998-Q1 (+64.3% on 1997-Q4, +115.8% year over year)."</p>
+        <p class="ex" data-ex="wheels">"Revenue reached 8.31M in 2018-Q4 (−17.0% on 2018-Q3). Most of the movement came from fewer orders."</p>
+        <p class="ex" data-ex="staff">Validation only: the trust section and the method.</p>
       </article>
     </div>
   </section>

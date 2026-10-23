@@ -5,7 +5,8 @@ Microsoft's Northwind sample: a small food importer with **8 tables**, 91 custom
 
 | File | What it is |
 |---|---|
-| `Northwind_sales_analysis.ipynb` | **The worked example**, already run so the outputs are saved. Part 1 runs four classic SQL mistakes next to the correct query. Part 2 is the full AutoSQL Explorer analysis, with the MySQL 8 and PostgreSQL version of every query |
+| `Northwind_sales_analysis.ipynb` | **The worked example**, already run so the outputs are saved. Part 1 runs four classic SQL mistakes next to the correct query. Part 2 is the full AutoSQL Explorer analysis, with the MySQL 8 and PostgreSQL version of every query. Part 3 is the business reading: headline, KPI tiles, recommendations and the data-trust score |
+| `business_brief.html` | **The one-page business brief** the notebook (and the app) writes: open it in any browser, offline |
 | `build_notebook.py` | regenerates and runs the notebook: `python examples/northwind/build_notebook.py` (needs `requirements-dev.txt`) |
 | `build_data.py` | rebuilds the CSVs from Microsoft's install script at a pinned commit |
 | `*.csv` | the 8 tables, with the original names (`Order Details.csv`, `OrderID`), so that the app's renaming is exercised |
@@ -36,5 +37,24 @@ Microsoft's Northwind sample: a small food importer with **8 tables**, 91 custom
 | Customers | Champions (22 of 89 customers) bring 52.2% of revenue; 43 customers first ordered in 1996-Q3 |
 | Correctness | `NOT IN` finds 0 employees who manage nobody; `NOT EXISTS` finds 7, because `reports_to` is NULL for the top manager |
 
-Every number above is printed by the notebook, and checked by `tests/test_northwind.py`. The exported project gives the same
+## The business reading
+
+From [`business_brief.html`](business_brief.html), ordered by urgency:
+
+| Priority | Recommendation | Evidence | Next step |
+|---|---|---|---|
+| Act now | 1998-Q2 is incomplete | 36 of 91 days; a naive report would show −52.4% | report it only once complete, or against the same days a year earlier |
+| Plan | Revenue grew 64.3% in 1998-Q1 | +115.8% year over year, so not seasonal | headline the last complete quarter; plan on the year-over-year figure |
+| Plan | 1998-Q1 is far from its recent trend | z = +4.8 against 6 earlier quarters (99% limit 4.36) | check the largest orders of the quarter before planning on it |
+| Plan | Order volume accounts for 80% of the movement | 120 → 182 orders; AOV +8.3% | plan capacity for the volume |
+| Plan | Beverages drove 57% of the change | +66,503.58 by category | find out whether it can last |
+| Plan | The top 20% of customers bring 60% of revenue | class A: 34 customers (38% of them) = 80% of revenue | named account owners for class A |
+| Plan | 5 repeat customers are overdue | silent for more than twice their usual gap (59 days) | win-back calls, largest first |
+| Plan | 8 once-frequent customers are slipping | RFM "At risk": 5.1% of revenue | reactivation offer |
+| Plan | Discounts cost 6.5% of gross revenue | 88,665.55 on 39% of lines; discounted lines are 25% bigger | test discount levels before changing the policy |
+| Monitor | Ship days did not explain the change | −6.5% while revenue +64.3% | look at the driver tree instead |
+
+**Data trust: 99/100, High.** The only deduction: `orders.shipped_date` is 2.5% empty (21 unshipped orders).
+
+Every number above is printed by the notebook, and checked by `tests/test_northwind.py` and `tests/test_business.py`. The exported project gives the same
 results on PostgreSQL 16 and MySQL 8.4 (`tests/test_live_postgres.py`, `tests/test_live_mysql.py`).

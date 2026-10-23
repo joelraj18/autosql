@@ -136,3 +136,12 @@ def test_a_driver_that_improved_cannot_explain_a_fall(nw):
          "main_measure": "revenue"}
     ops = next(i for i in insights(d, m) if i.area == "Operations")
     assert ops.headline == "ship days did not explain the change" and ops.priority == 3
+
+
+def test_business_guide_is_in_sync_with_the_code():
+    from pathlib import Path
+    from autosql.decision import TREND_Z_LIMIT
+    guide = (Path(__file__).resolve().parents[1] / "docs" / "business_guide.md").read_text()
+    assert kpi_dictionary_markdown() in guide                                  # regenerate with the snippet in the guide's history if this fails
+    assert all(f"| `{key}` | {q} |" in guide for key, (q, _) in BUSINESS_QUESTIONS.items())
+    assert all(f"{n} periods: **{v}**" in guide for n, v in TREND_Z_LIMIT.items())

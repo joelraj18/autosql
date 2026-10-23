@@ -351,13 +351,18 @@ def insights(d: Decision, metrics: dict) -> list[Insight]:
 
     pareto = (m.get("pareto") or {}).get("customers")
     if pareto:
-        share = pareto["top20_revenue_pct"]
-        out.append(Insight("Customers", f"The top 20% of customers bring {share:.0f}% of revenue",
+        share = round(pareto["top20_revenue_pct"])          # judged on the number the reader sees
+        if share >= 60:
+            implication, priority = "High dependence on a few accounts: losing one of them moves the total.", 2
+        elif share >= 40:
+            implication, priority = "Moderately concentrated: the top accounts matter, but no small group dominates.", 3
+        else:
+            implication, priority = "Revenue is fairly spread; no single group dominates.", 3
+        out.append(Insight("Customers", f"The top 20% of customers bring {share}% of revenue",
                            f"class A: {pareto['a_entities']} customers ({pareto['a_entities_pct']:.0f}%) = {pareto['a_revenue_pct']:.0f}% of revenue",
-                           "High dependence on a few accounts." if share >= 60 else "Revenue is fairly spread; no single group dominates.",
+                           implication,
                            f"Give the {pareto['a_entities']} class-A customers named account owners and watch their order gaps."
-                           if share >= 50 else "Keep broad-based retention; concentration is not a risk here.", 2 if share >= 60 else 3,
-                           "measured", "pareto"))
+                           if share >= 40 else "Keep broad-based retention; concentration is not a risk here.", priority, "measured", "pareto"))
     gaps = m.get("purchase_gaps")
     if gaps and gaps.get("overdue"):
         share = gaps.get("overdue_revenue_pct")
