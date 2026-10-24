@@ -61,7 +61,7 @@ DISPLAY_LIMIT = 20         # rows listed by "show me examples" queries
 TECHNIQUES = (
     ("CTE (WITH)", r"\bWITH\b"), ("view", r"CREATE OR REPLACE VIEW"), ("CREATE TABLE + keys", r"CREATE TABLE"),
     ("window function", r"\bOVER\s*\("), ("LAG / LEAD", r"\b(LAG|LEAD)\("), ("ROW_NUMBER", r"\bROW_NUMBER\("),
-    ("RANK / DENSE_RANK", r"\b(DENSE_)?RANK\("), ("NTILE", r"\bNTILE\("), ("window frame", r"\b(ROWS|RANGE) BETWEEN\b"),
+    ("RANK / DENSE_RANK", r"\b(DENSE_)?RANK\("), ("NTILE", r"\bNTILE\("), ("CUME_DIST", r"\bCUME_DIST\("), ("window frame", r"\b(ROWS|RANGE) BETWEEN\b"),
     ("PARTITION BY", r"\bPARTITION\s+BY\b"), ("LEFT JOIN", r"\bLEFT\s+JOIN\b"), ("anti-join", r"\bNOT EXISTS\b|LEFT\s+JOIN[^;]*IS NULL"),
     ("conditional aggregation", r"\b(SUM|COUNT|AVG)\(\s*CASE\b"), ("CASE", r"\bCASE\b"), ("GROUP BY … HAVING", r"\bHAVING\b"),
     ("UNION ALL", r"\bUNION\s+ALL\b"), ("COUNT(DISTINCT)", r"COUNT\(DISTINCT\b"), ("NULLIF division guard", r"\bNULLIF\("),
@@ -1652,6 +1652,9 @@ def _rfm_cell(b: Builder) -> Cell:
     def view(D: Dialect) -> str:
         c, dt = D.ident(cust), D.ident(date)
         recency = D.days_between(f"MAX({dt})", f"(SELECT MAX({dt}) FROM order_facts)", d.date_is_timestamp)
+        # CUME_DIST is the share of customers at or below this value, so equal values share a score; ROUND(…, 9) removes floating
+        # noise before CEIL (5 × 0.4 can come out as 2.0000000000000004, which CEIL would turn into 3)
+        score = lambda order: f"CEIL({D.round(f'<<n>> * CUME_DIST() OVER (ORDER BY {order})', 9)})"  # noqa: E731
         return fill('''
             CREATE OR REPLACE VIEW customer_rfm AS
             WITH customer_totals AS (
@@ -1666,9 +1669,9 @@ def _rfm_cell(b: Builder) -> Cell:
             ),
             scored AS (
                 SELECT t.*,
-                       NTILE(<<n>>) OVER (ORDER BY recency_days DESC, <<c>>) AS r_score,   -- <<n>> = most recent
-                       NTILE(<<n>>) OVER (ORDER BY frequency, <<c>>) AS f_score,            -- <<n>> = most orders
-                       NTILE(<<n>>) OVER (ORDER BY monetary, <<c>>) AS m_score              -- <<n>> = most revenue
+                       <<r>> AS r_score,   -- <<n>> = most recent
+                       <<f>> AS f_score,   -- <<n>> = most orders
+                       <<m>> AS m_score    -- <<n>> = most revenue
                 FROM   customer_totals t
             )
             SELECT s.*,
@@ -1679,7 +1682,18 @@ def _rfm_cell(b: Builder) -> Cell:
                         WHEN r_score <= 2 AND f_score <= 2 THEN 'Hibernating'
                         ELSE 'Needs attention'
                    END AS segment
-            FROM   scored s''', c=c, dt=dt, recency=recency, n=n)
+            FROM   scored s''', c=c, dt=dt, recency=recency, r=score("recency_days DESC"), f=score("frequency"), m=score("monetary"),
+                    n=n)
+
+    def scores(D: Dialect) -> str:
+        return fill('''
+            SELECT f_score,
+                   COUNT(*) AS customers,
+                   MIN(frequency) AS fewest_orders,
+                   MAX(frequency) AS most_orders
+            FROM   customer_rfm
+            GROUP  BY f_score
+            ORDER  BY f_score''')
 
     def summary(D: Dialect) -> str:
         return fill('''
@@ -1696,13 +1710,21 @@ def _rfm_cell(b: Builder) -> Cell:
     story = Step(
         "rfm",
         "Every customer has a last order date, an order count and a revenue total.",
-        "RFM (recency, frequency, monetary) turns three numbers into a segment a marketer can act on. NTILE(5) ranks customers into five equal-sized "
-        "buckets per measure; ties are split arbitrarily, so the customer id is added to the ORDER BY to make the split repeatable.",
+        "RFM (recency, frequency, monetary) turns three numbers into a segment a marketer can act on. The usual NTILE(5) forces five equal-sized "
+        "buckets, so customers with the same number of orders can land in different buckets depending on their id: that is arbitrary, and it "
+        "decides who gets a campaign.",
         "We score every customer 1-5 on R, F and M and name the segments, so that revenue concentration and churn risk become visible.",
-        "`customer_totals` aggregates order_facts per customer; `scored` adds three NTILE(5) windows; a CASE turns the scores into named segments. "
-        "It is saved as the view customer_rfm, then summarised per segment.",
+        "`customer_totals` aggregates order_facts per customer; `scored` turns each measure into a 1-5 score with CEIL(5 × CUME_DIST()), the "
+        "share of customers at or below that value, so equal values always get equal scores (buckets are no longer forced to the same size); a "
+        "CASE turns the scores into named segments. It is saved as the view customer_rfm, then summarised per score and per segment.",
     )
     check = fill('''
+        fs = outputs["rfm_scores"]
+        overlaps = int((fs["fewest_orders"].iloc[1:].to_numpy() <= fs["most_orders"].iloc[:-1].to_numpy()).sum())
+        metrics["rfm_ties_split"] = overlaps                 # 0: no order count is split across two F scores
+        note("Frequency scores by order count: " + "; ".join(f"{int(r.f_score)} = {int(r.fewest_orders)}" +
+             (f"-{int(r.most_orders)}" if r.most_orders != r.fewest_orders else "") + f" orders ({int(r.customers)} customers)"
+             for r in fs.itertuples()) + ". Customers with the same number of orders always share a score.")
         seg = outputs["rfm_segments"]
         metrics["rfm"] = {r.segment: {"customers": int(r.customers), "revenue_pct": float(r.revenue_pct)} for r in seg.itertuples()}
         top = seg.iloc[0]
@@ -1716,8 +1738,9 @@ def _rfm_cell(b: Builder) -> Cell:
         if len(risk):
             note(f"At risk: {int(risk.customers.iloc[0]):,} customers who used to order often but not recently ({float(risk.revenue_pct.iloc[0]):.1f}% of revenue).")
     ''')
-    return Cell("rfm", "RFM segments with NTILE", SECTIONS[5], story,
-                (stmt("rfm_view", "View `customer_rfm`: NTILE scores per customer", view),
+    return Cell("rfm", "RFM segments with CUME_DIST", SECTIONS[5], story,
+                (stmt("rfm_view", "View `customer_rfm`: tie-safe 1-5 scores per customer", view),
+                 stmt("rfm_scores", "Order counts behind each frequency score", scores),
                  stmt("rfm_segments", "Customers and revenue per segment", summary)), check)
 
 

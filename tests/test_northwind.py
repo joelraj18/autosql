@@ -67,3 +67,9 @@ def test_windows_and_traps(run):
     assert m["count_trap"]["all_rows"] == 830 and m["count_trap"]["rows_with_shipped_date"] == 809
     assert m["sargable_equal"] is True
     assert "Hash Join" in m["plan_ops"]
+
+
+def test_rfm_scores_never_split_equal_customers(run):
+    _, m = run
+    assert m["rfm_ties_split"] == 0                       # with NTILE(5), 34 of 89 customers got their F score from their id
+    assert m["rfm"]["Champions"] == {"customers": 24, "revenue_pct": 54.4}
