@@ -203,6 +203,7 @@ def trust_score(d: Decision, metrics: dict) -> TrustScore:
     # validity: one point per bad value (capped), ten per column-level warning
     issues, penalty = [], 0.0
     checks = ((d.quality.get("unparsed_dates", 0), "date value(s) that didn't parse", 1),
+              (d.quality.get("unparsed_numbers", 0), "value(s) in number columns that aren't numbers", 1),
               (d.quality.get("ambiguous_dates", 0), "date column(s) where day and month can't be told apart", 10),
               (d.quality.get("type_mismatches", 0), "link(s) joining text to numbers", 10),
               (metrics.get("negative_lead") or 0, "shipment(s) dated before their order", 1),

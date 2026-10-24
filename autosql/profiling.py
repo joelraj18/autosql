@@ -72,6 +72,7 @@ class ColumnProfile:
     minimum: object = None
     maximum: object = None
     scale: tuple[tuple[str, int], ...] = ()   # text ratings: (label, score) pairs, labels as they appear in the data
+    unit: str = ""                            # '$', 'EUR', '%' or 'mixed', when the upload wrote it next to the numbers
 
     @property
     def null_frac(self) -> float:
@@ -200,7 +201,8 @@ def profile_column(table: Table, name: str) -> ColumnProfile:
     present = s.dropna()
     n_unique = int(present.nunique())
     original = table.column_map.get(name, name)
-    base = dict(table=table.name, name=name, original=original, logical_type=logical, n_rows=n_rows, n_null=n_null, n_unique=n_unique)
+    base = dict(table=table.name, name=name, original=original, logical_type=logical, n_rows=n_rows, n_null=n_null, n_unique=n_unique,
+                unit=table.units.get(name, ""))
     lengths = present.astype(str).str.len() if logical == "text" and not present.empty else pd.Series(dtype=float)
     if not lengths.empty:
         base.update(avg_len=float(lengths.mean()), max_len=int(lengths.max()))

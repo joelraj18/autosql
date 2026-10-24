@@ -293,6 +293,7 @@ def decide(catalog: Catalog, profile: CatalogProfile, schema: Schema, mode: str 
     if renamed:
         d.steps.append(story("renamed", n=len(renamed), examples=", ".join(f"`{old}` → `{new}`" for _, new, old in renamed[:3])))
     d.quality = {"unparsed_dates": sum(sum(t.unparsed_dates.values()) for t in catalog.tables.values()),
+                 "unparsed_numbers": sum(sum(t.unparsed_numbers.values()) for t in catalog.tables.values()),
                  "ambiguous_dates": sum(len(t.ambiguous_dates) for t in catalog.tables.values()),
                  "type_mismatches": sum(1 for r in schema.accepted if r.type_mismatch)}
     for t in catalog.tables.values():
@@ -300,6 +301,15 @@ def decide(catalog: Catalog, profile: CatalogProfile, schema: Schema, mode: str 
             d.steps.append(story("unparsed_dates", table=t.name, col=col, n=n, fmt=t.date_formats.get(col, "")))
         for col in t.ambiguous_dates:
             d.steps.append(story("ambiguous_dates", table=t.name, col=col))
+        for col, example in t.cleaned.items():
+            unit = t.units.get(col)
+            d.steps.append(story("number_format_cleaned", table=t.name, col=col, example=example,
+                                 unit=" (two or more currencies: each row's currency is in `" + col + "_currency`)" if unit == "mixed" else
+                                 f" (unit: {unit})" if unit else ""))
+        for col, n in t.placeholders.items():
+            d.steps.append(story("placeholders_empty", table=t.name, col=col, n=n))
+        for col, n in t.unparsed_numbers.items():
+            d.steps.append(story("unparsed_numbers", table=t.name, col=col, n=n))
     biggest = max(t.n_rows for t in tables.values())
     if biggest < SMALL_TABLE:
         d.steps.append(story("small_tables", rows=biggest))
@@ -511,8 +521,9 @@ def _choose_revenue(d: Decision, ft: TableProfile, picks: dict) -> Revenue | Ste
 
 def _with_discount(rev: Revenue, ft: TableProfile) -> Revenue:
     if rev.discount:
-        top = ft.col(rev.discount).maximum
-        if top is not None and 1 < float(top) <= 100:
+        col = ft.col(rev.discount)
+        top = col.maximum
+        if col.unit == "%" or (top is not None and 1 < float(top) <= 100):   # '0.5%' is half a percent, not 50%
             rev.discount_scale = 100
     return rev
 

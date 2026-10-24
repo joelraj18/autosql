@@ -2546,6 +2546,12 @@ def assumptions(d: Decision) -> list[str]:
     out.append(f"Revenue = {b.revenue_formula()}" + (" (net of discount; gross is shown in the reconciliation)." if d.revenue.discount else "."))
     if d.revenue.price_rel:
         out.append(f"The price comes from `{d.revenue.price_rel.parent_table}` (a list price), not from the sale itself.")
+    money_col = d.revenue.amount or d.revenue.price
+    if money_col:
+        table = d.revenue.price_rel.parent_table if d.revenue.price_rel and not d.revenue.amount else d.revenue.table
+        unit = d.profile.col(table, money_col).unit
+        if unit and unit not in ("%", "mixed"):
+            out.append(f"Amounts are in {unit}, as written next to the numbers in `{money_col}`.")
     if d.line_level:
         out.append(f"`order_facts` has one row per order (`{d.order_key}`); `line_facts` one row per line. AOV = revenue ÷ distinct orders.")
     if d.date:

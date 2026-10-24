@@ -62,6 +62,23 @@ TEMPLATES: dict[str, dict[str, str]] = {
         "why": "03/04 could be 4 March or 3 April. Reading them the wrong way shifts every date and every period.",
         "action": "We read them as month/day (the US convention). If they are day/month, fix the file before trusting the periods.",
     },
+    "number_format_cleaned": {
+        "found": "`{table}.{col}` holds numbers written the way a spreadsheet shows them: {example}{unit}.",
+        "why": "Read as text, the column could not be summed or averaged at all, so the measure would silently disappear "
+               "from the analysis.",
+        "action": "We strip currency signs, thousands separators and % signs, read (12.50) as −12.50, and store plain numbers, "
+                  "so that SQL can add them up.",
+    },
+    "placeholders_empty": {
+        "found": "In `{table}.{col}`, {n:,} value(s) are markers such as '-', '#N/A' or 'unknown' rather than values.",
+        "why": "One such marker would otherwise turn a whole number or date column into text.",
+        "action": "We read them as empty (NULL), so that they are counted in the NULL profile and the column keeps its type.",
+    },
+    "unparsed_numbers": {
+        "found": "In `{table}.{col}`, {n:,} value(s) are not numbers, while at least 95% of the column is.",
+        "why": "A value SQL can't read becomes NULL, so those rows drop out of every total and average.",
+        "action": "We load them as NULL and count them against the data-trust score, so that you can fix them at the source.",
+    },
     # ── Schema and grain ──────────────────────────────────────────────────
     "grain_single": {
         "found": "In `{table}` ({rows:,} rows), {reason}.",

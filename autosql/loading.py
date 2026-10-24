@@ -23,6 +23,11 @@ from .dialect import Dialect
 
 NA_VALUES = ["", "NULL", "null", "NA", "N/A", "n/a", "\\N", "None", "nan", "NaN"]
 DATE_PARSE_SHARE = 0.95          # at least this share of values must parse with one format
+NUMBER_PARSE_SHARE = 0.95        # the same rule for numbers written the business way ($1,234.50, 15%, (12.50))
+# Spreadsheet and export markers for "no value": read as empty in number and date columns (text columns keep them).
+PLACEHOLDERS = frozenset({"-", "--", "---", "\u2014", "\u2013", "?", "??", ".", "#n/a", "#na", "#value!", "#div/0!", "#ref!", "#num!",
+                          "#name?", "#null!", "n.a.", "n.a", "na.", "n/d", "nil", "none", "null", "missing", "unknown", "tbd",
+                          "(blank)", "blank", "not available"})
 MAX_ZIP_MEMBERS = 50
 MAX_ZIP_BYTES = 500 * 1024 ** 2  # uncompressed
 TABLE_SUFFIXES = (".csv", ".tsv", ".txt", ".xlsx", ".xls")
@@ -36,6 +41,11 @@ _INT = re.compile(r"^[+-]?\d+$")
 _NUM = re.compile(r"^[+-]?(\d+\.?\d*|\.\d+)([eE][+-]?\d+)?$")
 _LEADING_ZERO = re.compile(r"^[+-]?0\d")
 _DECIMAL_COMMA = re.compile(r"^[+-]?(\d{1,3}(\.\d{3})+|\d+)(,\d+)?$")  # 1.234,56 or 12,5 (European spreadsheets)
+_UNIT_PREFIX = re.compile(r"^([$\u20ac\u00a3\u00a5\u20b9]|[A-Z]{3}(?=[\s\d.,]))\s*")   # $ € £ ¥ ₹ or an ISO code (USD 12)
+_UNIT_SUFFIX = re.compile(r"\s*(%|[$\u20ac\u00a3\u00a5\u20b9]|[A-Z]{3})$")            # 12 %, 12€, 12 EUR
+# A number with optional thousands separators: '1,234.50' (or '1.234,50' / '1 234,50' in decimal-comma files)
+_GROUPED = {False: re.compile(r"^(?:(\d{1,3}(?:([,'])\d{3})(?:\2\d{3})*)|\d+)(\.\d+)?$|^\.\d+$"),
+            True: re.compile(r"^(?:(\d{1,3}(?:([. \u00a0\u202f])\d{3})(?:\2\d{3})*)|\d+)(,\d+)?$|^,\d+$")}
 DELIMITERS = (",", ";", "\t", "|")
 
 
@@ -49,6 +59,10 @@ class Table:
     date_formats: dict[str, str] = field(default_factory=dict)
     unparsed_dates: dict[str, int] = field(default_factory=dict)   # values that looked like dates but didn't parse
     ambiguous_dates: list[str] = field(default_factory=list)       # day/month order could not be told apart
+    unparsed_numbers: dict[str, int] = field(default_factory=dict)  # values in a number column that weren't numbers
+    units: dict[str, str] = field(default_factory=dict)             # '$', 'EUR', '%' stripped from a number column; 'mixed'
+    cleaned: dict[str, str] = field(default_factory=dict)           # how a column was normalised, with an example
+    placeholders: dict[str, int] = field(default_factory=dict)      # '-', '#N/A', 'unknown' … read as empty
 
     @property
     def renamed(self) -> dict[str, str]:
@@ -116,8 +130,101 @@ def _parse_dates(values: pd.Series) -> tuple[str | None, bool]:
     return best, ambiguous
 
 
-def infer_column(raw: pd.Series, decimal_comma: bool = False) -> tuple[pd.Series, str, str | None, int, bool]:
-    """Type one text column. Returns (values, logical type, date format, unparsed dates, ambiguous day/month).
+@dataclass
+class Inferred:
+    """One typed column, and what had to be done to it."""
+    values: pd.Series
+    logical: str                               # integer | decimal | float | boolean | date | timestamp | text
+    date_format: str | None = None
+    unparsed: int = 0                          # values that didn't parse as the column's type (dates or numbers)
+    ambiguous: bool = False                    # day/month order could not be told apart
+    unit: str | None = None                    # '$', 'EUR', '%' stripped from the values; 'mixed' when currencies differ
+    example: str = ""                          # one normalised value, for the story: "'$1,234.50' → 1234.50"
+    placeholders: int = 0                      # values such as '-' or '#N/A' read as empty
+    currency: pd.Series | None = None          # the currency of each row, when the column mixes currencies
+
+
+def _plain_number(s: str, decimal_comma: bool) -> str | None:
+    """'1,234.50' → '1234.50' ('1.234,50' → '1234.50' in decimal-comma files); None if it is not a number."""
+    m = _GROUPED[decimal_comma].match(s)
+    if not m:
+        return None
+    sep = m.group(2)
+    plain = s.replace(sep, "") if sep else s
+    return plain.replace(",", ".") if decimal_comma else plain
+
+
+def _business_number(text: str, decimal_comma: bool) -> tuple[str | None, str | None]:
+    """A number as a business export writes it, as a plain number string and its unit.
+
+    '$1,234.50' → ('1234.50', '$'), '(12.50)' → ('-12.50', None), '15%' → ('15', '%'), '12.50 EUR' → ('12.50', 'EUR'),
+    '12.50-' → ('-12.50', None). (None, None) when it isn't a number.
+    """
+    s = text.strip().replace("\u2212", "-")
+    negative, unit = False, None
+    if len(s) > 2 and s[0] == "(" and s[-1] == ")":            # accounting negative
+        negative, s = True, s[1:-1].strip()
+    for _ in range(2):                                           # a sign and a currency in either order: -$12, $-12
+        if s[:1] in ("+", "-"):
+            negative ^= s[0] == "-"
+            s = s[1:].lstrip()
+        m = _UNIT_PREFIX.match(s)
+        if m and unit is None:
+            unit, s = m.group(1), s[m.end():]
+    m = _UNIT_SUFFIX.search(s)
+    if m:
+        if unit is not None:
+            return None, None
+        unit, s = m.group(1), s[:m.start()]
+    if s.endswith("-") and len(s) > 1:                           # trailing minus (SAP-style exports)
+        negative, s = not negative, s[:-1].rstrip()
+    plain = _plain_number(s, decimal_comma)
+    if plain is None:
+        return None, None
+    return ("-" + plain if negative else plain), unit
+
+
+def _type_numbers(strings: pd.Series, numbers: pd.Series) -> tuple[pd.Series, str]:
+    """Integer, decimal or float, from the plain number strings (no blanks) and their float values (the whole column)."""
+    if strings.str.match(_INT).all() and strings.str.len().max() <= 18:
+        return numbers.round().astype("Int64"), "integer"
+    fraction = strings.str.extract(r"\.(\d+)$")[0].dropna()
+    if (fraction.str.strip("0") == "").all() and np.isclose(numbers.dropna() % 1, 0).all() and numbers.abs().max() < 1e15:
+        return numbers.round().astype("Int64"), "integer"  # "5.0" (e.g. from Excel) is a whole number
+    if not fraction.empty and fraction.str.len().max() <= 4 and not strings.str.contains("[eE]").any():
+        return numbers, "decimal"
+    return numbers, "float"
+
+
+def _as_business_numbers(text: pd.Series, values: pd.Series, decimal_comma: bool) -> Inferred | None:
+    """Numbers written the business way, with placeholders read as empty, if at least 95% of the other values parse."""
+    is_placeholder = values.str.lower().isin(PLACEHOLDERS)
+    real = values[~is_placeholder]
+    if real.empty or real.str.match(_LEADING_ZERO).any():
+        return None
+    counts = real.value_counts()
+    parsed = {v: _business_number(v, decimal_comma) for v in counts.index}
+    good = [v for v, (plain, _) in parsed.items() if plain is not None]
+    if not good or counts[good].sum() / counts.sum() < NUMBER_PARSE_SHARE:
+        return None
+    units = {parsed[v][1] for v in good if parsed[v][1]}
+    currencies = units - {"%"}
+    if "%" in units and currencies:
+        return None                                              # percentages and money in one column: not one measure
+    mapping = {v: parsed[v][0] for v in good}
+    clean = text.map(mapping)                                    # placeholders, junk and blanks become NaN
+    numbers = pd.to_numeric(clean, errors="coerce").astype("float64")
+    typed, logical = _type_numbers(clean.dropna().astype(str), numbers)
+    unit = "%" if "%" in units else (next(iter(currencies)) if len(currencies) == 1 else "mixed" if currencies else None)
+    changed = next((v for v in good if mapping[v] != v), None)
+    example = f"'{changed}' → {mapping[changed]}" if changed else ""
+    currency = text.map({v: parsed[v][1] for v in good}) if unit == "mixed" else None
+    return Inferred(typed, logical, unparsed=int(counts.drop(good).sum()), unit=unit, example=example,
+                    placeholders=int(is_placeholder.sum()), currency=currency)
+
+
+def infer_column(raw: pd.Series, decimal_comma: bool = False) -> Inferred:
+    """Type one text column.
 
     ``decimal_comma``: the file uses ';' between fields, so '12,5' and '1.234,56' are numbers written the European way.
     """
@@ -130,38 +237,40 @@ def infer_column(raw: pd.Series, decimal_comma: bool = False) -> tuple[pd.Series
     values = values[values != ""]
     blank = raw.isna() | (raw.astype(str).str.strip() == "")
     if values.empty:
-        return pd.Series([None] * len(raw), index=raw.index, dtype="object"), "text", None, 0, False
+        return Inferred(pd.Series([None] * len(raw), index=raw.index, dtype="object"), "text")
     text = raw.where(~blank).astype("object").map(lambda v: v.strip() if isinstance(v, str) else v)
     text = text.where(text.notna(), None)
 
     all_int = bool(values.str.match(_INT).all())
     leading_zero = bool(values.str.match(_LEADING_ZERO).any())  # "05021" is a code, not the number 5021
     if all_int and not leading_zero and values.str.len().max() <= 18:
-        return pd.to_numeric(text, errors="coerce").astype("Int64"), "integer", None, 0, False
+        return Inferred(pd.to_numeric(text, errors="coerce").astype("Int64"), "integer")
     if not all_int and values.str.match(_NUM).all() and not leading_zero:
         numbers = pd.to_numeric(text, errors="coerce").astype("float64")
-        fraction = values.str.extract(r"\.(\d+)$")[0].dropna()
-        if (fraction.str.strip("0") == "").all() and np.isclose(numbers.dropna() % 1, 0).all() and numbers.abs().max() < 1e15:
-            return numbers.round().astype("Int64"), "integer", None, 0, False  # "5.0" (e.g. from Excel) is a whole number
-        if not fraction.empty and fraction.str.len().max() <= 4 and not values.str.contains("[eE]").any():
-            return numbers, "decimal", None, 0, False
-        return numbers, "float", None, 0, False
+        typed, logical = _type_numbers(values, numbers)
+        return Inferred(typed, logical)
     lowered = values.str.lower()
     if set(lowered.unique()) <= {"true", "false"}:
-        return text.map(lambda v: None if v is None or pd.isna(v) else str(v).lower() == "true").astype("boolean"), "boolean", None, 0, False
-    fmt, ambiguous = _parse_dates(values)
+        return Inferred(text.map(lambda v: None if v is None or pd.isna(v) else str(v).lower() == "true").astype("boolean"), "boolean")
+    business = _as_business_numbers(text, values, decimal_comma)
+    if business is not None:
+        return business
+    placeholder = lowered.isin(PLACEHOLDERS)
+    real = values[~placeholder]
+    fmt, ambiguous = _parse_dates(real) if not real.empty else (None, False)
     if fmt:
+        dated = text.where(~text.astype(str).str.lower().isin(PLACEHOLDERS), None)
         with warnings.catch_warnings():
             warnings.simplefilter("ignore")
             if fmt == "ISO8601":  # time-zone aware: stored as UTC without the zone
-                when = pd.to_datetime(text, format=fmt, errors="coerce", utc=True).dt.tz_convert(None)
+                when = pd.to_datetime(dated, format=fmt, errors="coerce", utc=True).dt.tz_convert(None)
             else:
-                when = pd.to_datetime(text, format=fmt, errors="coerce")
-        unparsed = int((when.isna() & ~blank).sum())
+                when = pd.to_datetime(dated, format=fmt, errors="coerce")
+        unparsed = int((when.isna() & dated.notna()).sum())
         times = when.dropna()
         is_date = bool((times == times.dt.normalize()).all())
-        return when, "date" if is_date else "timestamp", fmt, unparsed, ambiguous
-    return text.astype("object"), "text", None, 0, False
+        return Inferred(when, "date" if is_date else "timestamp", fmt, unparsed, ambiguous, placeholders=int(placeholder.sum()))
+    return Inferred(text.astype("object"), "text")
 
 
 def make_table(name: str, source: str, raw: pd.DataFrame, taken: set[str], decimal_comma: bool = False) -> Table:
@@ -171,19 +280,34 @@ def make_table(name: str, source: str, raw: pd.DataFrame, taken: set[str], decim
                               for i, c in enumerate(originals)])
     raw = raw.copy()
     raw.columns = sql_names
-    df, types, formats, unparsed, ambiguous = pd.DataFrame(index=raw.index), {}, {}, {}, []
+    df = pd.DataFrame(index=raw.index)
+    table = Table(unique_names([snake_case(name)], taken)[0], source, df, dict(zip(sql_names, originals)), {})
+    extra = []
     for col in sql_names:
-        values, logical, fmt, bad, amb = infer_column(raw[col], decimal_comma)
-        df[col] = values
-        types[col] = logical
-        if fmt:
-            formats[col] = fmt
-        if bad:
-            unparsed[col] = bad
-        if amb:
-            ambiguous.append(col)
-    table_name = unique_names([snake_case(name)], taken)[0]
-    return Table(table_name, source, df.reset_index(drop=True), dict(zip(sql_names, originals)), types, formats, unparsed, ambiguous)
+        got = infer_column(raw[col], decimal_comma)
+        df[col] = got.values
+        table.types[col] = got.logical
+        if got.date_format:
+            table.date_formats[col] = got.date_format
+        if got.unparsed:
+            (table.unparsed_dates if got.logical in ("date", "timestamp") else table.unparsed_numbers)[col] = got.unparsed
+        if got.ambiguous:
+            table.ambiguous_dates.append(col)
+        if got.unit:
+            table.units[col] = got.unit
+        if got.example:
+            table.cleaned[col] = got.example
+        if got.placeholders:
+            table.placeholders[col] = got.placeholders
+        if got.currency is not None:
+            extra.append((col, got.currency))
+    for col, currency in extra:      # a column mixing currencies keeps its numbers; the currency of each row goes next to it
+        name_ = unique_names([f"{col}_currency"], set(df.columns))[0]
+        df[name_] = currency.astype("object").where(currency.notna(), None)
+        table.types[name_] = "text"
+        table.column_map[name_] = f"{table.column_map[col]} (currency)"
+    table.df = df.reset_index(drop=True)
+    return table
 
 
 # ── Files ────────────────────────────────────────────────────────────────
