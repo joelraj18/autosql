@@ -484,7 +484,7 @@ def _delta_html(t, compared: str) -> str:
     if abs(t.delta_pct) < 0.05:
         return f'<span class="delta flat">● no change <span class="vs">vs {esc(compared)}</span></span>'
     arrow = "▲" if t.delta_pct > 0 else "▼"
-    text = f"{t.delta_pct:+.1f} pts" if t.unit == "pct" else f"{t.delta_pct:+.1f}%"
+    text = (f"{t.delta_pct:+.1f} pts" if t.unit == "pct" else f"{t.delta_pct:+.1f}%") + (f" {t.note}" if t.note else "")
     meaning = "an improvement" if t.good else "a deterioration"
     return (f'<span class="delta {"good" if t.good else "bad"}" title="{meaning}">{arrow} {esc(text)} '
             f'<span class="vs">vs {esc(compared)}</span></span>')

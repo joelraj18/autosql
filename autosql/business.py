@@ -259,6 +259,25 @@ def effect_shares(split: dict) -> dict[str, float]:
     return {k: v / total for k, v in sizes.items()}
 
 
+CALENDAR_GAP = 0.03      # two periods whose lengths differ by 3% or more (February vs January) are compared per day
+FLOW_KPIS = ("revenue", "orders", "customers")   # totals that grow with the number of days; averages and rates don't
+
+
+def calendar_adjusted(q: dict | None) -> bool:
+    """Do the two compared periods differ enough in length that totals must be compared per day?"""
+    d1, d2 = (q or {}).get("days_from"), (q or {}).get("days_to")
+    return bool(d1 and d2 and abs(d2 / d1 - 1) >= CALENDAR_GAP)
+
+
+def effective_change(q: dict) -> float:
+    """The change that decides 'grew' or 'fell': per day when the periods differ in length, else the plain change."""
+    return q.get("per_day_pct", q["pct"]) if calendar_adjusted(q) else q["pct"]
+
+
+def _moved(pct: float) -> str:
+    return "was flat" if abs(pct) < 0.5 else f"{'grew' if pct > 0 else 'fell'} {abs(pct):.1f}%"
+
+
 def _money(v: float) -> str:
     return f"{v:,.2f}" if abs(v) < 1e6 else f"{v / 1e6:,.2f}M"
 
@@ -291,19 +310,26 @@ def insights(d: Decision, metrics: dict) -> list[Insight]:
 
     q = m.get("qoq_last_complete")
     if q:
-        yoy = m.get("yoy")
-        direction = "grew" if q["pct"] >= 0 else "fell"
-        evidence = f"{q['from']} → {q['to']}: {q['pct']:+.1f}%" + (f"; year over year {yoy['pct']:+.1f}%" if yoy else "")
-        if yoy and (yoy["pct"] >= 0) == (q["pct"] >= 0):
+        yoy = m.get("yoy") if (m.get("yoy") or {}).get("period") == q["to"] else None   # never another period's YoY
+        change, adjusted = effective_change(q), calendar_adjusted(q)
+        headline = f"{main.capitalize()} {_moved(q['pct'])} in {q['to']}"
+        if adjusted and (abs(change - q["pct"]) >= 2 or (change >= 0) != (q["pct"] >= 0)):
+            headline += f"; per day it {_moved(change)}"
+        evidence = (f"{q['from']} → {q['to']}: {q['pct']:+.1f}%"
+                    + (f"; per day {change:+.1f}% ({q['days_from']} vs {q['days_to']} days with data)" if adjusted else "")
+                    + (f"; year over year {yoy['pct']:+.1f}%" if yoy else ""))
+        if yoy and (yoy["pct"] >= 0) == (change >= 0):
             implication = "The change also holds against the same period a year earlier, so it is not just seasonality."
         elif yoy:
             implication = "The year-over-year change points the other way: part of this move is likely seasonal."
         else:
             implication = "Without a year of history, seasonality can't be ruled out yet."
-        out.append(Insight("Growth", f"{main.capitalize()} {direction} {abs(q['pct']):.1f}% in {q['to']}", evidence, implication,
+        if adjusted:
+            implication += " The periods differ in length, so the per-day figure is the fair comparison."
+        out.append(Insight("Growth", headline, evidence, implication,
                            "Use the last complete period as the headline, and the year-over-year figure for plans."
-                           if q["pct"] >= 0 else "Find which part of the business fell (see the driver tree) before cutting costs.",
-                           1 if q["pct"] < -10 else 2, "measured", "kpi_by_period"))
+                           if change >= 0 else "Find which part of the business fell (see the driver tree) before cutting costs.",
+                           1 if change < -10 else 3 if abs(change) < 0.5 else 2, "measured", "kpi_by_period"))
 
     split = m.get("driver_split")
     if split and split.get("delta"):
@@ -458,23 +484,29 @@ def executive_summary(d: Decision, metrics: dict, title: str = "Business brief")
         return Summary(title, "all data", "", "Validation only: no KPI per period." if not d.kpi else "KPIs over the whole period.",
                        tiles, found, trust, coverage)
     last, prev = rows[-1], (rows[-2] if len(rows) >= 2 else None)
+    q = m.get("qoq_last_complete") if (m.get("qoq_last_complete") or {}).get("to") == last["period"] else None
+    per_day = calendar_adjusted(q)
     tiles = []
     for key, label, unit, good_dir in TILE_SPECS:
         if last.get(key) is None:
             continue
-        delta = None
+        delta, note = None, ""
         if prev and prev.get(key) is not None and unit == "pct":
             delta = last[key] - prev[key]                    # percentage points
         elif prev and prev.get(key) not in (None, 0):
             delta = 100 * (last[key] - prev[key]) / prev[key]
+            if per_day and key in FLOW_KPIS:                 # a total over periods of different length: compare per day
+                delta = 100 * ((last[key] / q["days_to"]) / (prev[key] / q["days_from"]) - 1)
+                note = "per day"
         good = None if delta is None or abs(delta) < 0.05 else (delta > 0) == (good_dir == "up")
-        tiles.append(Tile(key, label, float(last[key]), unit, delta, good))
+        tiles.append(Tile(key, label, float(last[key]), unit, delta, good, note))
     main = m.get("main_measure", "revenue")
-    q, yoy, split = m.get("qoq_last_complete"), m.get("yoy"), m.get("driver_split")
+    yoy, split = m.get("yoy"), m.get("driver_split")
+    yoy = yoy if (yoy or {}).get("period") == last["period"] else None       # never attach another period's YoY
     parts = [f"Revenue reached {_money(last.get(main, 0))} in {last['period']}" if main == "revenue" else
              f"{last.get(main, 0):,.0f} orders in {last['period']}"]
     if q:
-        parts.append(f"{q['pct']:+.1f}% on {q['from']}")
+        parts.append(f"{q['pct']:+.1f}% on {q['from']}" + (f", {q['per_day_pct']:+.1f}% per day" if per_day else ""))
     if yoy:
         parts.append(f"{yoy['pct']:+.1f}% year over year")
     headline = parts[0] + (" (" + ", ".join(parts[1:]) + ")" if len(parts) > 1 else "") + "."

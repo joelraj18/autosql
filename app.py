@@ -351,7 +351,8 @@ if run:
         st.caption(f"Latest complete period: **{summary.period}**" + (f", compared with {summary.compared_with}." if summary.compared_with else "."))
         for row in range(0, len(summary.tiles), 4):
             for col, t in zip(st.columns(4), summary.tiles[row:row + 4]):
-                delta = None if t.delta_pct is None else (f"{t.delta_pct:+.1f} pts" if t.unit == "pct" else f"{t.delta_pct:+.1f}%")
+                delta = None if t.delta_pct is None else ((f"{t.delta_pct:+.1f} pts" if t.unit == "pct" else f"{t.delta_pct:+.1f}%")
+                                                          + (f" {t.note}" if t.note else ""))
                 col.metric(t.label, tile_value(t) + (" days" if t.unit == "days" else ""), delta,
                            delta_color="inverse" if GOOD_DIRECTION[t.key] == "down" else "normal", border=True)
 

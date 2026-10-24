@@ -1293,10 +1293,14 @@ def _period_index(b: Builder) -> str:
     return f"{d.year_col} * {per_year} + {d.number_col}" if per_year else d.year_col
 
 
-def _period_ctes(b: Builder, D: Dialect, extra: list[str], name: str | None = None) -> str:
+def _period_ctes(b: Builder, D: Dialect, extra: list[str], name: str | None = None, flag_partial: bool = False) -> str:
     d = b.d
     name = name or {"quarter": "quarterly", "month": "monthly", "year": "yearly"}[d.period]
-    cols = list(d.period_cols) + [f"{_period_index(b)} AS period_index"] + extra
+    cols = list(d.period_cols) + [f"{_period_index(b)} AS period_index"]
+    if flag_partial:   # 1 for a period with too few days of data: never the base of a comparison
+        parts = [b.period_where(p) for p in d.partial_periods]
+        cols.append(f"CASE WHEN {' OR '.join(parts)} THEN 1 ELSE 0 END AS is_partial" if parts else "0 AS is_partial")
+    cols += extra
     return fill('''
         <<name>> AS (
             SELECT <<cols>>
@@ -1325,14 +1329,14 @@ def _kpi_by_period_cell(b: Builder) -> Cell:
             measures.append("AVG(rating_score) AS avg_rating")
         main = "revenue" if b.money else "orders"
         lags = [f"CASE WHEN p.period_index - LAG(p.period_index) OVER (ORDER BY p.period_index) = 1\n"
-                f"                THEN LAG(p.{main}) OVER (ORDER BY p.period_index)\n"
+                f"            AND LAG(p.is_partial) OVER (ORDER BY p.period_index) = 0\n"
+                f"           THEN LAG(p.{main}) OVER (ORDER BY p.period_index)\n"
                 f"           END AS prev_{main}"]
         if year_lag:
-            lags.append(f"y.{main} AS {main}_year_ago")
+            lags.append(f"CASE WHEN y.is_partial = 0 THEN y.{main} END AS {main}_year_ago")
         out = list(d.period_cols)
-        partial = b.partial_case()
-        if partial:
-            out.append(partial)
+        if d.partial_periods:
+            out.append("CASE WHEN is_partial = 1 THEN 'partial' ELSE 'complete' END AS period_status")
         if b.money:
             out += [f"{D.round('revenue', 2)} AS revenue", "orders", f"{D.ratio('revenue', 'orders', 2)} AS avg_order_value"]
         else:
@@ -1355,13 +1359,14 @@ def _kpi_by_period_cell(b: Builder) -> Cell:
             comments.append(f"-- {d.label(p)} is partial (data from {max(p.first_seen, p.start)} to {min(p.last_seen, p.end)}): "
                             "its change is missing days, not a trend.")
         comments.append(f"-- period_index = {_period_index(b)}: LAG() takes the previous *row*, so prev_{main} is kept only when that row is "
-                        f"the calendar neighbour (index - 1); after a missing {d.period} it is NULL, not a wrong comparison.")
+                        f"the calendar neighbour (index - 1) and complete (is_partial = 0); otherwise it is NULL, not a wrong comparison.")
         if year_lag:
-            comments.append(f"-- {main}_year_ago joins the same {d.period} a year earlier on period_index - {year_lag}, so a gap can't shift it.")
+            comments.append(f"-- {main}_year_ago joins the same {d.period} a year earlier on period_index - {year_lag}, so a gap can't shift it, "
+                            "and is NULL when that period is partial.")
         if d.lead:
             comments.append(f"-- The suspected driver ({d.lead_name}) sits next to the symptom ({main}).")
         return "\n".join(comments + [
-            "WITH " + _period_ctes(b, D, measures, name).strip() + ",",
+            "WITH " + _period_ctes(b, D, measures, name, flag_partial=True).strip() + ",",
             fill('''
                 with_prev AS (
                     SELECT p.*,
@@ -1412,13 +1417,20 @@ def _kpi_by_period_cell(b: Builder) -> Cell:
             axes[1][0].set_title(f"{driver.replace('_', ' ')} per {unit} (the suspected driver)", loc="left")
         axes[-1][0].tick_params(axis="x", labelrotation=45)
         plt.tight_layout(); plt.show()
+        days = <<days>>   # days with data in each period: months and quarters differ in length
         if len(complete) >= 2:
             prev, last = complete.iloc[-2], complete.iloc[-1]
             pct = 100 * (float(last[main]) - float(prev[main])) / float(prev[main]) if float(prev[main]) else float("nan")
-            metrics["qoq_last_complete"] = {"from": prev["period"], "to": last["period"], "pct": pct}
+            d1, d2 = days.get(prev["period"]), days.get(last["period"])
+            per_day = 100 * ((float(last[main]) / d2) / (float(prev[main]) / d1) - 1) if d1 and d2 and float(prev[main]) else pct
+            metrics["qoq_last_complete"] = {"from": prev["period"], "to": last["period"], "pct": pct, "per_day_pct": per_day,
+                                            "days_from": d1, "days_to": d2}
             show = (lambda v: f"{float(v):,.2f}") if main == "revenue" else (lambda v: f"{float(v):,.0f}")
             note(f"Last two complete {unit}s: {main} went from {show(prev[main])} ({prev['period']}) to {show(last[main])} "
                  f"({last['period']}), **{pct:+.1f}%**.")
+            if d1 and d2 and abs(d2 / d1 - 1) >= 0.03:
+                note(f"The two {unit}s differ in length ({d1} vs {d2} days with data), so compare per day: **{per_day:+.1f}%**. "
+                     f"A shorter {unit} looks like a fall in totals even when every day is the same.")
         else:
             note(f"Only {len(complete)} complete {unit} so far: nothing to compare yet. The table still gives the level per {unit}; "
                  f"period-over-period verdicts start once a second complete {unit} arrives.")
@@ -1426,20 +1438,25 @@ def _kpi_by_period_cell(b: Builder) -> Cell:
             part = per[status != "complete"].iloc[-1]
             idx = per.index.get_loc(part.name)
             if idx > 0 and not pd.isna(part[change]):
-                metrics["naive_change"] = {"period": part["period"], "pct": float(part[change])}
-                note(f"⚠️ A naive report would say {main} changed **{float(part[change]):+.1f}%** in {part['period']}, but that {unit} is partial: "
-                     "the drop is missing days, not a trend.")
+                naive = float(part[change])
+                metrics["naive_change"] = {"period": part["period"], "pct": naive}
+                note(f"⚠️ A naive report would say {main} changed **{naive:+.1f}%** in {part['period']}, but that {unit} is partial: "
+                     + ("the drop is missing days, not a trend." if naive < 0 else
+                        f"it is up even with days missing, so the full {unit} will be higher still; compare it only once it is complete."))
         yoy = f"{main}_yoy_pct"
-        if yoy in per and change != yoy:
-            rows = complete[complete[yoy].notna()]
-            if len(rows):
-                last = rows.iloc[-1]
+        if yoy in per and change != yoy and len(complete):
+            last = complete.iloc[-1]                  # only the latest complete period: an older one would be a different headline
+            if not pd.isna(last[yoy]):
                 metrics["yoy"] = {"period": last["period"], "pct": float(last[yoy])}
                 note(f"Year over year, {last['period']} is **{float(last[yoy]):+.1f}%** against the same {unit} a year earlier, which removes seasonality.")
+            elif len(per) > <<year_lag>>:
+                note(f"No year-over-year figure for {last['period']}: the same {unit} a year earlier is missing or partial, and comparing with "
+                     "a partial period would overstate the change.")
         if driver and driver in per and len(complete) >= 2:
             note(f"{driver}: {float(complete.iloc[-2][driver]):.1f} → {float(complete.iloc[-1][driver]):.1f} over the same two {unit}s.")
     ''', unit=repr(d.period), main=repr("revenue" if b.money else "orders"), step=step,
-        driver=repr(f"avg_{d.lead_name}" if d.lead else "avg_rating" if d.rating else None))
+        driver=repr(f"avg_{d.lead_name}" if d.lead else "avg_rating" if d.rating else None),
+        days=repr({d.label(p): p.covered for p in d.periods}), year_lag=year_lag or 0)
     return Cell("kpi_by_period", f"KPIs per {d.period}, with the driver next to the symptom", SECTIONS[4], story,
                 (stmt("kpi_by_period", f"KPIs per {d.period} with LAG()", sql),), check)
 
