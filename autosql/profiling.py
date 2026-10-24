@@ -165,17 +165,30 @@ def _norm(value: str, synonyms: bool) -> str:
 
 
 def match_scale(values: pd.Series) -> tuple[tuple[str, int], ...]:
-    """(label, score) pairs when the text values follow one known ordered scale, else ()."""
+    """(label, score) pairs when at least 95% of the text values follow one known ordered scale, else ().
+
+    Works on the distinct values with their counts, most frequent first, and gives up on a scale as soon as more than 5% of
+    the rows are outside it, so a million-row column costs no more than its few most common labels.
+    """
     labels = values.dropna().astype(str)
     if labels.empty:
         return ()
-    distinct = labels.unique()
+    counts = labels.value_counts()
+    budget = len(labels) * (1 - 0.95)               # rows allowed outside the scale
     for i, scale in enumerate(SCALES):
         index = {label: n + 1 for n, label in enumerate(scale)}
-        norm = lambda v: _norm(v, synonyms=i == 0)  # noqa: E731  ("ok", "average", "fair" stand for "okay" on the first scale only)
-        inside = labels.map(lambda v: norm(v) in index)
-        if inside.mean() >= 0.95 and len({norm(v) for v in distinct if norm(v) in index}) >= 3:
-            return tuple(sorted(((v, index[norm(v)]) for v in distinct if norm(v) in index), key=lambda p: (p[1], p[0])))
+        inside, outside = {}, 0
+        for value, n in counts.items():
+            key = _norm(value, synonyms=i == 0)    # "ok", "average", "fair" stand for "okay" on the first scale only
+            if key in index:
+                inside[value] = index[key]
+            else:
+                outside += n
+                if outside > budget:
+                    break
+        else:
+            if len({_norm(v, synonyms=i == 0) for v in inside}) >= 3:
+                return tuple(sorted(inside.items(), key=lambda p: (p[1], p[0])))
     return ()
 
 

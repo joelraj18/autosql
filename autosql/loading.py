@@ -37,15 +37,15 @@ DATE_FORMATS = (
     "%Y/%m/%d", "%m/%d/%Y", "%d/%m/%Y", "%m/%d/%Y %H:%M", "%d/%m/%Y %H:%M", "%m/%d/%Y %H:%M:%S",
     "%d/%m/%Y %H:%M:%S", "%d-%m-%Y", "%d.%m.%Y", "%d %b %Y", "%b %d, %Y", "%d-%b-%Y",
 )
-_INT = re.compile(r"^[+-]?\d+$")
-_NUM = re.compile(r"^[+-]?(\d+\.?\d*|\.\d+)([eE][+-]?\d+)?$")
-_LEADING_ZERO = re.compile(r"^[+-]?0\d")
-_DECIMAL_COMMA = re.compile(r"^[+-]?(\d{1,3}(\.\d{3})+|\d+)(,\d+)?$")  # 1.234,56 or 12,5 (European spreadsheets)
-_UNIT_PREFIX = re.compile(r"^([$\u20ac\u00a3\u00a5\u20b9]|[A-Z]{3}(?=[\s\d.,]))\s*")   # $ € £ ¥ ₹ or an ISO code (USD 12)
+_INT = re.compile(r"^[+-]?[0-9]+$")   # ASCII digits only: "١٢٣" is not a number SQL can read
+_NUM = re.compile(r"^[+-]?([0-9]+\.?[0-9]*|\.[0-9]+)([eE][+-]?[0-9]+)?$")
+_LEADING_ZERO = re.compile(r"^[+-]?0[0-9]")
+_DECIMAL_COMMA = re.compile(r"^[+-]?([0-9]{1,3}(\.[0-9]{3})+|[0-9]+)(,[0-9]+)?$")  # 1.234,56 or 12,5 (European spreadsheets)
+_UNIT_PREFIX = re.compile(r"^([$\u20ac\u00a3\u00a5\u20b9]|[A-Z]{3}(?=[\s0-9.,]))\s*")   # $ € £ ¥ ₹ or an ISO code (USD 12)
 _UNIT_SUFFIX = re.compile(r"\s*(%|[$\u20ac\u00a3\u00a5\u20b9]|[A-Z]{3})$")            # 12 %, 12€, 12 EUR
 # A number with optional thousands separators: '1,234.50' (or '1.234,50' / '1 234,50' in decimal-comma files)
-_GROUPED = {False: re.compile(r"^(?:(\d{1,3}(?:([,'])\d{3})(?:\2\d{3})*)|\d+)(\.\d+)?$|^\.\d+$"),
-            True: re.compile(r"^(?:(\d{1,3}(?:([. \u00a0\u202f])\d{3})(?:\2\d{3})*)|\d+)(,\d+)?$|^,\d+$")}
+_GROUPED = {False: re.compile(r"^(?:([0-9]{1,3}(?:([,'])[0-9]{3})(?:\2[0-9]{3})*)|[0-9]+)(\.[0-9]+)?$|^\.[0-9]+$"),
+            True: re.compile(r"^(?:([0-9]{1,3}(?:([. \u00a0\u202f])[0-9]{3})(?:\2[0-9]{3})*)|[0-9]+)(,[0-9]+)?$|^,[0-9]+$")}
 DELIMITERS = (",", ";", "\t", "|")
 
 
@@ -144,6 +144,18 @@ class Inferred:
     currency: pd.Series | None = None          # the currency of each row, when the column mixes currencies
 
 
+def _cast(series: pd.Series, dtype: str) -> pd.Series:
+    """Text to numbers. Integers use Arrow's C++ cast when it reads every value (exact, and fast); everything else goes through
+    pandas' to_numeric, whose float parsing is correctly rounded (Arrow's can differ in the 17th significant digit)."""
+    if dtype == "Int64":
+        try:
+            return series.astype(dtype)
+        except (ValueError, TypeError):
+            pass
+    numbers = pd.to_numeric(series.astype("object"), errors="coerce")
+    return numbers.astype("float64") if dtype == "float64" else numbers.astype(dtype)
+
+
 def _plain_number(s: str, decimal_comma: bool) -> str | None:
     """'1,234.50' → '1234.50' ('1.234,50' → '1234.50' in decimal-comma files); None if it is not a number."""
     m = _GROUPED[decimal_comma].match(s)
@@ -186,6 +198,7 @@ def _business_number(text: str, decimal_comma: bool) -> tuple[str | None, str | 
 
 def _type_numbers(strings: pd.Series, numbers: pd.Series) -> tuple[pd.Series, str]:
     """Integer, decimal or float, from the plain number strings (no blanks) and their float values (the whole column)."""
+    strings = pd.Series(np.asarray(strings.unique(), dtype=object))   # every test below only needs the distinct strings
     if strings.str.match(_INT).all() and strings.str.len().max() <= 18:
         return numbers.round().astype("Int64"), "integer"
     fraction = strings.str.extract(r"\.(\d+)$")[0].dropna()
@@ -200,9 +213,11 @@ def _as_business_numbers(text: pd.Series, values: pd.Series, decimal_comma: bool
     """Numbers written the business way, with placeholders read as empty, if at least 95% of the other values parse."""
     is_placeholder = values.str.lower().isin(PLACEHOLDERS)
     real = values[~is_placeholder]
-    if real.empty or real.str.match(_LEADING_ZERO).any():
+    if real.empty:
         return None
     counts = real.value_counts()
+    if pd.Series(counts.index, dtype=object).astype(str).str.match(_LEADING_ZERO).any():
+        return None
     parsed = {v: _business_number(v, decimal_comma) for v in counts.index}
     good = [v for v, (plain, _) in parsed.items() if plain is not None]
     if not good or counts[good].sum() / counts.sum() < NUMBER_PARSE_SHARE:
@@ -233,24 +248,27 @@ def infer_column(raw: pd.Series, decimal_comma: bool = False) -> Inferred:
         present = present[present != ""]
         if len(present) and present.str.contains(",").any() and present.str.match(_DECIMAL_COMMA).all():
             raw = raw.map(lambda v: v if not isinstance(v, str) else v.strip().replace(".", "").replace(",", "."))
-    values = raw.dropna().astype(str).str.strip()
-    values = values[values != ""]
-    blank = raw.isna() | (raw.astype(str).str.strip() == "")
+    if isinstance(raw.dtype, pd.StringDtype):        # Arrow-backed text from read_csv: strip in C++
+        stripped = raw.str.strip()
+    else:
+        stripped = raw.astype("object").where(raw.notna(), None).astype(str).str.strip().where(raw.notna(), None)
+    blank = stripped.isna() | (stripped == "")
+    present = stripped.where(~blank)
+    values = present.dropna()
     if values.empty:
         return Inferred(pd.Series([None] * len(raw), index=raw.index, dtype="object"), "text")
-    text = raw.where(~blank).astype("object").map(lambda v: v.strip() if isinstance(v, str) else v)
-    text = text.where(text.notna(), None)
+    distinct = pd.Series(np.asarray(values.unique(), dtype=object))   # pattern tests only need the distinct values
 
-    all_int = bool(values.str.match(_INT).all())
-    leading_zero = bool(values.str.match(_LEADING_ZERO).any())  # "05021" is a code, not the number 5021
-    if all_int and not leading_zero and values.str.len().max() <= 18:
-        return Inferred(pd.to_numeric(text, errors="coerce").astype("Int64"), "integer")
-    if not all_int and values.str.match(_NUM).all() and not leading_zero:
-        numbers = pd.to_numeric(text, errors="coerce").astype("float64")
-        typed, logical = _type_numbers(values, numbers)
+    all_int = bool(distinct.str.match(_INT).all())
+    leading_zero = bool(distinct.str.match(_LEADING_ZERO).any())  # "05021" is a code, not the number 5021
+    if all_int and not leading_zero and distinct.str.len().max() <= 18:
+        return Inferred(_cast(present, "Int64"), "integer")
+    if not all_int and distinct.str.match(_NUM).all() and not leading_zero:
+        typed, logical = _type_numbers(distinct, _cast(present, "float64"))
         return Inferred(typed, logical)
+    text = present.astype("object").where(present.notna(), None)
     lowered = values.str.lower()
-    if set(lowered.unique()) <= {"true", "false"}:
+    if set(distinct.str.lower()) <= {"true", "false"}:
         return Inferred(text.map(lambda v: None if v is None or pd.isna(v) else str(v).lower() == "true").astype("boolean"), "boolean")
     business = _as_business_numbers(text, values, decimal_comma)
     if business is not None:

@@ -154,3 +154,9 @@ def test_formatted_prices_and_percent_discounts_give_the_right_revenue():
     expected = 2 * 1000 * 0.995 + 20 + 1000 * 0.9 + 4 * 5.5
     assert abs(m["kpis"]["revenue"] - expected) < 0.01
     assert "1000.0" in clean_csv(catalog, "order_lines").decode()                # the export holds plain numbers
+
+
+def test_non_ascii_digits_are_not_silently_turned_into_empty_numbers():
+    # Python's \d matches "١٢٣", but SQL (and pandas' number parser) can't read it: keep the values as text, don't lose them
+    t = read_files([("u.csv", "id,qty\n1,١٢٣\n2,٤٥\n".encode())])["u"]
+    assert t.types["qty"] == "text" and t.df["qty"].tolist() == ["١٢٣", "٤٥"]
