@@ -64,3 +64,24 @@ def test_diagrams(nw_schema):
     assert dot.startswith("digraph") and '"order_details" -> "orders"' in dot
     mermaid = to_mermaid(profile, schema)
     assert "ORDERS ||--o{ ORDER_DETAILS" in mermaid
+
+
+def test_composite_keys_link_on_both_columns():
+    from autosql.dialect import Dialect
+    from test_codegen_runs import composite_key_frames, composite_key_with_orphans
+    catalog = catalog_from(composite_key_frames())
+    profile = profile_catalog(catalog)
+    schema = infer_schema(catalog, profile)
+    r = schema.accepted[0]
+    assert (r.key, r.composite, r.containment, r.cardinality) == ("sales.(region, store_no) → stores.(region, store_no)", True, 1.0, "1:N")
+    assert r.childless_parents == 1 and r.on(Dialect("postgres"), "s", "st") == "st.region = s.region AND st.store_no = s.store_no"
+    with pytest.raises(ValueError, match="use child_cols"):
+        r.child_col                                       # no code may join a composite link on one column by mistake
+    assert {(f.parent_table, f.column, f.via) for f in schema.fanouts} == {("stores", "monthly_rent", ("region", "store_no"))}
+    assert '"sales" -> "stores" [label="region, store_no (N:1)"]' in to_dot(profile, schema)
+    assert 'STORES ||--o{ SALES : "region, store_no"' in to_mermaid(profile, schema)
+    linked = link_roles(profile, schema)
+    assert linked.col("sales", "store_no").role == "identifier"          # a store number is not a measure to add up
+    loose = catalog_from(composite_key_with_orphans())
+    weak = infer_schema(loose, profile_catalog(loose))
+    assert weak.accepted == [] and weak.suggested[0].containment == 0.75 and "only 75% of its pairs" in weak.suggested[0].reason

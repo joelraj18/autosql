@@ -109,6 +109,25 @@ def impossible_values_frame():
     return df
 
 
+def composite_key_frames():
+    """Stores keyed by region + store number (no store_id), and sales that point at a store with both columns."""
+    rng = np.random.default_rng(15)
+    stores = pd.DataFrame([(r, n) for r in ("N", "S", "E", "W") for n in range(1, 11)], columns=["region", "store_no"])
+    stores["store_tier"] = rng.choice(["flagship", "standard", "outlet"], len(stores))
+    stores["monthly_rent"] = rng.uniform(2000, 9000, len(stores)).round(2)        # stored once per store: a fan-out trap
+    picked = stores.iloc[rng.integers(0, len(stores) - 1, 600)]                      # the last store (W, 10) never sells
+    sales = pd.DataFrame({"sale_id": range(1, 601), "region": picked["region"].to_numpy(), "store_no": picked["store_no"].to_numpy(),
+                          "customer_id": rng.integers(1, 90, 600), "amount": rng.gamma(2, 30, 600).round(2),
+                          "sale_date": (pd.Timestamp("2022-01-01") + pd.to_timedelta(np.sort(rng.integers(0, 540, 600)), unit="D")).strftime("%Y-%m-%d")})
+    return {"stores": stores, "sales": sales}
+
+
+def composite_key_with_orphans():
+    """The sweep's stores / sales pair: a quarter of the (region, store_no) pairs have no store, so the link is only suggested."""
+    from datasets import sweep_cases
+    return sweep_cases()["composite_fk"]
+
+
 def business_rules_frames():
     """A shop whose extract holds rows that are not sales: cancelled, returned, test and EUR orders, and returned lines."""
     frames = shop_frames(seed=12)
@@ -152,6 +171,8 @@ CASES = {
     "ten_weeks": ({"orders": ten_weeks_frame}, "auto", ()),
     "northwind_double_loaded": (northwind_double_loaded, "auto", ()),
     "impossible_values": ({"orders": impossible_values_frame}, "auto", ()),
+    "composite_fk": (composite_key_frames, "auto", ()),
+    "composite_fk_ticked": (composite_key_with_orphans, "auto", ("sales.(region, store_no) → stores.(region, store_no)",)),
     "business_rules": (business_rules_frames, "auto", ()),
     "signed_amounts": ({"orders": signed_amounts_frame}, "auto", ()),
 }

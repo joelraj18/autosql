@@ -600,7 +600,7 @@ def executive_summary(d: Decision, metrics: dict, title: str = "Business brief")
 # ═════════════════════════════════════════════════════════════════════════
 def data_dictionary(d: Decision) -> pd.DataFrame:
     p, s = d.profile, d.schema
-    fks = {(r.child_table, r.child_col): r for r in s.relationships}
+    fks = {(r.child_table, c): (r, p) for r in s.relationships for c, p in zip(r.child_cols, r.parent_cols)}
     uses: dict[tuple[str, str], list[str]] = {}
 
     def use(t: str | None, c: str | None, what: str) -> None:
@@ -630,9 +630,10 @@ def data_dictionary(d: Decision) -> pd.DataFrame:
             key = []
             if c.name in t.primary_key:
                 key.append("PK" if t.key_status in ("single", "composite") else "PK (has duplicates)")
-            r = fks.get((t.name, c.name))
+            r, pcol = fks.get((t.name, c.name), (None, None))
             if r:
-                key.append(("FK → " if r.accepted else "FK? → ") + f"{r.parent_table}.{r.parent_col}")
+                key.append(("FK → " if r.accepted else "FK? → ") + f"{r.parent_table}.{pcol}" + (" (with " + ", ".join(
+                    x for x in r.child_cols if x != c.name) + ")" if r.composite else ""))
             rows.append({
                 "table": t.name, "column": c.name, "original name": c.original, "type": c.logical_type,
                 "role": c.role + (f" ({c.kind})" if c.kind else ""), "key": ", ".join(key),

@@ -353,10 +353,7 @@ class Builder:
                 if child is None:
                     break
                 pa = self.alias(r.parent_table)
-                cond = f"{D.col(pa, r.parent_col)} = {D.col(child, r.child_col)}"
-                if r.type_mismatch:
-                    cond = f"{D.as_text(D.col(pa, r.parent_col))} = {D.as_text(D.col(child, r.child_col))}"
-                clauses.append(f"LEFT   JOIN {self.src(D, r.parent_table)} {pa} ON {cond}")
+                clauses.append(f"LEFT   JOIN {self.src(D, r.parent_table)} {pa} ON {r.on(D, child, pa)}")
                 where[r.parent_table] = pa
         return clauses, where
 
@@ -383,7 +380,7 @@ def _topological(d: Decision) -> list[str]:
 def _ddl(b: Builder, D: Dialect, table: str) -> str:
     d, t = b.d, b.p[table]
     money = {"price", "amount", "charge"}
-    fk_cols = {r.child_col: r for r in d.schema.accepted if r.child_table == table}
+    fk_cols = {c: (r, p) for r in d.schema.accepted if r.child_table == table for c, p in zip(r.child_cols, r.parent_cols)}
     lines = []
     width = max(len(D.ident(c.name)) for c in t.columns)
     for c in t.columns:
@@ -392,18 +389,18 @@ def _ddl(b: Builder, D: Dialect, table: str) -> str:
         typ = D.type_name(c.logical_type, max_len=c.max_len, scale=2 if c.kind in money else 4, big=big, key=key)
         if key and c.logical_type == "integer" and not big:
             # a foreign key must have exactly the type of the key it points at
-            r = fk_cols.get(c.name)
+            r, pcol = fk_cols.get(c.name, (None, None))
             if r is not None:
-                pc = b.p.col(r.parent_table, r.parent_col)
+                pc = b.p.col(r.parent_table, pcol)
                 if pc.logical_type == "integer" and pc.maximum is not None and abs(float(pc.maximum)) > 2_147_483_647:
                     typ = D.type_name("integer", big=True)
         if c.logical_type == "text" and key:
-            r = fk_cols.get(c.name)
-            length = max(c.max_len, b.p.col(r.parent_table, r.parent_col).max_len if r else 0)
+            r, pcol = fk_cols.get(c.name, (None, None))
+            length = max(c.max_len, b.p.col(r.parent_table, pcol).max_len if r else 0)
             typ = D.type_name("text", max_len=length, key=True)
         if c.name in t.primary_key and c.logical_type == "text":
-            longest = max([c.max_len] + [b.p.col(r.child_table, r.child_col).max_len for r in d.schema.accepted
-                                         if r.parent_table == table and r.parent_col == c.name])
+            longest = max([c.max_len] + [b.p.col(r.child_table, cc).max_len for r in d.schema.accepted if r.parent_table == table
+                                         for cc, pc in zip(r.child_cols, r.parent_cols) if pc == c.name])
             typ = D.type_name("text", max_len=longest, key=True)
         null = " NOT NULL" if c.n_null == 0 and c.n_rows else ""
         lines.append(f"    {D.ident(c.name).ljust(width)}  {typ}{null}")
@@ -415,11 +412,12 @@ def _ddl(b: Builder, D: Dialect, table: str) -> str:
         if r.child_table != table:
             continue
         parent = b.p[r.parent_table]
-        if parent.key_status not in ("single",) or r.orphan_rows:
+        if parent.key_status not in ("single", "composite") or r.orphan_rows:
             why = "has orphan rows (see the orphans step)" if r.orphan_rows else f"{r.parent_table} has no unique key"
-            lines.append(f"    -- FOREIGN KEY ({r.child_col}) REFERENCES {r.parent_table} ({r.parent_col}): not declared, {why}")
+            lines.append(f"    -- FOREIGN KEY ({', '.join(r.child_cols)}) REFERENCES {r.parent_table} ({', '.join(r.parent_cols)}): not declared, {why}")
             continue
-        lines.append(f"    FOREIGN KEY ({D.ident(r.child_col)}) REFERENCES {D.ident(r.parent_table)} ({D.ident(r.parent_col)})")
+        lines.append(f"    FOREIGN KEY ({', '.join(D.ident(c) for c in r.child_cols)}) REFERENCES {D.ident(r.parent_table)} "
+                     f"({', '.join(D.ident(c) for c in r.parent_cols)})")
     body = ",\n".join(l for l in lines if not l.lstrip().startswith("--"))
     comments = "\n".join(l for l in lines if l.lstrip().startswith("--"))
     return f"CREATE TABLE {D.ident(table)} (\n{body}{chr(10) + comments if comments else ''}\n)"
@@ -506,8 +504,7 @@ def _cardinality_cell(b: Builder) -> Cell:
     def per_parent(D: Dialect) -> str:
         parts = []
         for r in rels:
-            pk, fk = D.ident(r.parent_col), D.ident(r.child_col)
-            cond = f"c.{fk} = p.{pk}" if not r.type_mismatch else f"{D.as_text('c.' + fk)} = {D.as_text('p.' + pk)}"
+            pk = ", ".join(f"p.{D.ident(c)}" for c in r.parent_cols)
             parts.append(fill('''
                 SELECT <<label>> AS relationship,
                        COUNT(*) AS parents,
@@ -515,17 +512,17 @@ def _cardinality_cell(b: Builder) -> Cell:
                        MIN(children) AS min_children,
                        <<avg>> AS avg_children,
                        MAX(children) AS max_children
-                FROM   (SELECT p.<<pk>>, COUNT(c.<<fk>>) AS children
+                FROM   (SELECT <<pk>>, COUNT(c.<<fk>>) AS children
                         FROM   <<parent>> p
                         LEFT   JOIN <<child>> c ON <<cond>>
-                        GROUP  BY p.<<pk>>) per_parent''',
-                label=D.literal(f"{r.child_table}.{r.child_col} -> {r.parent_table}"), avg=D.round("AVG(children)", 2),
-                pk=pk, fk=fk, parent=D.ident(r.parent_table), child=D.ident(r.child_table), cond=cond))
+                        GROUP  BY <<pk>>) per_parent''',
+                label=D.literal(f"{r.child_table}.{r.child_label} -> {r.parent_table}"), avg=D.round("AVG(children)", 2),
+                pk=pk, fk=D.ident(r.child_cols[0]), parent=D.ident(r.parent_table), child=D.ident(r.child_table), cond=r.on(D, "c", "p")))
         return union_all(parts)
 
     statements = [stmt("cardinality", "Child rows per parent row, for every relationship", per_parent)]
     for i, f in enumerate(d.fanouts[:2]):
-        r = next(x for x in d.schema.accepted if x.parent_table == f.parent_table and x.child_table == f.child_table and x.child_col == f.via)
+        r = next(x for x in d.schema.accepted if x.parent_table == f.parent_table and x.child_table == f.child_table and x.child_cols == f.via)
 
         def fan(D: Dialect, f=f, r=r) -> str:
             pa, ca = b.alias(f.parent_table), b.alias(f.child_table)
@@ -536,9 +533,9 @@ def _cardinality_cell(b: Builder) -> Cell:
                 SELECT (SELECT SUM(<<colq>>) FROM <<parentq>>) AS total_counted_once,
                        (SELECT SUM(<<pa>>.<<colq>>)
                         FROM   <<parentq>> <<pa>>
-                        JOIN   <<childq>> <<ca>> ON <<ca>>.<<fk>> = <<pa>>.<<pk>>) AS total_after_join''',
+                        JOIN   <<childq>> <<ca>> ON <<cond>>) AS total_after_join''',
                         col=f.column, parent=f.parent_table, child=f.child_table, colq=D.ident(f.column), parentq=D.ident(f.parent_table),
-                        childq=D.ident(f.child_table), pa=pa, ca=ca, fk=D.ident(r.child_col), pk=D.ident(r.parent_col))
+                        childq=D.ident(f.child_table), pa=pa, ca=ca, cond=r.on(D, ca, pa))
         statements.append(stmt(f"fanout_{i + 1}", f"Fan-out demo: `{f.parent_table}.{f.column}` before and after joining `{f.child_table}`", fan))
     first = d.fanouts[0] if d.fanouts else None
     story = Step(
@@ -754,7 +751,7 @@ def _null_watch(b: Builder) -> list[tuple[str, str, str]]:
         out.append((d.rating.table, d.rating.name, "those orders have no rating, so the average rating describes only rated orders."))
     for r in d.schema.accepted:
         if r.child_nulls:
-            out.append((r.child_table, r.child_col, f"those rows have no `{r.parent_table}` row, so an INNER JOIN would drop them."))
+            out += [(r.child_table, c, f"those rows have no `{r.parent_table}` row, so an INNER JOIN would drop them.") for c in r.child_cols]
     return out
 
 
@@ -876,14 +873,16 @@ def _orphans_cell(b: Builder) -> Cell:
     rels = [r for r in d.schema.accepted if r.kind != "self"] + [r for r in d.schema.accepted if r.kind == "self"]
 
     def cond(D: Dialect, r: Relationship) -> str:
-        if r.type_mismatch:
-            return f"{D.as_text('p.' + D.ident(r.parent_col))} = {D.as_text('c.' + D.ident(r.child_col))}"
-        return f"p.{D.ident(r.parent_col)} = c.{D.ident(r.child_col)}"
+        return r.on(D, "c", "p")
+
+    def has_key(D: Dialect, r: Relationship) -> str:
+        """The child row has a value in every key column: a row with an empty key points at nothing, it is not an orphan."""
+        return "\n  AND  ".join(f"c.{D.ident(c)} IS NOT NULL" for c in r.child_cols)
 
     def summary(D: Dialect) -> str:
         parts = []
         for r in rels:
-            label = D.literal(f"{r.child_table}.{r.child_col} -> {r.parent_table}")
+            label = D.literal(f"{r.child_table}.{r.child_label} -> {r.parent_table}")
             parts.append(fill('''
                 SELECT <<label>> AS relationship,
                        'child rows with no parent' AS problem,
@@ -891,8 +890,8 @@ def _orphans_cell(b: Builder) -> Cell:
                 FROM   <<child>> c
                 LEFT   JOIN <<parent>> p ON <<cond>>
                 WHERE  p.<<pk>> IS NULL
-                  AND  c.<<fk>> IS NOT NULL''', label=label, child=D.ident(r.child_table), parent=D.ident(r.parent_table),
-                                               cond=cond(D, r), pk=D.ident(r.parent_col), fk=D.ident(r.child_col)))
+                  AND  <<has_key>>''', label=label, child=D.ident(r.child_table), parent=D.ident(r.parent_table),
+                                        cond=cond(D, r), pk=D.ident(r.parent_cols[0]), has_key=has_key(D, r)))
             parts.append(fill('''
                 SELECT <<label>>,
                        'parents with no child rows (information)',
@@ -907,15 +906,16 @@ def _orphans_cell(b: Builder) -> Cell:
     if worst is not None and worst.orphan_rows:
         def missing(D: Dialect, r=worst) -> str:
             return fill('''
-                SELECT DISTINCT c.<<fk>> AS missing_<<name>>
+                SELECT DISTINCT <<cols>>
                 FROM   <<child>> c
                 LEFT   JOIN <<parent>> p ON <<cond>>
                 WHERE  p.<<pk>> IS NULL
-                  AND  c.<<fk>> IS NOT NULL
-                ORDER  BY 1
-                LIMIT  <<n>>''', fk=D.ident(r.child_col), name=r.child_col, child=D.ident(r.child_table), parent=D.ident(r.parent_table),
-                                 cond=cond(D, r), pk=D.ident(r.parent_col), n=DISPLAY_LIMIT)
-        statements.append(stmt("orphan_examples", f"Values of `{worst.child_table}.{worst.child_col}` with no `{worst.parent_table}` row", missing))
+                  AND  <<has_key>>
+                ORDER  BY <<by>>
+                LIMIT  <<n>>''', cols=", ".join(f"c.{D.ident(c)} AS {D.ident('missing_' + c)}" for c in r.child_cols),
+                                 by=", ".join(str(i + 1) for i in range(len(r.child_cols))), child=D.ident(r.child_table),
+                                 parent=D.ident(r.parent_table), cond=cond(D, r), pk=D.ident(r.parent_cols[0]), has_key=has_key(D, r), n=DISPLAY_LIMIT)
+        statements.append(stmt("orphan_examples", f"Values of `{worst.child_table}.{worst.child_label}` with no `{worst.parent_table}` row", missing))
     lonely = next((r for r in rels if r.childless_parents and r.kind != "self" and r.childless_parents < r.child_distinct + r.childless_parents), None)
     if lonely is not None:
         label = None
@@ -923,7 +923,7 @@ def _orphans_cell(b: Builder) -> Cell:
         label = label_column(b.p[lonely.parent_table])
 
         def childless(D: Dialect, r=lonely, label=label) -> str:
-            cols = f"p.{D.ident(r.parent_col)}" + (f", p.{D.ident(label)}" if label and label != r.parent_col else "")
+            cols = ", ".join(f"p.{D.ident(c)}" for c in r.parent_cols) + (f", p.{D.ident(label)}" if label and label not in r.parent_cols else "")
             return fill('''
                 SELECT <<cols>>
                 FROM   <<parent>> p
@@ -952,6 +952,9 @@ def _orphans_cell(b: Builder) -> Cell:
             note(f"`{r.relationship}`: **{int(r.row_count):,} orphan row(s)**. They are kept (LEFT JOIN, labelled 'Unknown') so that no revenue is lost.")
         for r in lonely.itertuples():
             note(f"`{r.relationship}`: {int(r.row_count):,} parent row(s) have no child rows.")
+        if "orphan_examples" in outputs:
+            ex = outputs["orphan_examples"]
+            note("Values with no parent row, for example: " + ", ".join(" / ".join(str(v) for v in row) for row in ex.head(5).itertuples(index=False)) + ".")
         if "childless_examples" in outputs:
             ex = outputs["childless_examples"]
             note("For example: " + ", ".join(" / ".join(str(v) for v in row) for row in ex.head(5).itertuples(index=False)) + ".")
@@ -1229,7 +1232,7 @@ def _reconcile_cell(b: Builder) -> Cell:
                                         x=D.round(f"SUM({g} - {b.line_revenue(D, fa)})", 2), t=b.src(D, fact), fa=fa)
         statements.append(stmt("gross_net", "Gross vs net revenue (the formula is net of discount)", gross))
     if rev.kind == "price_qty" and not rev.price_rel:
-        list_price = next(((r, c) for r in d.schema.parents(fact) for c in b.p[r.parent_table].by_role("measure")
+        list_price = next(((r, c) for r in d.schema.parents(fact) if not r.composite for c in b.p[r.parent_table].by_role("measure")
                            if c.kind == "price" and "price" in c.name), None)
         if list_price:
             r, c = list_price
@@ -2298,9 +2301,9 @@ def _explain_cell(b: Builder) -> Cell:
             return D.explain(fill('''
                 SELECT COUNT(*)
                 FROM   <<child>> c
-                LEFT   JOIN <<parent>> p ON p.<<pk>> = c.<<fk>>
-                WHERE  p.<<pk>> IS NULL''', child=D.ident(r.child_table), parent=D.ident(r.parent_table), pk=D.ident(r.parent_col),
-                                            fk=D.ident(r.child_col)))
+                LEFT   JOIN <<parent>> p ON <<cond>>
+                WHERE  p.<<pk>> IS NULL''', child=D.ident(r.child_table), parent=D.ident(r.parent_table), pk=D.ident(r.parent_cols[0]),
+                                            cond=r.on(D, "c", "p")))
         what = f"the orphan check on `{r.child_table}`"
     else:
         t = next(iter(b.p.tables))

@@ -368,11 +368,12 @@ def decide(catalog: Catalog, profile: CatalogProfile, schema: Schema, mode: str 
         else:
             d.steps.append(story("fk_low", **values))
         if r.type_mismatch:
-            d.steps.append(story("type_mismatch", rel=r.describe(), child_type=profile.col(r.child_table, r.child_col).logical_type,
-                                 parent_type=profile.col(r.parent_table, r.parent_col).logical_type))
+            d.steps.append(story("type_mismatch", rel=r.describe(),
+                                 child_type=" + ".join(profile.col(r.child_table, c).logical_type for c in r.child_cols),
+                                 parent_type=" + ".join(profile.col(r.parent_table, c).logical_type for c in r.parent_cols)))
     d.fanouts = list(schema.fanouts)
     for f in d.fanouts[:2]:
-        rel = next(r for r in schema.accepted if r.parent_table == f.parent_table and r.child_table == f.child_table and r.child_col == f.via)
+        rel = next(r for r in schema.accepted if r.parent_table == f.parent_table and r.child_table == f.child_table and r.child_cols == f.via)
         d.steps.append(story("fanout", parent=f.parent_table, col=f.column, child=f.child_table, max_children=rel.max_children,
                              joined=f.joined_total, total=f.total, factor=f.factor))
 
@@ -415,7 +416,7 @@ def decide(catalog: Catalog, profile: CatalogProfile, schema: Schema, mode: str 
     if order_key:
         col = ft.col(order_key)
         d.line_level = col.n_unique < ft.n_rows
-        header = next((r for r in schema.parents(fact) if r.child_col == order_key), None)
+        header = next((r for r in schema.parents(fact) if r.child_cols == (order_key,)), None)
         if header:
             d.header, d.header_rel = header.parent_table, header
     if d.line_level:
@@ -508,7 +509,7 @@ def _choose_order_key(profile: CatalogProfile, ft: TableProfile, schema: Schema)
     if ft.key_status in ("single", "intended") and len(ft.primary_key) == 1:
         return ft.primary_key[0]
     for k in ft.primary_key:  # composite key: the part that points at a dated parent table is the order
-        rel = next((r for r in schema.parents(ft.name) if r.child_col == k), None)
+        rel = next((r for r in schema.parents(ft.name) if r.child_cols == (k,)), None)
         if rel and profile[rel.parent_table].by_role("datetime"):
             return k
     return None
@@ -539,7 +540,7 @@ def _choose_revenue(d: Decision, ft: TableProfile, picks: dict) -> Revenue | Ste
     if "amount" in measures:
         return Revenue("amount", ft.name, amount=measures["amount"].name)
     if "quantity" in measures:  # price may live in a parent (a product list price)
-        for r in d.schema.parents(ft.name):
+        for r in (x for x in d.schema.parents(ft.name) if not x.composite):
             parent = d.profile[r.parent_table]
             price = next((c for c in parent.by_role("measure") if c.kind == "price"), None)
             if price:
@@ -739,7 +740,7 @@ def _choose_customer(d: Decision, picks: dict, order_tables: list[str]) -> None:
                 d.customer = (table, col.name)
                 break
     if d.customer:
-        d.customer_rel = next((r for r in d.schema.parents(d.customer[0]) if r.child_col == d.customer[1]), None)
+        d.customer_rel = next((r for r in d.schema.parents(d.customer[0]) if r.child_cols == (d.customer[1],)), None)
         d.steps.append(story("customer_key", table=d.customer[0], col=d.customer[1]))
     else:
         d.steps.append(story("no_customer"))
@@ -846,14 +847,16 @@ def _used_tables(d: Decision) -> set[str]:
 
 
 def _choose_null_trap(d: Decision) -> None:
-    rels = [r for r in d.schema.accepted if r.child_nulls]
+    single = [r for r in d.schema.accepted if not r.composite]        # NOT IN (subquery) compares one column
+    rels = [r for r in single if r.child_nulls]
     rels.sort(key=lambda r: (r.kind != "self", r.child_table))
     if rels:
         d.null_trap["not_in"] = (rels[0], False)
-    elif d.schema.accepted:
-        d.null_trap["not_in"] = (d.schema.accepted[0], True)  # no NULL in the data: inject one to show the trap
+    elif single:
+        d.null_trap["not_in"] = (single[0], True)  # no NULL in the data: inject one to show the trap
+    links = {c for r in d.schema.relationships for c in r.child_cols}
     nullable = [(c.table, c.name) for t in d.profile.tables.values() for c in t.columns
-                if c.n_null and c.role in ("datetime", "measure", "rating") and c.name not in {r.child_col for r in d.schema.relationships}]
+                if c.n_null and c.role in ("datetime", "measure", "rating") and c.name not in links]
     if d.lead and d.profile.col(d.lead[0], d.lead[2]).n_null:
         d.null_trap["count"] = (d.lead[0], d.lead[2])   # e.g. shipped_date: AVG(ship days) silently skips unshipped orders
     elif d.rating and d.rating.n_null:
@@ -864,10 +867,9 @@ def _choose_null_trap(d: Decision) -> None:
 
 def _choose_indexes(d: Decision) -> None:
     for r in d.schema.accepted:
-        if r.kind != "self" and (r.child_col,) != d.profile[r.child_table].primary_key[:1]:
-            d.indexes.append((r.child_table, (r.child_col,), "foreign key"))
-        elif r.kind == "self":
-            d.indexes.append((r.child_table, (r.child_col,), "foreign key"))
+        # the primary key's index already serves a foreign key that is its leading column(s)
+        if r.kind == "self" or r.child_cols != d.profile[r.child_table].primary_key[:len(r.child_cols)]:
+            d.indexes.append((r.child_table, r.child_cols, "foreign key"))
     if d.date:
         d.indexes.append((d.date[0], (d.date[1],), "date filter"))
 

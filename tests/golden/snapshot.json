@@ -663,6 +663,456 @@
    }
   }
  },
+ "case:composite_fk": {
+  "fanouts": [
+   [
+    "stores",
+    "monthly_rent",
+    "sales",
+    224005.6,
+    3265994.83
+   ]
+  ],
+  "relationships": [
+   [
+    "sales.(region, store_no) → stores.(region, store_no)",
+    "name",
+    true,
+    1.0,
+    0,
+    0,
+    33,
+    15.0,
+    1,
+    false
+   ]
+  ],
+  "skipped": [],
+  "tables": {
+   "sales": {
+    "ambiguous_dates": [],
+    "cleaned": {},
+    "column_map": {
+     "amount": "amount",
+     "customer_id": "customer_id",
+     "region": "region",
+     "sale_date": "sale_date",
+     "sale_id": "sale_id",
+     "store_no": "store_no"
+    },
+    "columns": {
+     "amount": [
+      "measure",
+      "amount",
+      0,
+      580,
+      "",
+      [],
+      0.0,
+      0,
+      "np.float64(0.44)",
+      "np.float64(235.91)",
+      "a money amount"
+     ],
+     "customer_id": [
+      "identifier",
+      "",
+      0,
+      89,
+      "",
+      [],
+      0.0,
+      0,
+      "1",
+      "89",
+      "named like an ID or code"
+     ],
+     "region": [
+      "dimension",
+      "",
+      0,
+      4,
+      "",
+      [],
+      1.0,
+      1,
+      "",
+      "",
+      "4 labels to group by"
+     ],
+     "sale_date": [
+      "datetime",
+      "",
+      0,
+      355,
+      "",
+      [],
+      0.0,
+      0,
+      "2022-01-02T00:00:00",
+      "2023-06-24T00:00:00",
+      "dates"
+     ],
+     "sale_id": [
+      "identifier",
+      "",
+      0,
+      600,
+      "",
+      [],
+      0.0,
+      0,
+      "1",
+      "600",
+      "named like an ID or code"
+     ],
+     "store_no": [
+      "identifier",
+      "",
+      0,
+      10,
+      "",
+      [],
+      0.0,
+      0,
+      "1",
+      "10",
+      "named like an ID or code"
+     ]
+    },
+    "date_formats": {
+     "sale_date": "%Y-%m-%d"
+    },
+    "duplicate_keys": 0,
+    "exact_duplicates": 0,
+    "extra_rows": 0,
+    "grain": "one row per `sale_id`",
+    "hashes": {
+     "amount": "22d40b41cf83c133",
+     "customer_id": "255ed60685dbd699",
+     "region": "2113b1d01662e69a",
+     "sale_date": "aedcbc7ef12104c5",
+     "sale_id": "1c5f11cf6922070f",
+     "store_no": "16ae7644252e8810"
+    },
+    "key_status": "single",
+    "placeholders": {},
+    "primary_key": [
+     "sale_id"
+    ],
+    "rows": 600,
+    "source": "sales.csv",
+    "types": {
+     "amount": "decimal",
+     "customer_id": "integer",
+     "region": "text",
+     "sale_date": "date",
+     "sale_id": "integer",
+     "store_no": "integer"
+    },
+    "units": {},
+    "unparsed_dates": {},
+    "unparsed_numbers": {}
+   },
+   "stores": {
+    "ambiguous_dates": [],
+    "cleaned": {},
+    "column_map": {
+     "monthly_rent": "monthly_rent",
+     "region": "region",
+     "store_no": "store_no",
+     "store_tier": "store_tier"
+    },
+    "columns": {
+     "monthly_rent": [
+      "measure",
+      "other",
+      0,
+      40,
+      "",
+      [],
+      0.0,
+      0,
+      "np.float64(2181.77)",
+      "np.float64(8833.42)",
+      "numbers"
+     ],
+     "region": [
+      "dimension",
+      "",
+      0,
+      4,
+      "",
+      [],
+      1.0,
+      1,
+      "",
+      "",
+      "4 labels to group by"
+     ],
+     "store_no": [
+      "identifier",
+      "",
+      0,
+      10,
+      "",
+      [],
+      0.0,
+      0,
+      "1",
+      "10",
+      "named like an ID or code"
+     ],
+     "store_tier": [
+      "dimension",
+      "",
+      0,
+      3,
+      "",
+      [],
+      7.2,
+      8,
+      "",
+      "",
+      "3 labels to group by"
+     ]
+    },
+    "date_formats": {},
+    "duplicate_keys": 0,
+    "exact_duplicates": 0,
+    "extra_rows": 0,
+    "grain": "one row per `region` × `store_no`",
+    "hashes": {
+     "monthly_rent": "2b8282299039dbd2",
+     "region": "b09243630490ddde",
+     "store_no": "c3ff86eaac9865f8",
+     "store_tier": "96e1d7e5f8bffb45"
+    },
+    "key_status": "composite",
+    "placeholders": {},
+    "primary_key": [
+     "region",
+     "store_no"
+    ],
+    "rows": 40,
+    "source": "stores.csv",
+    "types": {
+     "monthly_rent": "decimal",
+     "region": "text",
+     "store_no": "integer",
+     "store_tier": "text"
+    },
+    "units": {},
+    "unparsed_dates": {},
+    "unparsed_numbers": {}
+   }
+  }
+ },
+ "case:composite_fk_ticked": {
+  "fanouts": [],
+  "relationships": [
+   [
+    "sales.(region, store_no) → stores.(region, store_no)",
+    "name",
+    false,
+    0.75,
+    12,
+    0,
+    19,
+    16.0,
+    0,
+    false
+   ]
+  ],
+  "skipped": [],
+  "tables": {
+   "sales": {
+    "ambiguous_dates": [],
+    "cleaned": {},
+    "column_map": {
+     "amount": "amount",
+     "region": "region",
+     "sale_date": "sale_date",
+     "sale_id": "sale_id",
+     "store_no": "store_no"
+    },
+    "columns": {
+     "amount": [
+      "measure",
+      "amount",
+      0,
+      60,
+      "",
+      [],
+      0.0,
+      0,
+      "np.float64(1.0415955756180164)",
+      "np.float64(4.9644758665903685)",
+      "a money amount"
+     ],
+     "region": [
+      "dimension",
+      "",
+      0,
+      2,
+      "",
+      [],
+      1.0,
+      1,
+      "",
+      "",
+      "2 labels to group by"
+     ],
+     "sale_date": [
+      "datetime",
+      "",
+      0,
+      60,
+      "",
+      [],
+      0.0,
+      0,
+      "2021-01-01T00:00:00",
+      "2021-03-01T00:00:00",
+      "dates"
+     ],
+     "sale_id": [
+      "identifier",
+      "",
+      0,
+      60,
+      "",
+      [],
+      0.0,
+      0,
+      "0",
+      "59",
+      "named like an ID or code"
+     ],
+     "store_no": [
+      "identifier",
+      "",
+      0,
+      2,
+      "",
+      [],
+      0.0,
+      0,
+      "1",
+      "2",
+      "named like an ID or code"
+     ]
+    },
+    "date_formats": {
+     "sale_date": "%Y-%m-%d"
+    },
+    "duplicate_keys": 0,
+    "exact_duplicates": 0,
+    "extra_rows": 0,
+    "grain": "one row per `sale_id`",
+    "hashes": {
+     "amount": "daad21a18f30fd76",
+     "region": "deb9bac9cc604fe3",
+     "sale_date": "6f905b06a41a1000",
+     "sale_id": "850ec36bad248d23",
+     "store_no": "914de58dafdd7d8f"
+    },
+    "key_status": "single",
+    "placeholders": {},
+    "primary_key": [
+     "sale_id"
+    ],
+    "rows": 60,
+    "source": "sales.csv",
+    "types": {
+     "amount": "float",
+     "region": "text",
+     "sale_date": "date",
+     "sale_id": "integer",
+     "store_no": "integer"
+    },
+    "units": {},
+    "unparsed_dates": {},
+    "unparsed_numbers": {}
+   },
+   "stores": {
+    "ambiguous_dates": [],
+    "cleaned": {},
+    "column_map": {
+     "manager": "manager",
+     "region": "region",
+     "store_no": "store_no"
+    },
+    "columns": {
+     "manager": [
+      "dimension",
+      "",
+      0,
+      3,
+      "",
+      [],
+      1.0,
+      1,
+      "",
+      "",
+      "3 labels to group by"
+     ],
+     "region": [
+      "dimension",
+      "",
+      0,
+      2,
+      "",
+      [],
+      1.0,
+      1,
+      "",
+      "",
+      "2 labels to group by"
+     ],
+     "store_no": [
+      "identifier",
+      "",
+      0,
+      2,
+      "",
+      [],
+      0.0,
+      0,
+      "1",
+      "2",
+      "named like an ID or code"
+     ]
+    },
+    "date_formats": {},
+    "duplicate_keys": 0,
+    "exact_duplicates": 0,
+    "extra_rows": 0,
+    "grain": "one row per `region` × `store_no`",
+    "hashes": {
+     "manager": "ea7fb08b7a2dc461",
+     "region": "5487fd10bedb0b30",
+     "store_no": "8500f9d95894dcdb"
+    },
+    "key_status": "composite",
+    "placeholders": {},
+    "primary_key": [
+     "region",
+     "store_no"
+    ],
+    "rows": 3,
+    "source": "stores.csv",
+    "types": {
+     "manager": "text",
+     "region": "text",
+     "store_no": "integer"
+    },
+    "units": {},
+    "unparsed_dates": {},
+    "unparsed_numbers": {}
+   }
+  }
+ },
  "case:denormalised_lines": {
   "fanouts": [],
   "relationships": [],
@@ -6441,7 +6891,20 @@
  },
  "sweep:composite_fk": {
   "fanouts": [],
-  "relationships": [],
+  "relationships": [
+   [
+    "sales.(region, store_no) → stores.(region, store_no)",
+    "name",
+    false,
+    0.75,
+    12,
+    0,
+    19,
+    16.0,
+    0,
+    false
+   ]
+  ],
   "skipped": [],
   "tables": {
    "sales": {

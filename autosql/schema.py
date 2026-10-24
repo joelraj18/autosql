@@ -9,6 +9,9 @@ Three ways a foreign key is recognised, strongest first:
   value  no name match, but every value exists in another table's key AND (the two sets of values are equal OR
          the names share a stem, e.g. ``ship_via`` / ``shippers``).                       -> only *suggested*
 
+A table keyed by two columns (``stores``: ``region`` + ``store_no``) is linked to by any other table that holds both columns
+under the same names, when >= 95% of its distinct pairs exist there (a composite foreign key, joined on both columns).
+
 Matching values alone is weak evidence: the codes {1, 2, 3} are also valid employee, category and product IDs.
 So a value-only match is offered for the user to confirm, never used silently.
 """
@@ -33,9 +36,9 @@ SELF_NAME = re.compile(r"^(reports_to|manager(_id)?|parent(_id)?|parent_\w+_id|s
 @dataclass(frozen=True)
 class Relationship:
     child_table: str
-    child_col: str
+    child_cols: tuple[str, ...]   # one column, or two for a composite key (in the parent key's order)
     parent_table: str
-    parent_col: str
+    parent_cols: tuple[str, ...]
     kind: str                     # name | self | value
     containment: float            # share of distinct child values found in the parent key
     child_distinct: int
@@ -50,15 +53,48 @@ class Relationship:
     reason: str = ""
 
     @property
+    def composite(self) -> bool:
+        return len(self.child_cols) > 1
+
+    @property
+    def child_col(self) -> str:
+        """The column of a single-column link. A composite link raises, so that no code joins it on one column by mistake."""
+        if self.composite:
+            raise ValueError(f"{self.key} joins on {len(self.child_cols)} columns: use child_cols")
+        return self.child_cols[0]
+
+    @property
+    def parent_col(self) -> str:
+        if self.composite:
+            raise ValueError(f"{self.key} joins on {len(self.parent_cols)} columns: use parent_cols")
+        return self.parent_cols[0]
+
+    @property
+    def child_label(self) -> str:
+        return self.child_cols[0] if len(self.child_cols) == 1 else "(" + ", ".join(self.child_cols) + ")"
+
+    @property
+    def parent_label(self) -> str:
+        return self.parent_cols[0] if len(self.parent_cols) == 1 else "(" + ", ".join(self.parent_cols) + ")"
+
+    @property
     def key(self) -> str:
-        return f"{self.child_table}.{self.child_col} → {self.parent_table}.{self.parent_col}"
+        return f"{self.child_table}.{self.child_label} → {self.parent_table}.{self.parent_label}"
 
     @property
     def cardinality(self) -> str:
         return "1:1" if self.max_children <= 1 else "1:N"
 
     def describe(self) -> str:
-        return f"`{self.child_table}.{self.child_col}` → `{self.parent_table}.{self.parent_col}`"
+        return f"`{self.child_table}.{self.child_label}` → `{self.parent_table}.{self.parent_label}`"
+
+    def on(self, D, child: str, parent: str) -> str:
+        """The join condition: one equality per column pair (parent.a = child.a AND …), compared as text when the types differ."""
+        out = []
+        for c, p in zip(self.child_cols, self.parent_cols):
+            a, b = D.col(parent, p), D.col(child, c)
+            out.append(f"{D.as_text(a)} = {D.as_text(b)}" if self.type_mismatch else f"{a} = {b}")
+        return " AND ".join(out)
 
 
 @dataclass(frozen=True)
@@ -67,7 +103,7 @@ class FanOut:
     parent_table: str
     column: str
     child_table: str
-    via: str                      # child column used for the join
+    via: tuple[str, ...]          # child column(s) used for the join
     total: float                  # SUM(column) on the parent table
     joined_total: float           # SUM(column) after joining the child rows
 
@@ -109,7 +145,7 @@ class Schema:
             current = queue.popleft()
             if len(paths[current]) >= max_hops:
                 continue
-            for r in sorted(self.parents(current), key=lambda r: (r.parent_table, r.child_col)):
+            for r in sorted(self.parents(current), key=lambda r: (r.parent_table, r.child_cols)):
                 if r.parent_table not in paths:
                     paths[r.parent_table] = paths[current] + [r]
                     queue.append(r.parent_table)
@@ -122,6 +158,15 @@ def _as_text(s: pd.Series) -> pd.Series:
     if pd.api.types.is_float_dtype(out):
         out = out[out == out.round()].astype("int64")
     return out.astype(str).str.strip()
+
+
+def _keys(df: pd.DataFrame, cols: tuple[str, ...]) -> pd.Series:
+    """Each row's key as one comparable text value: a single column as trimmed text, two joined with a separator.
+    Rows where a key column is empty are left out (an empty key points at nothing)."""
+    if len(cols) == 1:
+        return _as_text(df[cols[0]])
+    first, *rest = [_as_text(df[c]) for c in cols]
+    return first.str.cat(rest, sep="\x1f", join="inner")
 
 
 def _stem(column: str, table: str) -> int:
@@ -138,10 +183,10 @@ def _stem(column: str, table: str) -> int:
     return best
 
 
-def _measure(catalog: Catalog, child: str, col: str, parent: str, pcol: str, kind: str, child_prof: ColumnProfile,
-             parent_prof: ColumnProfile, accepted: bool, reason: str) -> Relationship:
-    child_values = _as_text(catalog[child].df[col])
-    parent_keys = set(_as_text(catalog[parent].df[pcol]))
+def _measure(catalog: Catalog, child: str, cols: tuple[str, ...], parent: str, pcols: tuple[str, ...], kind: str,
+             child_profs: tuple[ColumnProfile, ...], parent_profs: tuple[ColumnProfile, ...], accepted: bool, reason: str) -> Relationship:
+    child_values = _keys(catalog[child].df, cols)
+    parent_keys = set(_keys(catalog[parent].df, pcols))
     distinct = set(child_values)
     found = len(distinct & parent_keys)
     containment = found / len(distinct) if distinct else 0.0
@@ -149,20 +194,20 @@ def _measure(catalog: Catalog, child: str, col: str, parent: str, pcol: str, kin
     counts = child_values.value_counts()
     per_parent = counts.reindex(sorted(parent_keys), fill_value=0)
     return Relationship(
-        child, col, parent, pcol, kind, containment, len(distinct), len(distinct) - found, int(orphan_mask.sum()),
-        int(catalog[child].df[col].isna().sum()), int(per_parent.max()) if len(per_parent) else 0,
+        child, cols, parent, pcols, kind, containment, len(distinct), len(distinct) - found, int(orphan_mask.sum()),
+        int(catalog[child].df[list(cols)].isna().any(axis=1).sum()), int(per_parent.max()) if len(per_parent) else 0,
         float(per_parent.mean()) if len(per_parent) else 0.0, int((per_parent == 0).sum()),
-        type_mismatch=child_prof.logical_type != parent_prof.logical_type, accepted=accepted, reason=reason,
+        type_mismatch=any(c.logical_type != p.logical_type for c, p in zip(child_profs, parent_profs)), accepted=accepted, reason=reason,
     )
 
 
 def link_roles(profile: CatalogProfile, schema: Schema) -> CatalogProfile:
     """A foreign-key column is an identifier, whatever its name: `orders.ship_via` (1, 2, 3) and `employees.reports_to` look like
     numbers to add up until the schema shows they point at a key. Profiling runs before the schema, so the role is fixed here."""
-    links = {(r.child_table, r.child_col): r for r in schema.relationships}
+    links = {(r.child_table, c): (r.parent_table, p) for r in schema.relationships for c, p in zip(r.child_cols, r.parent_cols)}
     tables = {}
     for name, t in profile.tables.items():
-        cols = tuple(replace(c, role="identifier", kind="", reason=f"links to {links[name, c.name].parent_table}.{links[name, c.name].parent_col}")
+        cols = tuple(replace(c, role="identifier", kind="", reason="links to {}.{}".format(*links[name, c.name]))
                      if (name, c.name) in links and c.role == "measure" else c for c in t.columns)
         tables[name] = replace(t, columns=cols)
     return CatalogProfile(tables)
@@ -190,7 +235,7 @@ def infer_schema(catalog: Catalog, profile: CatalogProfile) -> Schema:
                     # both tables are keyed by this column (1:1): the bigger table is the parent
                     if (profile[parent].n_rows, parent) < (child.n_rows, child.name):
                         continue
-                rel = _measure(catalog, child.name, c.name, parent, pcol, "name", c, profile.col(parent, pcol), True, "")
+                rel = _measure(catalog, child.name, (c.name,), parent, (pcol,), "name", (c,), (profile.col(parent, pcol),), True, "")
                 if rel.containment >= NAME_CONTAINMENT:
                     rel = replace(rel, reason=f"named like the key of `{parent}`, and {rel.containment:.0%} of its values exist there")
                 else:
@@ -204,7 +249,7 @@ def infer_schema(catalog: Catalog, profile: CatalogProfile) -> Schema:
         table = profile[name]
         for c in table.columns:
             if SELF_NAME.match(c.name) and c.logical_type == table.col(pcol).logical_type and (name, c.name) not in linked:
-                rel = _measure(catalog, name, c.name, name, pcol, "self", c, table.col(pcol), True, "")
+                rel = _measure(catalog, name, (c.name,), name, (pcol,), "self", (c,), (table.col(pcol),), True, "")
                 if rel.containment == 1.0 and rel.child_distinct:
                     found.append(replace(rel, reason=f"named like a link to another row of `{name}` (an org chart / tree), and every value is a `{pcol}`"))
                     linked.add((name, c.name))
@@ -235,9 +280,27 @@ def infer_schema(catalog: Catalog, profile: CatalogProfile) -> Schema:
                 equal, stem, _, parent, pcol = max(options)
                 why = ("its values are exactly the keys of" if equal else "every value is a key of") + f" `{parent}`"
                 why += f" and the names share '{c.name.split('_')[0][:stem]}'" if stem >= MIN_STEM else ""
-                rel = _measure(catalog, child.name, c.name, parent, pcol, "value", c, profile.col(parent, pcol), False,
+                rel = _measure(catalog, child.name, (c.name,), parent, (pcol,), "value", (c,), (profile.col(parent, pcol),), False,
                                why + ". Matching values alone can be a coincidence, so tick it to use it.")
                 found.append(rel)
+
+    # 4) composite keys: a table keyed by two columns, and another table that holds both under the same names
+    pairs = {t.name: t.primary_key for t in profile.tables.values() if len(t.primary_key) == 2 and t.key_status == "composite"}
+    for child in profile.tables.values():
+        for parent, pk in pairs.items():
+            if parent == child.name or not all(child.has(k) for k in pk) or set(child.primary_key) == set(pk):
+                continue   # keyed by the same pair: the same grain (1:1), not a link
+            ccols, pcols = tuple(child.col(k) for k in pk), tuple(profile.col(parent, k) for k in pk)
+            if any(c.logical_type not in ("integer", "text") or c.role in ("text", "constant") for c in ccols):
+                continue
+            rel = _measure(catalog, child.name, pk, parent, pk, "name", ccols, pcols, True, "")
+            both = " + ".join(f"`{k}`" for k in pk)
+            if rel.containment >= NAME_CONTAINMENT:
+                rel = replace(rel, reason=f"holds both columns of the key of `{parent}` ({both}), and {rel.containment:.0%} of its pairs exist there")
+            else:
+                rel = replace(rel, accepted=False, reason=f"holds both columns of the key of `{parent}` ({both}), but only {rel.containment:.0%} "
+                              "of its pairs exist there, so it is not used until you confirm it")
+            found.append(rel)
 
     schema = Schema(tuple(found))
     return Schema(schema.relationships, tuple(find_fanouts(catalog, profile, schema)))
@@ -246,7 +309,7 @@ def infer_schema(catalog: Catalog, profile: CatalogProfile) -> Schema:
 def find_fanouts(catalog: Catalog, profile: CatalogProfile, schema: Schema) -> list[FanOut]:
     """Measures of a parent table that a 1:N join would repeat, with the totals before and after the join."""
     out = []
-    link_cols = {(r.child_table, r.child_col) for r in schema.relationships}
+    link_cols = {(r.child_table, c) for r in schema.relationships for c in r.child_cols}
     for r in schema.accepted:
         if r.kind == "self" or r.cardinality != "1:N":
             continue
@@ -254,14 +317,14 @@ def find_fanouts(catalog: Catalog, profile: CatalogProfile, schema: Schema) -> l
         for c in parent.by_role("measure"):
             if c.kind == "price" or (parent.name, c.name) in link_cols:
                 continue  # a list price is not summed; a link column is not a measure
-            values = catalog[r.parent_table].df[[r.parent_col, c.name]].dropna(subset=[c.name])
-            per_parent = _as_text(catalog[r.child_table].df[r.child_col]).value_counts()
-            keys = _as_text(values[r.parent_col])
+            values = catalog[r.parent_table].df[list(r.parent_cols) + [c.name]].dropna(subset=[c.name])
+            per_parent = _keys(catalog[r.child_table].df, r.child_cols).value_counts()
+            keys = _keys(values, r.parent_cols).reindex(values.index)     # a parent row with an empty key has no children
             weights = keys.map(per_parent).fillna(0).to_numpy()
             total = float(values[c.name].sum())
             joined = float((values[c.name].to_numpy(dtype=float) * weights).sum())
             if total and abs(joined - total) > 1e-9 * abs(total):
-                out.append((c.kind, FanOut(r.parent_table, c.name, r.child_table, r.child_col, total, joined)))
+                out.append((c.kind, FanOut(r.parent_table, c.name, r.child_table, r.child_cols, total, joined)))
     order = {"amount": 0, "charge": 1, "quantity": 2}
     return [f for _, f in sorted(out, key=lambda kf: (order.get(kf[0], 3), -kf[1].factor))]
 
@@ -269,7 +332,7 @@ def find_fanouts(catalog: Catalog, profile: CatalogProfile, schema: Schema) -> l
 # ── Diagrams ─────────────────────────────────────────────────────────────
 def to_dot(profile: CatalogProfile, schema: Schema, max_columns: int = 8) -> str:
     """Graphviz DOT for st.graphviz_chart: one box per table (🔑 key, → foreign key), one arrow per accepted link."""
-    fk_cols = {(r.child_table, r.child_col) for r in schema.accepted}
+    fk_cols = {(r.child_table, c) for r in schema.accepted for c in r.child_cols}
     lines = ["digraph schema {", "  rankdir=LR; bgcolor=transparent;",
              '  node [shape=plain, fontname="Helvetica", fontsize=11];', '  edge [color="#86868b", fontname="Helvetica", fontsize=9];']
     for t in profile.tables.values():
@@ -285,7 +348,7 @@ def to_dot(profile: CatalogProfile, schema: Schema, max_columns: int = 8) -> str
         lines.append(f'  "{t.name}" [label=<<table border="0" cellborder="1" cellspacing="0" cellpadding="4">{"".join(rows)}</table>>];')
     for r in schema.accepted:
         style = ", style=dashed" if r.kind == "value" else ""
-        lines.append(f'  "{r.child_table}" -> "{r.parent_table}" [label="{html.escape(r.child_col)} (N:1)"{style}];')
+        lines.append(f'  "{r.child_table}" -> "{r.parent_table}" [label="{html.escape(", ".join(r.child_cols))} (N:1)"{style}];')
     lines.append("}")
     return "\n".join(lines)
 
@@ -298,11 +361,11 @@ def to_mermaid(profile: CatalogProfile, schema: Schema) -> str:
     lines = ["erDiagram"]
     for r in schema.accepted:
         one = "|o" if r.child_nulls else "||"  # a child row with an empty key has no parent
-        lines.append(f"    {entity(r.parent_table)} {one}--o{{ {entity(r.child_table)} : \"{r.child_col}\"")
+        lines.append(f"    {entity(r.parent_table)} {one}--o{{ {entity(r.child_table)} : \"{', '.join(r.child_cols)}\"")
     for t in profile.tables.values():
         lines.append(f"    {entity(t.name)} {{")
         for c in t.columns[:12]:
-            tag = " PK" if c.name in t.primary_key else " FK" if any(r.child_table == t.name and r.child_col == c.name for r in schema.accepted) else ""
+            tag = " PK" if c.name in t.primary_key else " FK" if any(r.child_table == t.name and c.name in r.child_cols for r in schema.accepted) else ""
             lines.append(f"        {c.logical_type} {re.sub(r'[^0-9A-Za-z_]', '_', c.name)}{tag}")
         lines.append("    }")
     return "\n".join(lines)
