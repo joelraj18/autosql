@@ -144,9 +144,12 @@ class TrustScore:
     score: float
     grade: str            # High | Good, with caveats | Use with care
     dimensions: tuple[TrustDimension, ...]
+    caps: tuple[str, ...] = ()   # why the grade is lower than the score alone would give
 
 
 TRUST_WEIGHTS = {"Completeness": 0.25, "Uniqueness": 0.20, "Integrity": 0.20, "Validity": 0.15, "Consistency": 0.20}
+TRUST_GRADES = ("Use with care", "Good, with caveats", "High")
+TRUST_FLOOR = 60      # one dimension below this caps the grade: an average must not hide a failure
 
 
 def _used_columns(d: Decision) -> list[tuple[str, str]]:
@@ -243,7 +246,17 @@ def trust_score(d: Decision, metrics: dict) -> TrustScore:
     total_weight = sum(x.weight for x in dims)
     overall = sum(x.score * x.weight for x in dims) / total_weight if total_weight else 0.0
     grade = "High" if overall >= 90 else "Good, with caveats" if overall >= 75 else "Use with care"
-    return TrustScore(overall, grade, tuple(dims))
+    # Caps: a weighted average can hide a failure (totals that don't reconcile still averaged 88, "Good, with caveats")
+    caps = []
+    weak = [x.name for x in dims if x.score < TRUST_FLOOR]
+    for cap, why in (("Use with care", "the totals don't reconcile, so no KPI can be relied on until they do"
+                      if metrics.get("reconciled") is False else None),
+                     ("Good, with caveats", f"{' and '.join(weak)} {'scores' if len(weak) == 1 else 'score'} below {TRUST_FLOOR}"
+                      if weak else None)):
+        if why and TRUST_GRADES.index(grade) > TRUST_GRADES.index(cap):
+            caps.append(f"capped at '{cap}': {why}")
+            grade = cap
+    return TrustScore(overall, grade, tuple(dims), tuple(caps))
 
 
 # ═════════════════════════════════════════════════════════════════════════

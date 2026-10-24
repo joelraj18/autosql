@@ -45,6 +45,19 @@ def test_northwind_trust_and_insights(nw):
     assert all(i.source in ORDER for i in found)
 
 
+def test_an_average_never_hides_a_failure(nw):
+    d, m = nw
+    broken = trust_score(d, {**m, "reconciled": False})
+    assert broken.score >= 75 and broken.grade == "Use with care"     # the score alone said 'Good, with caveats'
+    assert broken.caps == ("capped at 'Use with care': the totals don't reconcile, so no KPI can be relied on until they do",)
+    weak = trust_score(d, {**m, "impossible_values": 50, "negative_lead": 40})   # Validity 40, every other check 100
+    assert weak.score >= 90 and weak.grade == "Good, with caveats" and weak.caps == ("capped at 'Good, with caveats': Validity scores below 60",)
+    assert trust_score(d, m).caps == ()
+    from autosql.report import to_business_brief
+    brief = to_business_brief(d, {**m, "reconciled": False})
+    assert "Capped at &#x27;Use with care&#x27;: the totals don&#x27;t reconcile" in brief and 'class="st crit"' in brief
+
+
 def test_new_wheels_shape_flags_shipping_for_a_controlled_test(new_wheels_catalog):
     d = analyse(new_wheels_catalog)
     _, m = run_cells(build_cells(d), new_wheels_catalog)

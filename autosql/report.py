@@ -422,6 +422,7 @@ svg path[data-tip]:focus-visible, svg circle[data-tip]:focus-visible { stroke: v
 .tag { font: 500 0.72rem/1 var(--sans); padding: 4px 7px; border-radius: 999px; background: var(--chip); color: var(--ink-2); }
 .tag.mono { font-family: var(--mono); }
 .meters { display: grid; gap: 12px; }
+.cap { display: flex; gap: 8px; align-items: baseline; margin: 0; font-weight: 600; }
 .meter { display: grid; grid-template-columns: 11rem minmax(0, 1fr) 2.6rem; gap: 4px 12px; align-items: center; }
 .meter .name { display: flex; gap: 8px; align-items: baseline; font-weight: 600; }
 .meter .w { color: var(--muted); font-weight: 400; font-size: 0.78rem; }
@@ -506,6 +507,9 @@ def _status(score: float) -> tuple[str, str, str]:
     return ("good", "✓", "Good") if score >= 90 else ("warn", "!", "Check") if score >= 75 else ("crit", "✕", "Fix")
 
 
+GRADE_STATUS = {"High": ("good", "✓"), "Good, with caveats": ("warn", "!"), "Use with care": ("crit", "✕")}
+
+
 def _score(v: float) -> str:
     """Scores are floored, so 99.9 never shows as a perfect 100."""
     return str(math.floor(v + 1e-9))
@@ -564,7 +568,7 @@ def to_business_brief(d: Decision, metrics: dict, *, title: str = "Business brie
     # ── Header: what, when, the one-sentence answer ──────────────────────
     meta = " · ".join(x for x in (f"Data {s.coverage}" if s.coverage else "", f"latest complete {d.period} {s.period}" if rows else "",
                                   f"source: {source}") if x)
-    stamp_cls, stamp_icon, _ = _status(s.trust.score)
+    stamp_cls, stamp_icon = GRADE_STATUS[s.trust.grade]          # the grade, after its caps, not the bare score
     sections.append(f'<header class="top"><p class="eyebrow">Business brief · AutoSQL Explorer</p><h1>{esc(title)}</h1>'
                     f'<p class="meta">{esc(meta)}</p><p class="lede">{esc(s.headline)}</p>'
                     f'<p class="stamp"><span class="st {stamp_cls}" aria-hidden="true">{stamp_icon}</span>Data trust {_score(s.trust.score)}/100: '
@@ -708,9 +712,11 @@ def to_business_brief(d: Decision, metrics: dict, *, title: str = "Business brie
                       f'<div class="track" role="img" aria-label="{esc(x.name)}: {_score(x.score)} of 100, {word}">'
                       f'<div class="fill {cls}" style="width:{max(2.0, x.score):.1f}%"></div></div>'
                       f'<span class="num">{_score(x.score)}</span><span class="detail">{esc(x.detail)}</span></div>')
+    capped = "".join(f'<p class="cap"><span class="st crit" aria-hidden="true">✕</span>{esc(c[0].upper() + c[1:])}.</p>' for c in t.caps)
     sections.append(_section("trust", "Data quality", "Can we trust these numbers?",
                              "Five checks run in SQL before any KPI is computed. The score is their weighted average: 90+ is high, 75–90 usable "
-                             "with the caveats listed, below 75 use with care.", f'<div class="card meters">{"".join(meters)}</div>'))
+                             "with the caveats listed, below 75 use with care. A failed reconciliation, or any check below 60, caps the grade "
+                             "whatever the average.", f'<div class="card meters">{capped}{"".join(meters)}</div>'))
     nav.append(("trust", "Trust"))
 
     # ── Method ───────────────────────────────────────────────────────────

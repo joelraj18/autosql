@@ -374,6 +374,8 @@ if run:
 
     t = summary.trust
     st.markdown(f"#### Can we trust these numbers? Trust score **{math.floor(t.score)}/100: {t.grade}**")
+    for cap in t.caps:
+        st.error(f"The grade is {cap}.", icon="✕")
     for dim in t.dimensions:
         st.progress(min(1.0, dim.score / 100), text=f"**{dim.name}** {math.floor(dim.score)}/100: {dim.detail}")
 
