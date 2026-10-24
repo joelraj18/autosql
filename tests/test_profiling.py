@@ -40,6 +40,13 @@ def test_rating_scale_date_parts_and_duplicates():
     assert t.key_status == "intended" and t.primary_key == ("id",) and t.duplicate_keys == 1
 
 
+def test_a_table_loaded_twice_keeps_its_single_key():
+    df = pd.DataFrame({"order_id": range(1, 41), "customer_id": [1, 2, 3, 4] * 10, "amount": [9.5] * 40})
+    t = profile_catalog(catalog_from({"orders": pd.concat([df, df.iloc[:3]])}))["orders"]
+    assert t.key_status == "intended" and t.primary_key == ("order_id",)    # not order_id + customer_id: lines must still link
+    assert t.exact_duplicates == 3 and "3 exact copies" in t.key_reason
+
+
 def test_no_key_table():
     df = pd.DataFrame({"a": ["x", "x", "y"], "b": [1, 1, 2]})
     t = profile_catalog(catalog_from({"t": df}))["t"]

@@ -191,6 +191,11 @@ if mode == "manual":
     chosen_dims = st.multiselect("Slice by (up to 3)", dims, default=default_dims, max_selections=3, key=f"dims-{key}-{fact}")
     if chosen_dims:
         chosen_picks["dimensions"] = tuple(chosen_dims)
+    if auto.row_filters and auto.fact == fact:
+        rules = "; ".join(f.describe() for f in auto.row_filters)
+        if not st.checkbox("Leave out rows that are not sales", value=True, key=f"rules-{key}-{fact}",
+                           help=f"Cancelled, refunded or test orders and amounts in a second currency: {rules}."):
+            chosen_picks["row_filters"] = False
     picks = tuple(sorted(chosen_picks.items()))
 
 decision = get_decision(key, mode, picks, ticked, catalog, profile, schema)

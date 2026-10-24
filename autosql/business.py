@@ -229,6 +229,8 @@ def trust_score(d: Decision, metrics: dict) -> TrustScore:
         detail += f"; no rows at all in {', '.join(gaps[:4])}"
     if partial:
         detail += f"; {', '.join(partial)} is partial (labelled, not penalised)"
+    if metrics.get("left_out"):
+        detail += f"; {metrics['left_out']['rows']:,} row(s) that are not sales are left out by the business rules (not penalised)"
     dims.append(TrustDimension("Consistency", max(score, 0.0), TRUST_WEIGHTS["Consistency"], detail + "."))
 
     total_weight = sum(x.weight for x in dims)
@@ -444,6 +446,25 @@ def insights(d: Decision, metrics: dict) -> list[Insight]:
         out.append(Insight("Data", f"{n:,} records point at nothing", ", ".join(f"{k}: {v:,}" for k, v in m["orphans"].items()),
                            "They are kept as 'Unknown' in the analysis, but reports by customer or product will miss them.",
                            "Fix the missing parent records at the source.", 2, "measured", "orphans"))
+    lo = m.get("left_out")
+    if lo and d.row_filters:
+        sales = [f for f in d.row_filters if f.kind != "currency"]
+        money = [f for f in d.row_filters if f.kind == "currency"]
+        what = "revenue" if main == "revenue" else "the order count"
+        evidence = "; ".join(f"{f.shown()} in `{f.table}.{f.column}`: {f.rows:,} of {f.total:,} rows" for f in d.row_filters)
+        together = _money(lo["value"]) if main == "revenue" else f"{lo['value']:,.0f} orders"
+        evidence += f"; together {together} ({lo['share_pct']:.1f}% of {what} in the raw table)"
+        out.append(Insight(
+            "Operations" if sales else "Data",
+            f"{lo['share_pct']:.0f}% of the raw {what} is not sales" if lo["share_pct"] >= 1 else "A few rows are not sales",
+            evidence,
+            (f"A report that sums the raw table overstates {what} by {lo['share_pct']:.1f}%. " if lo["share_pct"] >= 1 else "")
+            + ("Cancellations, returns and failed payments are also lost sales and a cost worth tracking." if sales else
+               "Amounts in another currency can't be added up without exchange rates."),
+            ("Track the cancellation and return rate as its own KPI, and find out why orders are cancelled or returned."
+             if sales else "") + (" " if sales and money else "")
+            + (f"Convert the other currencies to {money[0].kept} before loading them, so that they count." if money else ""),
+            2 if lo["share_pct"] >= 5 else 3, "measured", "reconcile"))
     if m.get("reconciled") is False:
         out.append(Insight("Data", "Totals don't reconcile", "SQL vs uploaded file", "KPIs may be inflated or incomplete.",
                            "Resolve duplicates and orphans before sharing any number.", 1, "measured", "reconcile"))

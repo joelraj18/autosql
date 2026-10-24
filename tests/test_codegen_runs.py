@@ -8,7 +8,7 @@ import sqlglot
 
 from autosql import build_cells, run_cells
 from autosql.dialect import BANNED, RESERVED
-from conftest import analyse, catalog_from, new_wheels_frame, shop_frames
+from conftest import NORTHWIND, analyse, catalog_from, new_wheels_frame, shop_frames
 
 
 def timestamps_frame():
@@ -88,6 +88,39 @@ def double_loaded_frames():
     return frames
 
 
+def northwind_double_loaded():
+    """Northwind with four order lines loaded twice: the views, gross vs net and the discount bands must all drop the copies."""
+    frames = {p.stem: pd.read_csv(p) for p in sorted(NORTHWIND.glob("*.csv"))}
+    frames["Order Details"] = pd.concat([frames["Order Details"], frames["Order Details"].iloc[:4]])
+    return frames
+
+
+def business_rules_frames():
+    """A shop whose extract holds rows that are not sales: cancelled, returned, test and EUR orders, and returned lines."""
+    frames = shop_frames(seed=12)
+    rng = np.random.default_rng(12)
+    orders, items = frames["orders"], frames["order_items"]
+    orders["Status"] = rng.choice(["Delivered", "Shipped", "Cancelled", "Returned", "Partially refunded"], len(orders), p=[.6, .2, .08, .07, .05])
+    orders.loc[orders.index[::40], "Status"] = None                       # no status: kept (NULL is never left out)
+    orders["Currency"] = rng.choice(["USD", "EUR"], len(orders), p=[.9, .1])
+    orders["is_test"] = rng.choice(["N", "Y"], len(orders), p=[.97, .03])
+    items["line_status"] = rng.choice(["ok", "returned"], len(items), p=[.95, .05])
+    frames["orders"] = pd.concat([orders, orders.iloc[[0, 1]]])          # loaded twice: de-duplicated before the rules apply
+    return frames
+
+
+def signed_amounts_frame():
+    """One table of orders whose amounts carry their currency sign ($ or €), with refunded, chargeback and test orders."""
+    rng = np.random.default_rng(13)
+    n = 300
+    amount, euro = rng.uniform(5, 500, n).round(2), rng.random(n) < 0.15
+    return pd.DataFrame({"order_id": range(1, n + 1), "customer_id": rng.integers(1, 50, n),
+                         "order_date": pd.date_range("2022-01-01", periods=n, freq="2D").strftime("%Y-%m-%d"),
+                         "amount": [f"€{a:,.2f}" if e else f"${a:,.2f}" for a, e in zip(amount, euro)],
+                         "order_status": rng.choice(["completed", "refunded", "chargeback"], n, p=[.9, .07, .03]),
+                         "is_test": rng.choice(["false", "true"], n, p=[.95, .05])})
+
+
 CASES = {
     "northwind": (None, "auto", ()),
     "northwind_validate": (None, "validate", ()),
@@ -103,6 +136,9 @@ CASES = {
     "gap_quarter": ({"orders": gap_quarter_frame}, "auto", ()),
     "double_loaded": (double_loaded_frames, "auto", ()),
     "ten_weeks": ({"orders": ten_weeks_frame}, "auto", ()),
+    "northwind_double_loaded": (northwind_double_loaded, "auto", ()),
+    "business_rules": (business_rules_frames, "auto", ()),
+    "signed_amounts": ({"orders": signed_amounts_frame}, "auto", ()),
 }
 
 
@@ -185,6 +221,14 @@ def test_mysql_and_postgres_parse(case):
                 except sqlglot.errors.ParseError as error:
                     failures.append((cell.id, st.label, dialect, str(error)[:200]))
     assert not failures, failures
+
+
+def test_copies_are_dropped_before_every_total(northwind_catalog):
+    catalog, d, cells = build("northwind_double_loaded", northwind_catalog)
+    results, m = run_cells(cells, catalog)
+    assert not [r.error for r in results if r.error]                      # the discount bands once read a CTE they never defined
+    assert round(m["revenue_total"], 2) == 1265793.04 and round(m["revenue_gross"], 2) == 1354458.59   # as if loaded once
+    assert round(m["discounts"]["given"], 2) == round(1354458.59 - 1265793.04, 2)
 
 
 def test_error_skips_later_cells(northwind_catalog):

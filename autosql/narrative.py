@@ -251,6 +251,30 @@ TEMPLATES: dict[str, dict[str, str]] = {
         "why": "When a KPI moves, splitting it by where (geography), what (product) and how (channel, shipper, rep) isolates the part that moved.",
         "action": "We use them in the drill-down, so that a change can be traced to one segment the business can act on.",
     },
+    "row_filter": {
+        "found": "`{table}.{col}` is {values} in {n:,} of {total:,} {noun}{lines}.",
+        "why": "Cancelled, refunded, returned, failed and test orders never became revenue, or were reversed. Counting them inflates "
+               "revenue, the order count and every average built on them.",
+        "action": "We leave those rows out where they enter the views (a row with no value stays in), and the reconciliation shows exactly "
+                  "what was left out, so that every KPI counts real sales only.",
+    },
+    "row_filter_currency": {
+        "found": "`{table}.{col}` holds more than one currency: {values} in {n:,} of {total:,} {noun}{lines}, {kept} in the rest.",
+        "why": "Adding up amounts in different currencies gives a number in no currency at all, and the data has no exchange rates to "
+               "convert them.",
+        "action": "We keep the {kept} rows (the most common currency; rows with no currency are assumed to be {kept}) and leave the others "
+                  "out, so that every total is a real amount. Convert them before uploading to include them.",
+    },
+    "row_filter_off": {
+        "found": "Business rules would leave out {rules}.",
+        "why": "You chose to keep every row.",
+        "action": "We keep them, so that the totals match the raw table; cancelled, test or other-currency rows are counted as sales.",
+    },
+    "row_filter_validate": {
+        "found": "Some rows look like they are not sales: {rules}.",
+        "why": "A KPI run leaves cancelled, refunded or test orders and amounts in a second currency out of every total.",
+        "action": "We only report them here, so that you know what a KPI run would leave out.",
+    },
     "dedupe": {
         "found": "`{table}` has repeated `{key}` values.",
         "why": "Joining a table with duplicate keys multiplies the rows on the other side.",

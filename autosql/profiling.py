@@ -300,8 +300,14 @@ def find_primary_key(table: Table, cols: tuple[ColumnProfile, ...]) -> tuple[tup
     found = pair(keyish)
     if found:
         return found
-    if df.duplicated().any():  # two IDs that are unique once exact copies (a double load) are removed
+    if df.duplicated().any():  # one ID, else two, unique once exact copies (a double load) are removed
         distinct = df.drop_duplicates()
+        copies = int(df.duplicated().sum())
+        alone = [(c, _key_score(table.name, c, cols.index(c))) for c in keyish if not distinct[c.name].duplicated().any()]
+        alone = [(c, s) for c, s in alone if s >= KEY_SCORE_MIN]
+        if alone:   # orders loaded twice: the key is still order_id, not order_id + customer_id
+            best = max(alone, key=lambda cs: (cs[1], -cols.index(cs[0])))[0]
+            return (best.name,), "intended", f"`{best.name}` is unique once the {copies:,} exact copies are removed"
         for a, b in itertools.combinations(keyish, 2):
             if not distinct.duplicated(subset=[a.name, b.name]).any():
                 return (a.name, b.name), "intended", (f"`{a.name}` + `{b.name}` identify every row once the "

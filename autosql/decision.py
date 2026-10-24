@@ -54,6 +54,15 @@ GROUPS: tuple[tuple[str, re.Pattern], ...] = (
     ("people", re.compile(r"employee|salesperson|seller|staff|rep(_|$)|agent|manager", re.I)),
 )
 LABEL_NAME = re.compile(r"(^|_)(name|title|label)$", re.I)
+# Business rules: rows that never became revenue (or were reversed) and amounts in another currency. Plain `state` is never a
+# status: it is a geography far more often (New Wheels: the customer's US state).
+STATUS_COLUMN = re.compile(r"(^|_)(status|stage)$|(^|_)(order|payment|fulfil+ment|delivery)_state$", re.I)
+LEFT_OUT_STATUS = re.compile(r"cancel|void|refund|return|\btest(ing)?\b|fraud|reject|declin|fail|abandon|chargeback|delet|\blost\b", re.I)
+KEPT_STATUS = re.compile(r"partial|\b(not|non|no)\b", re.I)   # "Partially refunded" kept most of its revenue; "Not returned" is fine
+FLAG_COLUMN = re.compile(r"^(is_|was_|has_been_)?(cancel+ed|test|test_order|void|voided|deleted|fraud|fraudulent|refunded|returned|"
+                         r"rejected|declined)(_flag|_ind|_yn)?$", re.I)
+TRUE_TEXT, FALSE_TEXT = {"true", "t", "yes", "y", "1"}, {"false", "f", "no", "n", "0"}
+CURRENCY_COLUMN = re.compile(r"(^|_)(currency|ccy|curr)(_code|_iso)?$", re.I)
 
 
 @dataclass(frozen=True)
@@ -101,6 +110,32 @@ class Period:
         return checklib.period_label(unit, self.year, self.number)
 
 
+@dataclass(frozen=True)
+class RowFilter:
+    """Rows every KPI leaves out: cancelled, refunded or test orders, or amounts in a second currency."""
+    table: str
+    column: str
+    kind: str                                   # status | flag | currency
+    values: tuple                               # rows with these values are left out; a NULL never is
+    rows: int                                   # rows of ``table`` left out
+    total: int                                  # rows of ``table``
+    kept: str | None = None                     # currency: the one kept
+
+    def shown(self) -> str:
+        return ", ".join(f"'{v}'" if isinstance(v, str) else str(v) for v in self.values)
+
+    def describe(self) -> str:
+        if self.kind == "currency":
+            return f"amounts not in {self.kept} (`{self.table}.{self.column}` = {self.shown()})"
+        return f"`{self.table}.{self.column}` = {self.shown()}"
+
+    def short(self) -> str:
+        """For a SQL comment: status 'Cancelled' or 'Returned'; currency other than 'USD'."""
+        if self.kind == "currency":
+            return f"{self.column} other than '{self.kept}'"
+        return f"{self.column} " + " or ".join(f"'{v}'" if isinstance(v, str) else str(v).upper() for v in self.values)
+
+
 @dataclass
 class Revenue:
     kind: str                                   # price_qty | amount | count
@@ -138,6 +173,7 @@ class Decision:
     rating: ColumnProfile | None = None
     dimensions: list[Dimension] = field(default_factory=list)
     item: tuple[str, str, Dimension] | None = None   # top-N: (table, label column, group dimension)
+    row_filters: list[RowFilter] = field(default_factory=list)  # business rules applied where rows enter the views
     fanouts: list[FanOut] = field(default_factory=list)
     dedupe: dict[str, tuple[tuple[str, ...], str | None]] = field(default_factory=dict)
     indexes: list[tuple[str, tuple[str, ...], str]] = field(default_factory=list)
@@ -347,6 +383,9 @@ def decide(catalog: Catalog, profile: CatalogProfile, schema: Schema, mode: str 
                     if t.by_role("datetime") and _part_unit(c.name)]
 
     if mode == "validate":
+        found = [f for t in tables for f in find_row_filters(catalog, profile, t)]
+        if found:
+            d.steps.append(story("row_filter_validate", rules="; ".join(f"{f.describe()} in {f.rows:,} of {f.total:,} rows" for f in found)))
         _choose_null_trap(d)
         _choose_indexes(d)
         d.analysis = "validate"
@@ -385,6 +424,7 @@ def decide(catalog: Catalog, profile: CatalogProfile, schema: Schema, mode: str 
             if revenue.kind != "count" else "")
     d.steps.insert(len(d.steps) - (1 if d.line_level else 0), story("fact_table", table=fact, rows=ft.n_rows, what=what))
     _revenue_story(d, ft)
+    _choose_row_filters(d, catalog, picks)
 
     # ── Stage 3: time ─────────────────────────────────────────────────────
     order_tables = [fact] + ([d.header] if d.header else [])
@@ -505,6 +545,69 @@ def _choose_revenue(d: Decision, ft: TableProfile, picks: dict) -> Revenue | Ste
             if price:
                 return Revenue("price_qty", ft.name, price=price.name, quantity=measures["quantity"].name, price_rel=r)
     return Revenue("count", ft.name)
+
+
+def find_row_filters(catalog: Catalog, profile: CatalogProfile, table: str) -> list[RowFilter]:
+    """Status, flag and currency columns of ``table`` whose rules leave some rows out (never all of them)."""
+    out = []
+    df = catalog.tables[table].df
+    if profile[table].exact_duplicates:
+        df = df.drop_duplicates()       # count each order once when the table was loaded twice (the views de-duplicate it)
+    for c in profile[table].columns:
+        if c.n_unique < 2 or c.name not in df:
+            continue
+        counts = df[c.name].value_counts(dropna=True)
+        values: list = []
+        kind, kept = None, None
+        if STATUS_COLUMN.search(c.name) and c.logical_type == "text":
+            kind = "status"
+            values = [v for v in counts.index if LEFT_OUT_STATUS.search(str(v)) and not KEPT_STATUS.search(str(v))]
+        elif FLAG_COLUMN.search(c.name):
+            if c.logical_type == "boolean":
+                kind, values = "flag", [True] if True in set(counts.index) else []
+            elif c.logical_type == "integer" and set(counts.index) <= {0, 1}:
+                kind, values = "flag", [1] if 1 in set(counts.index) else []
+            elif c.logical_type == "text" and {str(v).strip().lower() for v in counts.index} <= TRUE_TEXT | FALSE_TEXT:
+                kind, values = "flag", [v for v in counts.index if str(v).strip().lower() in TRUE_TEXT]
+        elif CURRENCY_COLUMN.search(c.name) and c.logical_type == "text":
+            by_code = counts.groupby([str(v).strip().upper() for v in counts.index]).sum().sort_values(ascending=False, kind="stable")
+            if len(by_code) >= 2:
+                kind, kept = "currency", str(by_code.index[0])
+                values = [v for v in counts.index if str(v).strip().upper() != kept]
+        if not kind or not values:
+            continue
+        rows = int(counts[counts.index.isin(values)].sum())   # not counts[values]: a list of booleans would be read as a mask
+        if rows >= int(counts.sum()) and kind != "currency":
+            continue  # every row would go: the column says something else (a returns table, say)
+        values = [bool(v) if kind == "flag" and c.logical_type == "boolean" else int(v) if c.logical_type == "integer" else str(v)
+                  for v in values]
+        out.append(RowFilter(table, c.name, kind, tuple(sorted(values, key=str)), rows, len(df), kept))
+    return out
+
+
+def _choose_row_filters(d: Decision, catalog: Catalog, picks: dict) -> None:
+    found = [f for t in [d.fact] + ([d.header] if d.header else []) for f in find_row_filters(catalog, d.profile, t)
+             if not (f.kind == "currency" and d.revenue.kind == "count")]   # counting rows needs no common currency
+    if not found:
+        return
+    if picks.get("row_filters") is False:
+        d.steps.append(story("row_filter_off", rules="; ".join(f.describe() for f in found)))
+        return
+    d.row_filters = found
+    for f in found:
+        noun = "order(s)" if f.table == d.header or not d.line_level else "line(s)"
+        lines = ""
+        if f.table == d.header and d.header_rel is not None:
+            header = catalog.tables[f.table].df
+            keys = header.loc[header[f.column].isin(list(f.values)), d.header_rel.parent_col]
+            fact_df = catalog.tables[d.fact].df
+            lines = f" ({int(fact_df[d.header_rel.child_col].isin(keys).sum()):,} line(s) of `{d.fact}`)"
+        if f.kind == "currency":
+            d.steps.append(story("row_filter_currency", table=f.table, col=f.column, n=f.rows, total=f.total, noun=noun, lines=lines,
+                                 kept=f.kept, values=f.shown()))
+        else:
+            d.steps.append(story("row_filter", table=f.table, col=f.column, n=f.rows, total=f.total, noun=noun, lines=lines,
+                                 values=f.shown()))
 
 
 def _with_discount(rev: Revenue, ft: TableProfile) -> Revenue:
@@ -673,11 +776,14 @@ def _choose_dimensions(d: Decision, picks: dict) -> None:
     customer_table = d.customer_rel.parent_table if d.customer_rel else None
     keys = {d.order_key} | ({d.customer[1]} if d.customer else set())
     candidates = []
+    one_left = {(f.table, f.column) for f in d.row_filters if f.kind != "status" or profile.col(f.table, f.column).n_unique - len(f.values) < 2}
     for table, (path, level) in reach.items():
         t = profile[table]
         for c in t.columns:
             if c.role != "dimension" or c.null_frac > MAX_DIM_NULL or c.name in keys or not (2 <= c.n_unique <= 50):
                 continue
+            if (table, c.name) in one_left:
+                continue  # the business rules leave one value (one currency, flag = false): nothing to slice by
             group = next((g for g, rx in GROUPS if rx.search(c.name) or (g in ("people", "fulfilment") and rx.search(table))), "other")
             if group == "people" and c.name != label_column(t):
                 continue  # one column per person table: its name

@@ -165,9 +165,81 @@ class Builder:
             self.aliases[table] = pick
         return self.aliases[table]
 
-    def src(self, D: Dialect, table: str) -> str:
-        """FROM-clause name of a table: the table itself, or its de-duplicated CTE."""
+    def deduped(self, D: Dialect, table: str) -> str:
+        """The table itself, or its de-duplicated CTE."""
         return f"{table}_deduped" if table in self.d.dedupe else D.ident(table)
+
+    def src(self, D: Dialect, table: str) -> str:
+        """FROM-clause name of a table in the views: de-duplicated, then filtered by the business rules."""
+        return f"{table}_kept" if table in self.filtered else self.deduped(D, table)
+
+    # ── business rules (cancelled, test or other-currency rows) ──────────
+    def filters_on(self, table: str) -> list:
+        return [f for f in self.d.row_filters if f.table == table]
+
+    @property
+    def header_filtered(self) -> bool:
+        return bool(self.d.header and self.filters_on(self.d.header) and self.d.header_rel)
+
+    @property
+    def filtered(self) -> set[str]:
+        """Tables read through a ``<table>_kept`` CTE: the filtered ones, and the fact when its order table is filtered."""
+        out = {f.table for f in self.d.row_filters}
+        return out | ({self.d.fact} if self.header_filtered else set())
+
+    def left_out(self, D: Dialect, alias: str, table: str) -> str | None:
+        """The rows of ``table`` the rules leave out. NULL never is: NULL IN (...) is not true, so the row stays."""
+        parts = []
+        for f in self.filters_on(table):
+            vals = ", ".join(D.literal(v) for v in f.values)
+            parts.append(f"{D.col(alias, f.column)} = {vals}" if len(f.values) == 1 else f"{D.col(alias, f.column)} IN ({vals})")
+        return " OR ".join(parts) or None
+
+    def kept_where(self, D: Dialect, alias: str, table: str) -> list[str]:
+        """The conditions a kept row of ``table`` meets: the exact complement of ``left_out``, with NULL spelled out."""
+        conds = []
+        for f in self.filters_on(table):
+            c, vals = D.col(alias, f.column), ", ".join(D.literal(v) for v in f.values)
+            conds.append(f"({c} IS NULL OR {c} <> {vals})" if len(f.values) == 1 else f"({c} IS NULL OR {c} NOT IN ({vals}))")
+        if table == self.d.fact and self.header_filtered:
+            conds.append("NOT " + self.header_left_out(D, alias, 23))
+        return conds
+
+    def header_left_out(self, D: Dialect, fact_alias: str, at: int) -> str:
+        """EXISTS (…): the line's order is one the rules leave out. ``at`` is the column where the sub-query's SELECT starts."""
+        pad = " " * at
+        return (f"EXISTS (SELECT 1\n{pad}FROM   {self.deduped(D, self.d.header)} h\n{pad}WHERE  {self.header_match(D, 'h', fact_alias)}\n"
+                f"{pad}  AND  ({self.left_out(D, 'h', self.d.header)}))")
+
+    def header_match(self, D: Dialect, header_alias: str, fact_alias: str) -> str:
+        r = self.d.header_rel
+        a, b = D.col(header_alias, r.parent_col), D.col(fact_alias, r.child_col)
+        return f"{D.as_text(a)} = {D.as_text(b)}" if r.type_mismatch else f"{a} = {b}"
+
+    def rules_comment(self, table: str) -> str:
+        rules = [f.short() for f in self.filters_on(table)]
+        if table == self.d.fact and self.header_filtered:
+            rules.append(f"every line of an order left out in {self.d.header}")
+        return "; ".join(rules)
+
+    def kept_ctes(self, D: Dialect, tables: list[str]) -> list[str]:
+        out = []
+        for t in tables:
+            if t not in self.filtered:
+                continue
+            out.append(fill('''
+                <<name>>_kept AS (               -- leave out what is not a sale: <<why>>
+                    SELECT *
+                    FROM   <<src>> x
+                    WHERE  <<conds>>
+                )''', name=t, why=self.rules_comment(t), src=self.deduped(D, t), conds="\n      AND  ".join(self.kept_where(D, "x", t))))
+        return out
+
+    def source_ctes(self, D: Dialect, tables: list[str]) -> list[str]:
+        """The CTEs a query reading ``tables`` through ``src()`` needs: de-duplication first, then the business rules."""
+        tables = list(dict.fromkeys(tables))
+        deduped = tables + ([self.d.header] if self.d.fact in tables and self.header_filtered and self.d.header not in tables else [])
+        return self.dedupe_ctes(D, deduped) + self.kept_ctes(D, tables)
 
     def dedupe_ctes(self, D: Dialect, tables: list[str]) -> list[str]:
         out = []
@@ -852,7 +924,7 @@ def _order_facts_sql(b: Builder, D: Dialect) -> str:
     used = [fact] + ([d.header] if d.header else []) + [r.parent_table for dim in order_dims for r in dim.path]
     if d.revenue.price_rel:
         used.append(d.revenue.price_rel.parent_table)
-    ctes = b.dedupe_ctes(D, list(dict.fromkeys(used)))
+    ctes = b.source_ctes(D, used)
     ok = D.ident(b.order_key)
     # order-level columns: (table, column). In a line-level fact without an order table they are taken per order with MIN().
     order_cols = [x for x in ((d.customer and d.customer), d.date, (d.lead and (d.lead[0], d.lead[2])),
@@ -958,7 +1030,7 @@ def _line_facts_sql(b: Builder, D: Dialect) -> str:
     tables = [fact] + ([d.header] if d.header else []) + [r.parent_table for dim in line_dims for r in dim.path]
     if d.revenue.price_rel:
         tables.append(d.revenue.price_rel.parent_table)
-    ctes = b.dedupe_ctes(D, list(dict.fromkeys(tables)))
+    ctes = b.source_ctes(D, tables)
     start = {fact: fa}
     paths = []
     if d.header:
@@ -1006,6 +1078,9 @@ def _base_cell(b: Builder) -> Cell:
         return f"SELECT *\nFROM   order_facts\nORDER  BY {', '.join(cols) or '1'}\nLIMIT  5"
     statements.append(stmt("preview", "The first five rows of `order_facts`", preview))
     joined = sorted({r.parent_table for dim in d.dimensions for r in dim.path} | ({d.header} if d.header else set()))
+    rules = (" Before anything else, a `_kept` CTE leaves out the rows the business rules exclude ("
+             + "; ".join(f.describe() for f in d.row_filters) + "), with `IS NULL OR … NOT IN (…)`: a bare NOT IN would also drop "
+             "every row whose value is NULL." if d.row_filters else "")
     story = Step(
         "base",
         f"The revenue formula ({b.revenue_formula()}), the order grain and the tables to join ({_names(joined) or 'none'}) are known.",
@@ -1017,7 +1092,7 @@ def _base_cell(b: Builder) -> Cell:
          + (f", {d.lead_name}" if d.lead else "") + (" and shipped_late" if d.required else "") + ". `line_facts` keeps one row per line for product questions."
          if d.line_level else
          "One SELECT over the fact table adds revenue, the period columns" + (f", {d.lead_name}" if d.lead else "")
-         + " and the dimensions (LEFT JOIN, so nothing is dropped)."),
+         + " and the dimensions (LEFT JOIN, so nothing is dropped).") + rules,
     )
     check = fill('''
         preview = outputs["preview"]
@@ -1051,12 +1126,31 @@ def _reconcile_cell(b: Builder) -> Cell:
                                       rows=src_rows, orders=src_orders, rev=measure(f"SUM({b.line_revenue(D, fa, price_alias)})"), name=name,
                                       t=D.ident(fact), fa=fa, pj=price_join)
         lines = "SUM(line_count)" if d.line_level else "COUNT(*)"
-        parts = [fact_part, fill('''
+        parts, ctes = [fact_part], []
+        if d.row_filters:
+            # the rows the business rules leave out, read like the views read them (de-duplicated first)
+            used = [fact] + ([d.header] if b.header_filtered else []) + ([d.revenue.price_rel.parent_table] if d.revenue.price_rel else [])
+            ctes = b.dedupe_ctes(D, list(dict.fromkeys(used)))
+            out = [f"({c})" for c in (b.left_out(D, fa, fact),) if c]
+            if b.header_filtered:
+                out.append(b.header_left_out(D, fa, 15))
+            pj = (f"\nLEFT   JOIN {b.deduped(D, d.revenue.price_rel.parent_table)} {price_alias} "
+                  f"ON {D.col(price_alias, d.revenue.price_rel.parent_col)} = {D.col(fa, d.revenue.price_rel.child_col)}"
+                  if d.revenue.price_rel else "")
+            parts.append(fill('''
+                SELECT 'left out by the business rules',
+                       <<rows>>,
+                       <<orders>>,
+                       <<rev>>
+                FROM   <<t>> <<fa>><<pj>>
+                WHERE  <<out>>''', rows=src_rows, orders=src_orders, rev=measure(f"SUM({b.line_revenue(D, fa, price_alias)})"),
+                                     t=b.deduped(D, fact), fa=fa, pj=pj, out="\n   OR  ".join(out)))
+        parts.append(fill('''
             SELECT 'order_facts (one row per order)',
                    <<lines>>,
                    COUNT(*),
                    <<rev>>
-            FROM   order_facts''', lines=lines, rev=measure("SUM(revenue)") if b.money else lines)]
+            FROM   order_facts''', lines=lines, rev=measure("SUM(revenue)") if b.money else lines))
         if d.line_level:
             parts.append(fill('''
                 SELECT 'line_facts (one row per line)',
@@ -1064,19 +1158,22 @@ def _reconcile_cell(b: Builder) -> Cell:
                        COUNT(DISTINCT <<ok>>),
                        <<rev>>
                 FROM   line_facts''', ok=okq, rev=measure("SUM(revenue)")))
-        return union_all(parts)
+        with_clause = ("WITH " + ",\n".join(c.strip() for c in ctes) + "\n") if ctes else ""
+        return with_clause + union_all(parts)
 
     statements = [stmt("totals", "The same totals computed from the raw table and from each view", totals)]
     rev = d.revenue
     if rev.kind == "price_qty" and rev.discount and not rev.price_rel:
         def gross(D: Dialect) -> str:
             g = f"{D.col(fa, rev.price)} * {D.col(fa, rev.quantity)}"
-            return fill('''
+            ctes = b.source_ctes(D, [fact])        # the rows the views use: de-duplicated, business rules applied
+            with_clause = ("WITH " + ",\n".join(c.strip() for c in ctes) + "\n") if ctes else ""
+            return with_clause + fill('''
                 SELECT <<g>> AS gross_revenue,
                        <<n>> AS net_revenue,
                        <<x>> AS discount_given
                 FROM   <<t>> <<fa>>''', g=D.round(f"SUM({g})", 2), n=D.round(f"SUM({b.line_revenue(D, fa)})", 2),
-                                        x=D.round(f"SUM({g} - {b.line_revenue(D, fa)})", 2), t=D.ident(fact), fa=fa)
+                                        x=D.round(f"SUM({g} - {b.line_revenue(D, fa)})", 2), t=b.src(D, fact), fa=fa)
         statements.append(stmt("gross_net", "Gross vs net revenue (the formula is net of discount)", gross))
     if rev.kind == "price_qty" and not rev.price_rel:
         list_price = next(((r, c) for r in d.schema.parents(fact) for c in b.p[r.parent_table].by_role("measure")
@@ -1112,7 +1209,9 @@ def _reconcile_cell(b: Builder) -> Cell:
         "Reconciling against the source is the only proof that the views neither lose nor invent revenue.",
         "We compute rows, orders and revenue from the raw table, from each view, and independently in pandas from the uploaded file, "
         "so that every number shared later is traceable to the source.",
-        "Three SELECTs stacked with UNION ALL compute the same totals three ways; they must agree to the cent. "
+        "SELECTs stacked with UNION ALL compute the same totals from the raw table and from each view; they must agree to the cent. "
+        + ("One of them adds up what the business rules leave out, so that raw = left out + kept is checked, not assumed. "
+           if d.row_filters else "")
         + ("A second query splits revenue into gross and discount. " if rev.discount else "")
         + "The check below also recomputes revenue in pandas straight from the uploaded rows, outside SQL.",
     )
@@ -1122,23 +1221,34 @@ def _reconcile_cell(b: Builder) -> Cell:
         measure = totals.columns[-1]                         # revenue, or row_count when there is no money column
         sql_values = [float(v) for v in totals[measure]]
         deduped = <<deduped>>                                # the raw table still holds the duplicates the views remove
-        compared = sql_values[1:] if deduped else sql_values
-        tolerance = max(0.01, 1e-9 * max(abs(v) for v in compared + [source_revenue]))  # floating-point sums on big data
-        agree = max(compared + [source_revenue]) - min(compared + [source_revenue]) <= tolerance
-        metrics["revenue_total"] = compared[0]
+        filtered = <<filtered>>                              # a row adds up what the business rules leave out
+        raw, left_out = sql_values[0], (sql_values[1] if filtered else 0.0)
+        views = sql_values[2:] if filtered else sql_values[1:]
+        compared = views + [source_revenue] + ([] if deduped else [raw - left_out])   # raw = left out + kept, unless duplicates go too
+        tolerance = max(0.01, 1e-9 * max(abs(v) for v in compared + [raw]))  # floating-point sums on big data
+        agree = max(compared) - min(compared) <= tolerance and (not filtered or abs(left_out - source_left_out) <= tolerance)
+        metrics["revenue_total"] = views[0]
         metrics["revenue_source"] = source_revenue
         metrics["reconciled"] = bool(agree)
         metrics["main_measure"] = "revenue" if measure == "revenue" else "orders"
         what = "revenue" if measure == "revenue" else "the row count"
         fmt = "{:,.2f}" if measure == "revenue" else "{:,.0f}"
+        if filtered:
+            rows_out = int(totals["rows_read"].iloc[1])
+            metrics["left_out"] = {"rows": rows_out, "value": left_out, "share_pct": 100 * left_out / raw if raw else 0.0}
         if agree:
-            note(f"**Reconciled:** {what} is **" + fmt.format(compared[0]) + "** from " + ("every view" if deduped else "the raw table, from every view")
+            note(f"**Reconciled:** {what} is **" + fmt.format(views[0]) + "** from "
+                 + ("every view" if deduped else "the raw table" + (" less what the business rules leave out" if filtered else "") + ", from every view")
                  + ", and from the uploaded file (recomputed in pandas). Nothing was lost or double-counted.")
         else:
             note("⚠️ The totals differ: " + "; ".join(f"{name}: " + fmt.format(value) for name, value in zip(totals["computed_from"], sql_values))
                  + "; uploaded file: " + fmt.format(source_revenue) + ". Look for orphans or duplicated keys before trusting any KPI.")
+        if filtered:
+            rules = <<rules>>
+            note(f"The business rules leave out {rows_out:,} row(s) holding " + fmt.format(left_out) + f" of {what} "
+                 f"({metrics['left_out']['share_pct']:.1f}% of the raw table): {rules}.")
         if deduped:
-            note("The raw table still contains the duplicated keys: " + fmt.format(sql_values[0] - compared[0])
+            note("The raw table still contains the duplicated keys: " + fmt.format(raw - left_out - views[0])
                  + f" of {what} disappears when they are removed, which is the point of de-duplicating.")
         if "gross_net" in outputs:
             row = outputs["gross_net"].iloc[0]
@@ -1152,7 +1262,8 @@ def _reconcile_cell(b: Builder) -> Cell:
         if "order_conflicts" in outputs:
             n = int(outputs["order_conflicts"].iloc[0, 0])
             note(f"{n:,} order(s) have lines with different dates" + (": the view takes the earliest." if n else "."))
-    ''', src=src_code, deduped=repr(d.fact in d.dedupe))
+    ''', src=src_code, deduped=repr(d.fact in d.dedupe), filtered=repr(bool(d.row_filters)),
+        rules=repr("; ".join(f.describe().replace("`", "") for f in d.row_filters)))
     return Cell("reconcile", "Reconcile the totals", SECTIONS[2], story, tuple(statements), check)
 
 
@@ -1164,6 +1275,7 @@ def _pandas_revenue(b: Builder) -> str:
         keys, order = d.dedupe[d.fact]
         sort = f".sort_values({order!r}, na_position='first')" if order else ""
         lines.append(f"src = src{sort}.drop_duplicates(subset={list(keys)!r}, keep='last')  # the views keep one row per key")
+    expr = None
     if rev.kind == "price_qty":
         if rev.price_rel:
             r = rev.price_rel
@@ -1175,11 +1287,26 @@ def _pandas_revenue(b: Builder) -> str:
         if rev.discount:
             scale = " / 100" if rev.discount_scale == 100 else ""
             expr += f" * (1 - src[{rev.discount!r}].fillna(0){scale})"
-        lines.append(f"source_revenue = float(({expr}).sum())")
     elif rev.kind == "amount":
-        lines.append(f"source_revenue = float(src[{rev.amount!r}].sum())")
-    else:
-        lines.append("source_revenue = float(len(src))")
+        expr = f"src[{rev.amount!r}]"
+    if not d.row_filters:
+        lines.append(f"source_revenue = float(({expr}).sum())" if expr else "source_revenue = float(len(src))")
+        return "\n".join(lines)
+    lines.append(f"revenue = {expr}" if expr else "revenue = pd.Series(1.0, index=src.index)")
+    own = [f"src[{f.column!r}].isin({list(f.values)!r})" for f in b.filters_on(d.fact)]
+    lines.append("left_out = " + (" | ".join(own) if own else "pd.Series(False, index=src.index)") + "   # the business rules")
+    if b.header_filtered:
+        r, h = d.header_rel, d.header
+        lines.append(f"head = source[{h!r}]")
+        if h in d.dedupe:
+            keys, order = d.dedupe[h]
+            sort = f".sort_values({order!r}, na_position='first')" if order else ""
+            lines.append(f"head = head{sort}.drop_duplicates(subset={list(keys)!r}, keep='last')")
+        rule = " | ".join(f"head[{f.column!r}].isin({list(f.values)!r})" for f in b.filters_on(h))
+        cast = ".astype(str)" if r.type_mismatch else ""
+        lines.append(f"left_out = left_out | src[{r.child_col!r}]{cast}.isin(head.loc[{rule}, {r.parent_col!r}]{cast})   # lines of left-out orders")
+    lines.append("left_out = left_out.astype(bool)")
+    lines += ["source_revenue = float(revenue[~left_out].sum())", "source_left_out = float(revenue[left_out].sum())"]
     return "\n".join(lines)
 
 
@@ -2250,9 +2377,10 @@ def _discounts_cell(b: Builder) -> Cell:
         bands = "\n".join(f"                WHEN {disc} <= {limit} THEN {D.literal(label)}" for limit, label in DISCOUNT_BANDS)
         order = "\n".join(f"                WHEN {disc} <= {limit} THEN {i + 1}" for i, (limit, _) in enumerate(DISCOUNT_BANDS))
         last = f"over {int(DISCOUNT_BANDS[-1][0] * 100)}%"
+        sources = "".join(c.strip() + ",\n" for c in b.source_ctes(D, [fact]))   # the rows the views use
         return fill('''
             -- Discount bands (the discount is a fraction of the line price); 'no discount' is its own band.
-            WITH banded AS (
+            WITH <<sources>>banded AS (
                 SELECT CASE WHEN COALESCE(<<disc>>, 0) = 0 THEN 'no discount'
             <<bands>>
                             ELSE <<last>>
@@ -2275,7 +2403,7 @@ def _discounts_cell(b: Builder) -> Cell:
                    <<avg_q>> AS avg_quantity_per_line
             FROM   banded
             GROUP  BY discount_band, band_order
-            ORDER  BY band_order''', disc=disc, bands=bands, order=order, last=D.literal(last), n=len(DISCOUNT_BANDS) + 1,
+            ORDER  BY band_order''', sources=sources, disc=disc, bands=bands, order=order, last=D.literal(last), n=len(DISCOUNT_BANDS) + 1,
                     gross=gross, net=b.line_revenue(D, fa), qty=D.col(fa, rev.quantity), src=b.src(D, fact), fa=fa,
                     pct_lines=D.pct("COUNT(*)", "SUM(COUNT(*)) OVER ()"), g=D.round("SUM(gross_revenue)", 2),
                     dg=D.round("SUM(gross_revenue - net_revenue)", 2), dpct=D.pct("SUM(gross_revenue - net_revenue)", "SUM(gross_revenue)"),
@@ -2679,6 +2807,13 @@ def assumptions(d: Decision) -> list[str]:
         out.append("Recency is measured to the last date in the data, not to today.")
     for t, (keys, order) in d.dedupe.items():
         out.append(f"`{t}` keeps one row per {', '.join(keys)} ({'latest by ' + order if order else 'an arbitrary copy'}).")
+    for f in d.row_filters:
+        if f.kind == "currency":
+            out.append(f"Only amounts in {f.kept} are counted: {f.rows:,} row(s) of `{f.table}` in {f.shown()} are left out; "
+                       f"rows with no `{f.column}` are assumed to be {f.kept}.")
+        else:
+            whole = " (with all their lines)" if f.table == d.header and d.line_level else ""
+            out.append(f"Rows where `{f.table}.{f.column}` is {f.shown()} are not sales and are left out{whole}: {f.rows:,} of {f.total:,}.")
     if d.dimensions:
         out.append("Dimensions are joined with LEFT JOIN; a missing match is labelled 'Unknown'.")
     return out
