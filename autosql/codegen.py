@@ -1318,16 +1318,18 @@ def _kpi_by_period_cell(b: Builder) -> Cell:
     year_lag = {"quarter": 4, "month": 12}.get(d.period)        # weeks: no year-over-year (52 or 53 weeks per ISO year)
 
     def sql(D: Dialect) -> str:
-        measures = ["SUM(revenue) AS revenue"] if b.money else []
+        # the spread (STDDEV_SAMP) and count of each average go along, so that the check can tell a real change from noise
+        measures = ["SUM(revenue) AS revenue", "STDDEV_SAMP(revenue) AS order_value_sd"] if b.money else []
         measures.append("COUNT(*) AS orders")
         if d.customer:
             measures.append(f"COUNT(DISTINCT {D.ident(d.customer[1])}) AS customers")
         if d.lead:
-            measures.append(f"AVG({d.lead_name}) AS avg_{d.lead_name}")
+            measures += [f"AVG({d.lead_name}) AS avg_{d.lead_name}", f"COUNT({d.lead_name}) AS {d.lead_name}_orders",
+                         f"STDDEV_SAMP({d.lead_name}) AS {d.lead_name}_sd"]
         if d.required:
             measures += ["SUM(shipped_late) AS late_orders", "COUNT(shipped_late) AS checked_orders"]
         if d.rating:
-            measures.append("AVG(rating_score) AS avg_rating")
+            measures += ["AVG(rating_score) AS avg_rating", "COUNT(rating_score) AS rated_orders", "STDDEV_SAMP(rating_score) AS rating_sd"]
         main = "revenue" if b.money else "orders"
         lags = [f"CASE WHEN p.period_index - LAG(p.period_index) OVER (ORDER BY p.period_index) = 1\n"
                 f"            AND LAG(p.is_partial) OVER (ORDER BY p.period_index) = 0\n"
@@ -1339,17 +1341,19 @@ def _kpi_by_period_cell(b: Builder) -> Cell:
         if d.partial_periods:
             out.append("CASE WHEN is_partial = 1 THEN 'partial' ELSE 'complete' END AS period_status")
         if b.money:
-            out += [f"{D.round('revenue', 2)} AS revenue", "orders", f"{D.ratio('revenue', 'orders', 2)} AS avg_order_value"]
+            out += [f"{D.round('revenue', 2)} AS revenue", "orders", f"{D.ratio('revenue', 'orders', 2)} AS avg_order_value",
+                    f"{D.round('order_value_sd', 2)} AS order_value_sd"]
         else:
             out.append("orders")
         if d.customer:
             out.append("customers")
         if d.lead:
-            out.append(f"{D.round(f'avg_{d.lead_name}', 1)} AS avg_{d.lead_name}")
+            out += [f"{D.round(f'avg_{d.lead_name}', 1)} AS avg_{d.lead_name}", f"{d.lead_name}_orders",
+                    f"{D.round(f'{d.lead_name}_sd', 2)} AS {d.lead_name}_sd"]
         if d.required:
-            out.append(f"{D.pct('late_orders', 'checked_orders')} AS late_pct")
+            out += ["late_orders", "checked_orders", f"{D.pct('late_orders', 'checked_orders')} AS late_pct"]
         if d.rating:
-            out.append(f"{D.round('avg_rating', 2)} AS avg_rating")
+            out += [f"{D.round('avg_rating', 2)} AS avg_rating", "rated_orders", f"{D.round('rating_sd', 2)} AS rating_sd"]
         out.append(f"{D.pct_change(main, f'prev_{main}')} AS {main}_{step}_pct")
         if year_lag:
             out.append(f"{D.pct_change(main, f'{main}_year_ago')} AS {main}_yoy_pct")
@@ -1426,6 +1430,36 @@ def _kpi_by_period_cell(b: Builder) -> Cell:
             if d1 and d2 and abs(d2 / d1 - 1) >= 0.03:
                 note(f"The two {unit}s differ in length ({d1} vs {d2} days with data), so compare per day: **{per_day:+.1f}%**. "
                      f"A shorter {unit} looks like a fall in totals even when every day is the same.")
+            # Is each change bigger than normal variation? 95% intervals from checklib (counts: Poisson; totals: compound
+            # Poisson; averages: Welch; shares: Newcombe). Per day when the periods differ in length, like the comparison above.
+            t1, t2 = (d1, d2) if d1 and d2 and abs(d2 / d1 - 1) >= 0.03 else (1, 1)
+            num = lambda row, col: None if col not in row.index or pd.isna(row[col]) else float(row[col])  # noqa: E731
+            lead = <<lead>>
+            sig = {"orders": ci_rate_change(num(prev, "orders"), t1, num(last, "orders"), t2)}
+            if "customers" in per:
+                sig["customers"] = ci_rate_change(num(prev, "customers"), t1, num(last, "customers"), t2)
+            if "order_value_sd" in per:
+                sig["revenue"] = ci_total_change(num(prev, "orders"), num(prev, "avg_order_value"), num(prev, "order_value_sd"), t1,
+                                                 num(last, "orders"), num(last, "avg_order_value"), num(last, "order_value_sd"), t2)
+                sig["avg_order_value"] = ci_mean_change(num(prev, "avg_order_value"), num(prev, "order_value_sd"), num(prev, "orders"),
+                                                        num(last, "avg_order_value"), num(last, "order_value_sd"), num(last, "orders"))
+            if lead:
+                sig[f"avg_{lead}"] = ci_mean_change(num(prev, f"avg_{lead}"), num(prev, f"{lead}_sd"), num(prev, f"{lead}_orders"),
+                                                    num(last, f"avg_{lead}"), num(last, f"{lead}_sd"), num(last, f"{lead}_orders"))
+            if "late_orders" in per:
+                sig["late_pct"] = ci_share_change(num(prev, "late_orders"), num(prev, "checked_orders"),
+                                                  num(last, "late_orders"), num(last, "checked_orders"))
+            if "rating_sd" in per:
+                sig["avg_rating"] = ci_mean_change(num(prev, "avg_rating"), num(prev, "rating_sd"), num(prev, "rated_orders"),
+                                                   num(last, "avg_rating"), num(last, "rating_sd"), num(last, "rated_orders"))
+            sig = {k: v for k, v in sig.items() if v}
+            metrics["significance"] = sig
+            if sig:
+                unit_of = lambda k: " pts" if k == "late_pct" else "%"  # noqa: E731
+                note("Real change or noise? " + "; ".join(
+                    f"{k.replace('avg_', 'average ').replace('_', ' ')} {v['change']:+.1f}{unit_of(k)} (95% CI {v['lo']:+.1f} to "
+                    f"{v['hi']:+.1f}{unit_of(k)})" + ("" if v["significant"] else ", **within normal variation**") for k, v in sig.items())
+                     + ". A change whose interval includes zero could be noise, however large it looks.")
         else:
             note(f"Only {len(complete)} complete {unit} so far: nothing to compare yet. The table still gives the level per {unit}; "
                  f"period-over-period verdicts start once a second complete {unit} arrives.")
@@ -1451,7 +1485,7 @@ def _kpi_by_period_cell(b: Builder) -> Cell:
             note(f"{driver}: {float(complete.iloc[-2][driver]):.1f} → {float(complete.iloc[-1][driver]):.1f} over the same two {unit}s.")
     ''', unit=repr(d.period), main=repr("revenue" if b.money else "orders"), step=step,
         driver=repr(f"avg_{d.lead_name}" if d.lead else "avg_rating" if d.rating else None),
-        days=repr({d.label(p): p.covered for p in d.periods}), year_lag=year_lag or 0)
+        days=repr({d.label(p): p.covered for p in d.periods}), year_lag=year_lag or 0, lead=repr(d.lead_name if d.lead else None))
     return Cell("kpi_by_period", f"KPIs per {d.period}, with the driver next to the symptom", SECTIONS[4], story,
                 (stmt("kpi_by_period", f"KPIs per {d.period} with LAG()", sql),), check)
 
@@ -1880,12 +1914,14 @@ def _drilldown_cell(b: Builder) -> Cell:
             # more days or more late orders is worse; a higher rating is better. A candidate cause got worse while the symptom fell,
             # or better while it grew; a driver that moved the other way cannot explain the change.
             worse = change_x < 0 if x.endswith("rating") else change_x > 0
-            candidate = moved and worse == (change_main < 0)
+            real = (metrics.get("significance") or {}).get(x, {}).get("significant", True)    # from the KPI-per-period step
+            candidate = moved and worse == (change_main < 0) and real
             metrics["driver_vs_symptom"] = {"driver": x, "driver_change_pct": change_x, "symptom_change_pct": change_main, "candidate": candidate}
             note(f"Last two complete periods: {main} **{change_main:+.1f}%**, {x} **{change_x:+.1f}%** "
                  f"({float(first[x]):.1f} → {float(last[x]):.1f}). "
                  + ("The driver moved the way that would explain it: a candidate cause, to confirm with a controlled test "
                     "(e.g. a service-level target for a random half of orders)." if candidate else
+                    f"{x} moved, but within normal variation, so it can't be called a cause." if moved and worse == (change_main < 0) else
                     f"{x} moved, but in the direction that would push {main} the other way, so it does not explain this change."
                     if moved else f"{x} barely moved, so it does not explain this change; look at the segments in the driver tree instead."))
         if "by_segment" in outputs:

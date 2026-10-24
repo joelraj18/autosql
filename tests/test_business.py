@@ -145,3 +145,33 @@ def test_business_guide_is_in_sync_with_the_code():
     assert kpi_dictionary_markdown() in guide                                  # regenerate with the snippet in the guide's history if this fails
     assert all(f"| `{key}` | {q} |" in guide for key, (q, _) in BUSINESS_QUESTIONS.items())
     assert all(f"{n} periods: **{v}**" in guide for n, v in TREND_Z_LIMIT.items())
+
+
+def test_every_change_is_tested_against_normal_variation(nw):
+    d, m = nw
+    sig = m["significance"]
+    assert {k for k, v in sig.items() if v["significant"]} == {"orders", "revenue"}
+    assert {k for k, v in sig.items() if not v["significant"]} == {"customers", "avg_order_value", "avg_ship_days", "late_pct"}
+    assert (round(sig["avg_order_value"]["lo"]), round(sig["avg_order_value"]["hi"])) == (-20, 37)     # +8.3% could be noise
+    tiles = {t.key: t for t in executive_summary(d, m).tiles}
+    assert tiles["revenue"].significant and tiles["orders"].significant
+    assert tiles["avg_order_value"].significant is False and tiles["avg_order_value"].ci[0] < 0 < tiles["avg_order_value"].ci[1]
+    s = executive_summary(d, m)
+    assert "within normal variation" not in s.headline and "Most of the movement came from more orders." in s.headline
+
+
+def test_a_big_enough_order_value_change_is_real():
+    import numpy as np
+    import pandas as pd
+    from conftest import catalog_from
+    rng = np.random.default_rng(5)
+    n = 4000
+    q = np.repeat([1, 2, 3, 4, 5], n // 5)
+    day = pd.Timestamp("2021-01-01") + pd.to_timedelta((q - 1) * 91 + rng.integers(0, 89, n), unit="D")
+    amount = rng.normal(100, 15, n) * np.where(q == 5, 1.2, 1.0)                 # order value +20% in the last quarter only
+    catalog = catalog_from({"orders": pd.DataFrame({"order_id": range(n), "amount": amount.round(2), "order_date": day.strftime("%Y-%m-%d")})})
+    d = analyse(catalog)
+    _, m = run_cells(build_cells(d), catalog)
+    aov = m["significance"]["avg_order_value"]
+    assert aov["significant"] and 15 < aov["lo"] < aov["change"] < aov["hi"] < 25
+    assert executive_summary(d, m).headline.endswith("Most of the movement came from bigger orders.")

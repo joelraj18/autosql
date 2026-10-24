@@ -374,9 +374,12 @@ header.top { display: grid; gap: 10px; }
 .tile .label { font-size: 0.82rem; color: var(--ink-2); }
 .tile .value { font-size: 1.5rem; font-weight: 650; letter-spacing: -0.01em; font-variant-numeric: tabular-nums; }
 .tile .value small { font-size: 0.8rem; font-weight: 500; color: var(--ink-2); }
-.delta { font-size: 0.82rem; font-weight: 600; display: inline-flex; gap: 4px; align-items: baseline; }
+.delta { font-size: 0.82rem; font-weight: 600; display: flex; flex-wrap: wrap; gap: 3px 6px; align-items: center; }
+.delta .num, .delta .vs, .delta .noise { white-space: nowrap; }
 .delta.good { color: var(--good); } .delta.bad { color: var(--bad); } .delta.flat { color: var(--muted); }
 .delta .vs { color: var(--muted); font-weight: 400; }
+.delta .noise { font: 600 0.68rem/1 var(--sans); padding: 2px 6px; border-radius: 999px; background: var(--chip); color: var(--ink-2);
+                text-transform: uppercase; letter-spacing: 0.04em; }
 .grid2 { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 16px; }
 .card { background: var(--surface); border: 1px solid var(--rule); border-radius: 12px; padding: 16px 18px; display: grid; gap: 10px; min-width: 0; align-content: start; }
 .card .sub { color: var(--ink-2); font-size: 0.9rem; }
@@ -485,12 +488,17 @@ def _delta_html(t, compared: str) -> str:
     if t.delta_pct is None:
         return ""
     if abs(t.delta_pct) < 0.05:
-        return f'<span class="delta flat">● no change <span class="vs">vs {esc(compared)}</span></span>'
+        return f'<span class="delta flat"><span class="num">● no change</span><span class="vs">vs {esc(compared)}</span></span>'
     arrow = "▲" if t.delta_pct > 0 else "▼"
-    text = (f"{t.delta_pct:+.1f} pts" if t.unit == "pct" else f"{t.delta_pct:+.1f}%") + (f" {t.note}" if t.note else "")
+    suffix = " pts" if t.unit == "pct" else "%"
+    text = f"{t.delta_pct:+.1f}{suffix}" + (f" {t.note}" if t.note else "")
+    ci = f"95% confidence interval {t.ci[0]:+.1f} to {t.ci[1]:+.1f}{suffix}" if t.ci else ""
+    if t.significant is False:   # could be noise: neither green nor red
+        return (f'<span class="delta flat" title="{esc(ci)}: the change could be noise"><span class="num">{arrow} {esc(text)}</span>'
+                f'<span class="noise">within noise</span><span class="vs">vs {esc(compared)}</span></span>')
     meaning = "an improvement" if t.good else "a deterioration"
-    return (f'<span class="delta {"good" if t.good else "bad"}" title="{meaning}">{arrow} {esc(text)} '
-            f'<span class="vs">vs {esc(compared)}</span></span>')
+    return (f'<span class="delta {"good" if t.good else "bad"}" title="{esc(meaning + (" · " + ci if ci else ""))}">'
+            f'<span class="num">{arrow} {esc(text)}</span><span class="vs">vs {esc(compared)}</span></span>')
 
 
 def _status(score: float) -> tuple[str, str, str]:
@@ -568,7 +576,9 @@ def to_business_brief(d: Decision, metrics: dict, *, title: str = "Business brie
                         for t in rest)
         sections.append(f'<section class="section" aria-label="Key figures"><div class="hero">{hero_html}<div class="tiles">{tiles}</div></div>'
                         + ('<p class="foot">Figures are for the latest complete period; arrows compare it with the one before. '
-                           "Green means better for the business (fewer days to ship is better), red means worse.</p>" if s.compared_with else "")
+                           "Green means better for the business (fewer days to ship is better), red means worse; <b>within noise</b> means the "
+                           "change's 95% confidence interval includes zero, so it could be normal variation. Hover a change for its interval.</p>"
+                           if s.compared_with else "")
                         + "</section>")
 
     # ── Context: what the data is ────────────────────────────────────────

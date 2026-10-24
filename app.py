@@ -353,8 +353,12 @@ if run:
             for col, t in zip(st.columns(4), summary.tiles[row:row + 4]):
                 delta = None if t.delta_pct is None else ((f"{t.delta_pct:+.1f} pts" if t.unit == "pct" else f"{t.delta_pct:+.1f}%")
                                                           + (f" {t.note}" if t.note else ""))
-                col.metric(t.label, tile_value(t) + (" days" if t.unit == "days" else ""), delta,
-                           delta_color="inverse" if GOOD_DIRECTION[t.key] == "down" else "normal", border=True)
+                noise = t.significant is False
+                col.metric(t.label, tile_value(t) + (" days" if t.unit == "days" else ""), (delta + " · within noise") if delta and noise else delta,
+                           delta_color="off" if noise else "inverse" if GOOD_DIRECTION[t.key] == "down" else "normal", border=True,
+                           help=(f"95% confidence interval of the change: {t.ci[0]:+.1f} to {t.ci[1]:+.1f}"
+                                 + (" pts" if t.unit == "pct" else "%") + (". It includes zero, so the change could be noise." if noise else ".")
+                                 if t.ci else None))
 
     st.markdown("#### What to do")
     names = {1: "🔴 Act now", 2: "🟠 Plan", 3: "🟢 Monitor"}

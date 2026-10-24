@@ -39,7 +39,7 @@ def test_a_shorter_month_is_compared_per_day():
     q = m["qoq_last_complete"]
     assert (round(q["pct"], 1), round(q["per_day_pct"], 1), q["days_from"], q["days_to"]) == (-9.7, 0.0, 31, 28)
     s = executive_summary(d, m)
-    assert s.headline == "280 orders in 2022-02 (-9.7% on 2022-01, +0.0% per day)."
+    assert s.headline == "280 orders in 2022-02 (-9.7% on 2022-01, +0.0% per day). That is within normal variation (95% CI -15% to +18%)."
     growth = next(i for i in insights(d, m) if i.area == "Growth")
     assert growth.headline == "Orders fell 9.7% in 2022-02; per day it was flat" and growth.priority == 3
     tile = next(t for t in s.tiles if t.key == "orders")

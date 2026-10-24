@@ -312,11 +312,14 @@ def insights(d: Decision, metrics: dict) -> list[Insight]:
     if q:
         yoy = m.get("yoy") if (m.get("yoy") or {}).get("period") == q["to"] else None   # never another period's YoY
         change, adjusted = effective_change(q), calendar_adjusted(q)
+        test = (m.get("significance") or {}).get("revenue" if main == "revenue" else "orders")
+        real = test["significant"] if test else True
         headline = f"{main.capitalize()} {_moved(q['pct'])} in {q['to']}"
         if adjusted and (abs(change - q["pct"]) >= 2 or (change >= 0) != (q["pct"] >= 0)):
             headline += f"; per day it {_moved(change)}"
         evidence = (f"{q['from']} → {q['to']}: {q['pct']:+.1f}%"
                     + (f"; per day {change:+.1f}% ({q['days_from']} vs {q['days_to']} days with data)" if adjusted else "")
+                    + (f" (95% CI {test['lo']:+.1f}% to {test['hi']:+.1f}%)" if test else "")
                     + (f"; year over year {yoy['pct']:+.1f}%" if yoy else ""))
         if yoy and (yoy["pct"] >= 0) == (change >= 0):
             implication = "The change also holds against the same period a year earlier, so it is not just seasonality."
@@ -326,10 +329,13 @@ def insights(d: Decision, metrics: dict) -> list[Insight]:
             implication = "Without a year of history, seasonality can't be ruled out yet."
         if adjusted:
             implication += " The periods differ in length, so the per-day figure is the fair comparison."
+        if not real:
+            implication = "The change is within normal variation, so it is not yet evidence of a real shift. " + implication
+        priority = 1 if change < -10 and real else 3 if abs(change) < 0.5 or not real else 2
         out.append(Insight("Growth", headline, evidence, implication,
                            "Use the last complete period as the headline, and the year-over-year figure for plans."
                            if change >= 0 else "Find which part of the business fell (see the driver tree) before cutting costs.",
-                           1 if change < -10 else 3 if abs(change) < 0.5 else 2, "measured", "kpi_by_period"))
+                           priority, "measured" if real else "indicative", "kpi_by_period"))
 
     split = m.get("driver_split")
     if split and split.get("delta"):
@@ -345,10 +351,16 @@ def insights(d: Decision, metrics: dict) -> list[Insight]:
             implication = ("Customers spend more per order: price, mix or larger baskets."
                            if up else "Orders got smaller: price, mix or a shift towards smaller customers.")
             action = "Split order value into units per order and price per unit to see which moved."
+        tests = m.get("significance") or {}
+        real = tests.get("orders" if main_driver == "order volume" else "avg_order_value", {}).get("significant", True)
+        checked = "; ".join(f"{name} {t['change']:+.1f}% ({'real' if t['significant'] else 'within normal variation'})"
+                            for name, t in (("orders", tests.get("orders")), ("order value", tests.get("avg_order_value"))) if t)
         out.append(Insight("Drivers", f"{main_driver.capitalize()} accounts for {shares['volume' if main_driver == 'order volume' else 'order_value']:.0%} "
                            "of the movement",
                            f"{split['from']} → {split['to']}: {_money(split['delta'])} = volume {_money(split['volume'])} + order value "
-                           f"{_money(split['order_value'])} + both {_money(split['interaction'])}", implication, action, 2, "measured", "driver_tree"))
+                           f"{_money(split['order_value'])} + both {_money(split['interaction'])}" + (f"; {checked}" if checked else ""),
+                           implication if real else "That effect is within normal variation, so treat it as a lead, not a finding. " + implication,
+                           action, 2, "measured" if real else "indicative", "driver_tree"))
     for col, c in list((m.get("top_contributors") or {}).items())[:2]:
         if abs(c["share"]) >= 30:
             out.append(Insight("Drivers", f"{c['segment']} drove {c['share']:.0f}% of the change", f"by {col}: {_money(c['change'])}",
@@ -449,6 +461,8 @@ class Tile:
     delta_pct: float | None = None    # % change; for percentage tiles, the change in percentage points
     good: bool | None = None          # is the change good for the business?
     note: str = ""
+    significant: bool | None = None   # is the change bigger than normal variation (its 95% interval excludes zero)?
+    ci: tuple[float, float] | None = None   # that 95% interval, in the delta's units
 
 
 @dataclass
@@ -486,6 +500,7 @@ def executive_summary(d: Decision, metrics: dict, title: str = "Business brief")
     last, prev = rows[-1], (rows[-2] if len(rows) >= 2 else None)
     q = m.get("qoq_last_complete") if (m.get("qoq_last_complete") or {}).get("to") == last["period"] else None
     per_day = calendar_adjusted(q)
+    significance = (m.get("significance") or {}) if q else {}
     tiles = []
     for key, label, unit, good_dir in TILE_SPECS:
         if last.get(key) is None:
@@ -499,7 +514,9 @@ def executive_summary(d: Decision, metrics: dict, title: str = "Business brief")
                 delta = 100 * ((last[key] / q["days_to"]) / (prev[key] / q["days_from"]) - 1)
                 note = "per day"
         good = None if delta is None or abs(delta) < 0.05 else (delta > 0) == (good_dir == "up")
-        tiles.append(Tile(key, label, float(last[key]), unit, delta, good, note))
+        test = significance.get(key) if q and delta is not None else None
+        tiles.append(Tile(key, label, float(last[key]), unit, delta, good, note, test["significant"] if test else None,
+                          (test["lo"], test["hi"]) if test else None))
     main = m.get("main_measure", "revenue")
     yoy, split = m.get("yoy"), m.get("driver_split")
     yoy = yoy if (yoy or {}).get("period") == last["period"] else None       # never attach another period's YoY
@@ -510,13 +527,18 @@ def executive_summary(d: Decision, metrics: dict, title: str = "Business brief")
     if yoy:
         parts.append(f"{yoy['pct']:+.1f}% year over year")
     headline = parts[0] + (" (" + ", ".join(parts[1:]) + ")" if len(parts) > 1 else "") + "."
+    test = significance.get("revenue" if main == "revenue" else "orders")
+    if test and not test["significant"]:
+        headline += f" That is within normal variation (95% CI {test['lo']:+.0f}% to {test['hi']:+.0f}%)."
     if split and split.get("delta"):
         shares = effect_shares(split)
-        if shares["volume"] >= shares["order_value"]:
+        volume_led = shares["volume"] >= shares["order_value"]
+        if volume_led:
             driver = "more orders" if split["volume"] > 0 else "fewer orders"
         else:
             driver = "bigger orders" if split["order_value"] > 0 else "smaller orders"
-        headline += f" Most of the movement came from {driver}."
+        if significance.get("orders" if volume_led else "avg_order_value", {}).get("significant", True):
+            headline += f" Most of the movement came from {driver}."
     return Summary(title, last["period"], prev["period"] if prev else "", headline, tiles, found, trust, coverage)
 
 
