@@ -123,8 +123,29 @@ class Dialect:
     def month(self, expr: str) -> str:
         return f"MONTH({expr})" if self.name == "mysql" else f"EXTRACT(MONTH FROM {expr})::int"
 
+    def isoyear(self, expr: str) -> str:
+        """The ISO week-numbering year: 2 January 2021 belongs to week 53 of 2020."""
+        if self.name == "mysql":
+            return f"YEARWEEK({expr}, 3) DIV 100"
+        return f"EXTRACT(ISOYEAR FROM {expr})::int" if self.name == "postgres" else f"isoyear({expr})"
+
+    def isoweek(self, expr: str) -> str:
+        """The ISO week number, 1-53 (weeks start on Monday; week 1 holds the year's first Thursday)."""
+        if self.name == "mysql":
+            return f"WEEK({expr}, 3)"
+        return f"EXTRACT(WEEK FROM {expr})::int" if self.name == "postgres" else f"week({expr})"
+
+    def week_index(self, expr: str, timestamps: bool = False) -> str:
+        """Weeks since Monday 5 January 1970: consecutive weeks differ by 1, across 52- and 53-week years alike."""
+        days = self.days_between(self.date_literal("1970-01-05"), expr, timestamps)
+        if self.name == "mysql":
+            return f"FLOOR({days} / 7.0)"
+        if self.name == "postgres":
+            return f"FLOOR(({days}) / 7.0)::int"
+        return f"CAST(FLOOR(({days}) / 7.0) AS BIGINT)"
+
     def period(self, unit: str, expr: str) -> str:
-        return {"quarter": self.quarter, "month": self.month}[unit](expr)
+        return {"quarter": self.quarter, "month": self.month, "week": self.isoweek}[unit](expr)
 
     # ── Numbers ──────────────────────────────────────────────────────────
     def round(self, expr: str, digits: int = 2) -> str:

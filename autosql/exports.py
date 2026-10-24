@@ -21,7 +21,7 @@ import zipfile
 import pandas as pd
 
 from .business import data_dictionary_markdown, kpi_dictionary_markdown
-from .codegen import CHART_SETUP, Cell, _topological, assumptions
+from .codegen import CHART_SETUP, CHECK_HELPERS, Cell, _topological, assumptions
 from .decision import Decision
 from .dialect import LABELS, Dialect
 from .loading import Catalog
@@ -224,7 +224,7 @@ print({name: len(df) for name, df in source.items()})
 
 def setup_code(catalog: Catalog) -> str:
     spec = {name: t.types for name, t in catalog.tables.items()}
-    return SETUP.strip("\n").replace("__TYPES__", json.dumps(spec, indent=4)) + "\n\n" + CHART_SETUP
+    return SETUP.strip("\n").replace("__TYPES__", json.dumps(spec, indent=4)) + "\n\n" + CHART_SETUP + "\n\n" + CHECK_HELPERS
 
 
 def to_notebook(cells: list[Cell], d: Decision, catalog: Catalog, source: str = "uploaded files") -> str:

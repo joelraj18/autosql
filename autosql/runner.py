@@ -24,7 +24,7 @@ import matplotlib.pyplot as plt  # noqa: E402
 import numpy as np  # noqa: E402
 import pandas as pd  # noqa: E402
 
-from .codegen import CHART_SETUP, Cell  # noqa: E402
+from .codegen import CHART_SETUP, CHECK_HELPERS, Cell  # noqa: E402
 from .loading import Catalog, build_database  # noqa: E402
 
 STATEMENT_TIMEOUT_S = 60
@@ -91,6 +91,7 @@ def _run_cells(cells: list[Cell], catalog: Catalog, on_cell: Callable[[int, Cell
     ns: dict = {"pd": pd, "np": np, "plt": plt, "metrics": {}, "source": {name: t.df for name, t in catalog.tables.items()},
                 "previous": {}}
     exec(CHART_SETUP, ns)  # the palette and axis style every check's charts use
+    exec(CHECK_HELPERS, ns)  # period labels and statistics the checks call (autosql/checklib.py)
     results: list[CellResult] = []
     failed = False
     plt.close("all")

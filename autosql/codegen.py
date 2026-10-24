@@ -19,6 +19,7 @@ import difflib
 import re
 import textwrap
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Callable
 
 from .decision import (MIN_PERIODS_FOR_CORR, NTILE_BUCKETS, TOP_N, TREND_MIN_BASELINE, TREND_WINDOW, TREND_Z_LIMIT, Decision, Dimension,
@@ -31,6 +32,8 @@ from .schema import Relationship
 # Colours follow the reference data-viz palette: slot 1 blue for a single series, slot 2 orange for the suspected
 # driver, a blue <-> red diverging pair for increases / decreases, a neutral ink for totals, a light grey for
 # de-emphasised marks (partial periods), and a one-hue blue ramp for magnitude (heatmaps).
+CHECK_HELPERS = (Path(__file__).with_name("checklib.py")).read_text(encoding="utf-8")   # period labels, statistics: see checklib.py
+
 CHART_SETUP = """
 import matplotlib as mpl
 from matplotlib.colors import LinearSegmentedColormap
@@ -226,12 +229,15 @@ class Builder:
     def date_col(self) -> str | None:
         return self.d.date[1] if self.d.date else None
 
-    def period_select(self, D: Dialect, expr: str) -> list[str]:
+    def period_exprs(self, D: Dialect, expr: str) -> list[str]:
+        """The expressions a period is grouped by, in the order of ``d.period_cols``."""
         d = self.d
-        cols = [f"{D.year(expr)} AS {d.year_col}"]
-        if d.number_col:
-            cols.append(f"{D.period(d.period, expr)} AS {d.number_col}")
-        return cols
+        if d.period == "week":
+            return [D.isoyear(expr), D.isoweek(expr), D.week_index(expr, d.date_is_timestamp)]
+        return [D.year(expr)] + ([D.period(d.period, expr)] if d.number_col else [])
+
+    def period_select(self, D: Dialect, expr: str) -> list[str]:
+        return [f"{e} AS {c}" for e, c in zip(self.period_exprs(D, expr), self.d.period_cols)]
 
     def period_where(self, p: Period, prefix: str = "") -> str:
         d = self.d
@@ -645,7 +651,7 @@ def _date_range_cell(b: Builder) -> Cell:
         def per_period(D: Dialect) -> str:
             cq = D.ident(col)
             sel = b.period_select(D, cq)
-            group = [D.year(cq)] + ([D.period(d.period, cq)] if d.number_col else [])
+            group = b.period_exprs(D, cq)
             return fill('''
                 SELECT <<sel>>,
                        COUNT(*) AS row_count,
@@ -705,30 +711,20 @@ def _date_range_cell(b: Builder) -> Cell:
         if "periods" in outputs:
             per = outputs["periods"]
             unit = <<unit>>
-            starts, ends = [], []
-            for row in per.itertuples(index=False):
-                year, number = int(row[0]), (int(row[1]) if unit != "year" else 1)
-                first_month = {"quarter": 3 * number - 2, "month": number, "year": 1}[unit]
-                start = _dt.date(year, first_month, 1)
-                end = (pd.Timestamp(start) + {"quarter": pd.offsets.QuarterEnd(0), "month": pd.offsets.MonthEnd(0),
-                                              "year": pd.offsets.YearEnd(0)}[unit]).date()
-                starts.append(start); ends.append(end)
-            per = per.assign(period_start=starts, period_end=ends)
+            keys = [(int(row[0]), int(row[1]) if unit != "year" else 0) for row in per.itertuples(index=False)]
+            bounds = [period_bounds(unit, y, n) for y, n in keys]
+            per = per.assign(period_start=[b[0] for b in bounds], period_end=[b[1] for b in bounds])
             first_seen = pd.to_datetime(per["first_date"]).dt.date
             last_seen = pd.to_datetime(per["last_date"]).dt.date
             covered = [((min(l, e) - max(f, s)).days + 1) / ((e - s).days + 1) if i in (0, len(per) - 1) else 1.0
                        for i, (f, l, s, e) in enumerate(zip(first_seen, last_seen, per["period_start"], per["period_end"]))]
             per = per.assign(coverage=covered)
-            label = (lambda r: f"{int(r.iloc[0])}-Q{int(r.iloc[1])}") if unit == "quarter" else \\
-                    (lambda r: f"{int(r.iloc[0])}-{int(r.iloc[1]):02d}") if unit == "month" else (lambda r: str(int(r.iloc[0])))
-            partial = [label(r) for _, r in per.iterrows() if r["coverage"] < <<cov>>]
+            partial = [period_label(unit, y, n) for (y, n), cov in zip(keys, covered) if cov < <<cov>>]
             metrics["partial_periods"] = partial
             metrics["periods_seen"] = len(per)
-            per_year = {"quarter": 4, "month": 12, "year": 1}[unit]
-            index = [int(r.iloc[0]) * per_year + (int(r.iloc[1]) - 1 if unit != "year" else 0) for _, r in per.iterrows()]
+            index = [period_index(unit, y, n) for y, n in keys]
             missing = sorted(set(range(min(index), max(index) + 1)) - set(index)) if index else []
-            missing = [f"{i // 4}-Q{i % 4 + 1}" if unit == "quarter" else f"{i // 12}-{i % 12 + 1:02d}" if unit == "month" else str(i)
-                       for i in missing]
+            missing = [label_from_index(unit, i) for i in missing]
             metrics["missing_periods"] = missing
             if missing:
                 note(f"⚠️ **No rows at all in {', '.join(missing[:6])}**. A gap is either a real stop or a loading problem; "
@@ -1286,16 +1282,21 @@ def _kpis_cell(b: Builder) -> Cell:
     return Cell("kpis", "Headline KPIs", SECTIONS[4], story, (stmt("kpis", "Headline KPIs", sql),), check)
 
 
+PERIOD_CTE = {"quarter": "quarterly", "month": "monthly", "year": "yearly", "week": "weekly"}
+
+
 def _period_index(b: Builder) -> str:
     """year × 4 + quarter (or × 12 + month, or the year): consecutive periods differ by exactly 1, even across a gap."""
     d = b.d
+    if d.period == "week":
+        return "week_index"
     per_year = {"quarter": 4, "month": 12}.get(d.period)
     return f"{d.year_col} * {per_year} + {d.number_col}" if per_year else d.year_col
 
 
 def _period_ctes(b: Builder, D: Dialect, extra: list[str], name: str | None = None, flag_partial: bool = False) -> str:
     d = b.d
-    name = name or {"quarter": "quarterly", "month": "monthly", "year": "yearly"}[d.period]
+    name = name or PERIOD_CTE[d.period]
     cols = list(d.period_cols) + [f"{_period_index(b)} AS period_index"]
     if flag_partial:   # 1 for a period with too few days of data: never the base of a comparison
         parts = [b.period_where(p) for p in d.partial_periods]
@@ -1312,9 +1313,9 @@ def _period_ctes(b: Builder, D: Dialect, extra: list[str], name: str | None = No
 
 def _kpi_by_period_cell(b: Builder) -> Cell:
     d = b.d
-    name = {"quarter": "quarterly", "month": "monthly", "year": "yearly"}[d.period]
-    step = {"quarter": "qoq", "month": "mom", "year": "yoy"}[d.period]
-    year_lag = {"quarter": 4, "month": 12}.get(d.period)
+    name = PERIOD_CTE[d.period]
+    step = {"quarter": "qoq", "month": "mom", "year": "yoy", "week": "wow"}[d.period]
+    year_lag = {"quarter": 4, "month": 12}.get(d.period)        # weeks: no year-over-year (52 or 53 weeks per ISO year)
 
     def sql(D: Dialect) -> str:
         measures = ["SUM(revenue) AS revenue"] if b.money else []
@@ -1392,13 +1393,7 @@ def _kpi_by_period_cell(b: Builder) -> Cell:
         per = result.copy()
         unit, main = <<unit>>, <<main>>
         cols = list(per.columns)
-        def label(row):
-            if unit == "quarter":
-                return f"{int(row[cols[0]])}-Q{int(row[cols[1]])}"
-            if unit == "month":
-                return f"{int(row[cols[0]])}-{int(row[cols[1]]):02d}"
-            return str(int(row[cols[0]]))
-        per["period"] = per.apply(label, axis=1)
+        per["period"] = [period_label(unit, row[cols[0]], row[cols[1]] if unit != "year" else 0) for _, row in per.iterrows()]
         status = per["period_status"] if "period_status" in per else pd.Series("complete", index=per.index)
         complete = per[status == "complete"]
         change = f"{main}_<<step>>_pct"
@@ -1495,15 +1490,17 @@ def _running_total_cell(b: Builder) -> Cell:
     check = fill('''
         run = result
         cols = list(run.columns)
-        half = run[run["running_pct_of_total"].astype(float) >= 50].iloc[0]
-        when = "-".join(str(int(half[c])) for c in cols[:<<n>>])
+        unit = <<unit>>
+        labels = [period_label(unit, row[cols[0]], row[cols[1]] if unit != "year" else 0) for _, row in run.iterrows()]
+        half_at = int((run["running_pct_of_total"].astype(float) >= 50).to_numpy().argmax())
+        half, when = run.iloc[half_at], labels[half_at]
         metrics["half_reached"] = when
         plt.figure(figsize=(9, 3.5))
         plt.plot(range(len(run)), run["running_<<main>>"].astype(float), color=C_SERIES, marker="o", markersize=5)
-        plt.xticks(range(len(run)), ["-".join(str(int(v)) for v in row) for row in run[cols[:<<n>>]].itertuples(index=False)], rotation=45)
+        plt.xticks(range(len(run)), labels, rotation=45)
         plt.title("Running total of <<main>>"); plt.tight_layout(); plt.show()
         note(f"Half of all <<main>> had been reached by **{when}** ({float(half['running_pct_of_total']):.1f}% at that point).")
-    ''', n=len(d.period_cols), main=main)
+    ''', unit=repr(d.period), main=main)
     return Cell("running_total", "Running total", SECTIONS[5], story, (stmt("running_total", "Running total with a window frame", sql),), check)
 
 
@@ -1904,16 +1901,20 @@ def _drilldown_cell(b: Builder) -> Cell:
 def _cohort_cell(b: Builder) -> Cell:
     d = b.d
     cust, date = d.customer[1], d.date[1]
-    per_year = {"quarter": 4, "month": 12, "year": 1}[d.period]
+    per_year = {"quarter": 4, "month": 12, "year": 1}.get(d.period)
     unit = d.period
 
     def sql(D: Dialect) -> str:
         c, dt = D.ident(cust), D.ident(date)
         index = lambda y, n: f"{y} * {per_year} + {n}" if d.number_col else y  # noqa: E731
-        cohort_cols = [f"{D.year('first_date')} AS cohort_year"] + ([f"{D.period(unit, 'first_date')} AS cohort_number"] if d.number_col else [])
+        names = ["cohort_year", "cohort_number", "cohort_index"][:len(d.period_cols)]
+        cohort_cols = [f"{e} AS {n}" for e, n in zip(b.period_exprs(D, "first_date"), names)]
         act = ", ".join(d.period_cols)
-        since = f"({index('a.' + d.year_col, 'a.' + (d.number_col or ''))}) - ({index('c.cohort_year', 'c.cohort_number')})"
-        group = ["c.cohort_year"] + (["c.cohort_number"] if d.number_col else [])
+        if unit == "week":
+            since = "a.week_index - c.cohort_index"
+        else:
+            since = f"({index('a.' + d.year_col, 'a.' + (d.number_col or ''))}) - ({index('c.cohort_year', 'c.cohort_number')})"
+        group = [f"c.{n}" for n in names]
         return fill('''
             WITH first_orders AS (
                 SELECT <<c>>, MIN(<<dt>>) AS first_date
@@ -1947,13 +1948,14 @@ def _cohort_cell(b: Builder) -> Cell:
         "customers come back as often as older ones did.",
         f"We group customers by the {unit} of their first order and count how many are active in each later {unit}, so that retention is measured per cohort.",
         f"`first_orders` finds each customer's first order (MIN), `cohorts` turns it into a {unit}, `activity` lists the {unit}s in which each customer "
-        f"ordered, and the join counts active customers by cohort and by {unit}s since the first order (year × {per_year} + {unit} arithmetic, which works in every dialect).",
+        f"ordered, and the join counts active customers by cohort and by {unit}s since the first order ("
+        + ("the difference of two week indexes" if unit == "week" else f"year × {per_year} + {unit} arithmetic") + ", which works in every dialect).",
     )
     check = fill('''
         coh = result.copy()
         cols = list(coh.columns)
-        key = cols[:-2]
-        coh["cohort"] = coh[key].astype(int).astype(str).agg("-".join, axis=1)
+        unit = <<unit>>
+        coh["cohort"] = [period_label(unit, row[cols[0]], row[cols[1]] if unit != "year" else 0) for _, row in coh.iterrows()]
         grid = coh.pivot_table(index="cohort", columns=cols[-2], values="active_customers", aggfunc="sum").sort_index()
         size = grid[0]
         retention = grid.div(size, axis=0) * 100
@@ -1966,7 +1968,7 @@ def _cohort_cell(b: Builder) -> Cell:
         biggest = size.idxmax()
         note(f"Largest cohort: **{biggest}** with {int(size.max()):,} new customers. " + (
              f"A period after their first order, {retention[1].mean():.0f}% of a cohort is active again on average." if 1 in retention else ""))
-    ''')
+    ''', unit=repr(unit))
     return Cell("cohort", f"Cohorts by first-order {unit}", SECTIONS[6], story, (stmt("cohort", f"Active customers by cohort and {unit}s since first order", sql),), check)
 
 
@@ -2297,8 +2299,7 @@ def _trend_signals_cell(b: Builder) -> Cell:
         sig = result.copy()
         cols = list(sig.columns)
         n = <<n>>
-        sig["period"] = ["-Q".join(str(int(v)) for v in r) if <<quarter>> else "-".join(f"{int(v):02d}" if i else str(int(v)) for i, v in enumerate(r))
-                         for r in sig[cols[:n]].itertuples(index=False)]
+        sig["period"] = [period_label(<<unit_name>>, row[cols[0]], row[cols[1]] if n > 1 else 0) for _, row in sig.iterrows()]
         partial = set(<<partial>>)
         sig["partial"] = sig["period"].isin(partial)
         z = sig["z_score"].astype(float)
@@ -2325,7 +2326,7 @@ def _trend_signals_cell(b: Builder) -> Cell:
                  "the movement is within normal noise.")
         else:
             note(f"No <<unit>> has <<min_base>> earlier complete <<unit>>s yet, so no z-score is computed; the moving average still shows the direction.")
-    ''', n=len(d.period_cols), quarter=d.period == "quarter", partial=repr([d.label(p) for p in d.partial_periods]), main=main,
+    ''', n=len(d.period_cols), unit_name=repr(d.period), partial=repr([d.label(p) for p in d.partial_periods]), main=main,
         unit=d.period, limits=repr(TREND_Z_LIMIT), window=TREND_WINDOW, min_base=TREND_MIN_BASELINE)
     return Cell("trend_signals", "Moving average and unusual periods", SECTIONS[5], story,
                 (stmt("trend_signals", f"Moving average and z-score per {d.period} (RANGE frames)", sql),), check)
@@ -2572,7 +2573,7 @@ def assumptions(d: Decision) -> list[str]:
     if d.line_level:
         out.append(f"`order_facts` has one row per order (`{d.order_key}`); `line_facts` one row per line. AOV = revenue ÷ distinct orders.")
     if d.date:
-        out.append(f"Periods are {d.period}s of `{d.date[0]}.{d.date[1]}`.")
+        out.append(f"Periods are {'ISO weeks (Monday to Sunday)' if d.period == 'week' else d.period + 's'} of `{d.date[0]}.{d.date[1]}`.")
     for p in d.partial_periods:
         out.append(f"{d.label(p)} is partial ({p.coverage:.0%} of its days have data) and is excluded from period-over-period verdicts.")
     if d.lead:

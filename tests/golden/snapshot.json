@@ -1786,6 +1786,139 @@
    }
   }
  },
+ "case:ten_weeks": {
+  "fanouts": [],
+  "relationships": [],
+  "skipped": [],
+  "tables": {
+   "orders": {
+    "ambiguous_dates": [],
+    "cleaned": {},
+    "column_map": {
+     "amount": "amount",
+     "customer_id": "customer_id",
+     "order_date": "order_date",
+     "order_id": "order_id",
+     "region": "region",
+     "ship_date": "ship_date"
+    },
+    "columns": {
+     "amount": [
+      "measure",
+      "amount",
+      0,
+      682,
+      "",
+      [],
+      0.0,
+      0,
+      "np.float64(1.99)",
+      "np.float64(420.3)",
+      "a money amount"
+     ],
+     "customer_id": [
+      "identifier",
+      "",
+      0,
+      119,
+      "",
+      [],
+      0.0,
+      0,
+      "1",
+      "119",
+      "named like an ID or code"
+     ],
+     "order_date": [
+      "datetime",
+      "",
+      0,
+      68,
+      "",
+      [],
+      0.0,
+      0,
+      "2022-01-05T00:00:00",
+      "2022-03-13T00:00:00",
+      "dates"
+     ],
+     "order_id": [
+      "identifier",
+      "",
+      0,
+      700,
+      "",
+      [],
+      0.0,
+      0,
+      "1",
+      "700",
+      "named like an ID or code"
+     ],
+     "region": [
+      "dimension",
+      "",
+      0,
+      3,
+      "",
+      [],
+      4.68,
+      5,
+      "",
+      "",
+      "3 labels to group by"
+     ],
+     "ship_date": [
+      "datetime",
+      "",
+      0,
+      72,
+      "",
+      [],
+      0.0,
+      0,
+      "2022-01-06T00:00:00",
+      "2022-03-18T00:00:00",
+      "dates"
+     ]
+    },
+    "date_formats": {
+     "order_date": "%Y-%m-%d",
+     "ship_date": "%Y-%m-%d"
+    },
+    "duplicate_keys": 0,
+    "exact_duplicates": 0,
+    "extra_rows": 0,
+    "grain": "one row per `order_id`",
+    "hashes": {
+     "amount": "d32300421344f199",
+     "customer_id": "90195f71c5dc9cca",
+     "order_date": "e9775ced88685757",
+     "order_id": "d937c8307bc68091",
+     "region": "0b760d098c5ce213",
+     "ship_date": "7d75c44cd8000d0c"
+    },
+    "key_status": "single",
+    "placeholders": {},
+    "primary_key": [
+     "order_id"
+    ],
+    "rows": 700,
+    "source": "orders.csv",
+    "types": {
+     "amount": "decimal",
+     "customer_id": "integer",
+     "order_date": "date",
+     "order_id": "integer",
+     "region": "text",
+     "ship_date": "date"
+    },
+    "units": {},
+    "unparsed_dates": {},
+    "unparsed_numbers": {}
+   }
+  }
+ },
  "case:tickets_count_only": {
   "fanouts": [],
   "relationships": [],

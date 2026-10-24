@@ -20,6 +20,7 @@ from dataclasses import dataclass, field
 
 import pandas as pd
 
+from . import checklib
 from .loading import Catalog
 from .narrative import Step, story
 from .profiling import CatalogProfile, ColumnProfile, TableProfile, singular
@@ -30,10 +31,12 @@ MAX_DIM_NULL = 0.30           # a dimension may be empty in at most 30% of rows
 MAX_DIMENSIONS = 3
 PERIOD_COVERAGE = 0.90        # a period with data on < 90% of its days is partial
 MIN_COMPLETE_QUARTERS = 4     # fewer complete quarters -> months
+MIN_COMPLETE_MONTHS = 3       # fewer complete months -> ISO weeks (short uploads)
+MIN_COMPLETE_WEEKS = 4        # ... when there are at least this many complete weeks
 YEARS_FOR_YEARLY = 5          # more than 5 years of data -> years
 MIN_LEAD_SHARE = 0.90         # a "ship" date must be on/after the order date in >= 90% of rows
 SMALL_TABLE = 100             # largest table smaller than this -> warn that KPIs are fragile
-PER_YEAR = {"quarter": 4, "month": 12, "year": 1}
+PER_YEAR = {"quarter": 4, "month": 12, "year": 1}   # for weeks, checklib.period_index counts Mondays instead
 TOP_N = 3
 NTILE_BUCKETS = 5
 MIN_PERIODS_FOR_CORR = 6      # a correlation across fewer periods is noise
@@ -67,7 +70,7 @@ class Dimension:
 @dataclass(frozen=True)
 class Period:
     year: int
-    number: int                                 # quarter 1-4 or month 1-12; 0 for whole years
+    number: int                                 # quarter 1-4, month 1-12 or ISO week 1-53 (year = ISO year); 0 for whole years
     start: dt.date
     end: dt.date
     first_seen: dt.date
@@ -91,11 +94,11 @@ class Period:
         return self.coverage >= PERIOD_COVERAGE
 
     def index(self, unit: str) -> int:
-        """A running number: consecutive periods differ by exactly 1 (year × 4 + quarter, year × 12 + month, year)."""
-        return self.year * PER_YEAR[unit] + self.number if unit in ("quarter", "month") else self.year
+        """A running number: consecutive periods differ by exactly 1 (year × 4 + quarter, year × 12 + month, weeks since 1970)."""
+        return checklib.period_index(unit, self.year, self.number)
 
     def label(self, unit: str) -> str:
-        return {"quarter": f"{self.year}-Q{self.number}", "month": f"{self.year}-{self.number:02d}"}.get(unit, str(self.year))
+        return checklib.period_label(unit, self.year, self.number)
 
 
 @dataclass
@@ -167,15 +170,7 @@ class Decision:
             return []
         seen = {p.index(self.period) for p in self.periods}
         first, last = min(seen), max(seen)
-        out = []
-        for i in range(first, last + 1):
-            if i not in seen:
-                if self.period == "year":
-                    out.append(str(i))
-                else:
-                    year, number = divmod(i - 1, PER_YEAR[self.period])
-                    out.append(f"{year}-Q{number + 1}" if self.period == "quarter" else f"{year}-{number + 1:02d}")
-        return out
+        return [checklib.label_from_index(self.period, i) for i in range(first, last + 1) if i not in seen]
 
     @property
     def compare(self) -> tuple[Period, Period] | None:
@@ -198,15 +193,17 @@ class Decision:
     @property
     def year_col(self) -> str:
         stem = re.sub(r"(_date|_at|_on|_time|_timestamp|_dt)$", "", self.date[1]) if self.date else "period"
-        return f"{stem}_year" if stem not in ("date", self.date[1] if self.date else "") else "period_year"
+        stem = stem if stem not in ("date", self.date[1] if self.date else "") else "period"
+        return f"{stem}_isoyear" if self.period == "week" else f"{stem}_year"   # weeks belong to an ISO year (1 Jan can be week 53)
 
     @property
     def number_col(self) -> str | None:
-        return {"quarter": "quarter_number", "month": "month_number"}.get(self.period or "")
+        return {"quarter": "quarter_number", "month": "month_number", "week": "week_number"}.get(self.period or "")
 
     @property
     def period_cols(self) -> list[str]:
-        return [self.year_col] + ([self.number_col] if self.number_col else [])
+        """The columns a period is grouped by. Weeks also carry week_index, the gap-safe running number."""
+        return [self.year_col] + ([self.number_col] if self.number_col else []) + (["week_index"] if self.period == "week" else [])
 
     def label(self, p: Period) -> str:
         return p.label(self.period or "year")
@@ -240,25 +237,16 @@ def compute_periods(dates: pd.Series, unit: str) -> list[Period]:
     dates = pd.to_datetime(dates.dropna())
     if dates.empty:
         return []
-    frame = pd.DataFrame({"d": dates, "y": dates.dt.year})
-    if unit == "quarter":
-        frame["n"] = dates.dt.quarter
-    elif unit == "month":
-        frame["n"] = dates.dt.month
+    if unit == "week":
+        iso = dates.dt.isocalendar()
+        frame = pd.DataFrame({"d": dates, "y": iso["year"].astype(int), "n": iso["week"].astype(int)})
     else:
-        frame["n"] = 0
+        frame = pd.DataFrame({"d": dates, "y": dates.dt.year})
+        frame["n"] = dates.dt.quarter if unit == "quarter" else dates.dt.month if unit == "month" else 0
     out = []
     for (y, n), g in frame.groupby(["y", "n"]):
-        y, n = int(y), int(n)
-        if unit == "quarter":
-            start = dt.date(y, 3 * n - 2, 1)
-            end = (pd.Timestamp(start) + pd.offsets.QuarterEnd(0)).date()
-        elif unit == "month":
-            start = dt.date(y, n, 1)
-            end = (pd.Timestamp(start) + pd.offsets.MonthEnd(0)).date()
-        else:
-            start, end = dt.date(y, 1, 1), dt.date(y, 12, 31)
-        out.append(Period(y, n, start, end, g["d"].min().date(), g["d"].max().date(), len(g)))
+        start, end = checklib.period_bounds(unit, y, n)
+        out.append(Period(int(y), int(n), start, end, g["d"].min().date(), g["d"].max().date(), len(g)))
     # only the first and last periods can be cut off by the extract; inner ones are complete by definition
     for i, p in enumerate(out):
         if 0 < i < len(out) - 1:
@@ -570,12 +558,17 @@ def _choose_period(d: Decision, catalog: Catalog, dcol: ColumnProfile) -> None:
     first, last = pd.Timestamp(dcol.minimum), pd.Timestamp(dcol.maximum)
     years = (last - first).days / 365.25
     quarters = compute_periods(dates, "quarter")
+    complete = lambda unit: sum(p.complete for p in compute_periods(dates, unit))  # noqa: E731
     if years > YEARS_FOR_YEARLY:
         d.period = "year"
         why = f"The data spans {years:.0f} years, so quarters would be too many points to read."
     elif sum(p.complete for p in quarters) >= MIN_COMPLETE_QUARTERS:
         d.period = "quarter"
         why = f"It covers {sum(p.complete for p in quarters)} complete quarters: enough for quarter-over-quarter and, with 5 or more, year-over-year."
+    elif (months := complete("month")) < MIN_COMPLETE_MONTHS and (weeks := complete("week")) >= MIN_COMPLETE_WEEKS:
+        d.period = "week"
+        why = (f"It covers only {months} complete month(s) but {weeks} complete ISO weeks (Monday to Sunday), so weeks are the "
+               "smallest period with enough points to see a trend.")
     else:
         d.period = "month"
         why = "It covers fewer than 4 complete quarters, so months give enough points to see a trend."
@@ -583,7 +576,7 @@ def _choose_period(d: Decision, catalog: Catalog, dcol: ColumnProfile) -> None:
     d.multi_year = len({p.year for p in d.periods}) > 1 and d.period != "year"
     nulls = f" (empty in {dcol.n_null:,} rows)" if dcol.n_null else ""
     multi = " (year *and* quarter, because the data spans more than one year)" if d.multi_year and d.period == "quarter" else \
-            " (year and month)" if d.multi_year else ""
+            " (ISO year and week)" if d.period == "week" else " (year and month)" if d.multi_year else ""
     d.steps.append(story("date_chosen", table=dcol.table, col=dcol.name, start=first.date(), end=last.date(), nulls=nulls,
                          why=why, period=d.period, multi=multi))
     for p in d.partial_periods:

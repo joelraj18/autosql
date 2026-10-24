@@ -105,10 +105,13 @@ MONTHS = "Jan Feb Mar Apr May Jun Jul Aug Sep Oct Nov Dec".split()
 
 
 def period_parts(label: str) -> tuple[str, str]:
-    """'1996-Q3' -> ('Q3', '1996'), '1996-07' -> ('Jul', '1996'), '1996' -> ('1996', '')."""
+    """'1996-Q3' -> ('Q3', '1996'), '1996-07' -> ('Jul', '1996'), '2022-W07' -> ('W07', '2022'), '1996' -> ('1996', '')."""
     if "-Q" in label:
         year, q = label.split("-Q")
         return f"Q{q}", year
+    if "-W" in label:
+        year, w = label.split("-W")
+        return f"W{w}", year
     if len(label) == 7 and label[4] == "-":
         return MONTHS[int(label[5:]) - 1], label[:4]
     return label, ""

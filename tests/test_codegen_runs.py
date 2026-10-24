@@ -71,6 +71,16 @@ def gap_quarter_frame():
                          "amount": rng.uniform(1, 9, len(days)).round(2), "order_date": days.strftime("%Y-%m-%d")})
 
 
+def ten_weeks_frame():
+    """Ten weeks of orders (5 Jan to 13 Mar 2022): too short for months, so the engine analyses ISO weeks."""
+    rng = np.random.default_rng(11)
+    n = 700
+    day = pd.Timestamp("2022-01-05") + pd.to_timedelta(np.sort(rng.integers(0, 68, n)), unit="D")
+    return pd.DataFrame({"order_id": range(1, n + 1), "customer_id": rng.integers(1, 120, n), "region": rng.choice(["North", "South", "East"], n),
+                         "amount": rng.gamma(2, 40, n).round(2), "order_date": day.strftime("%Y-%m-%d"),
+                         "ship_date": (day + pd.to_timedelta(rng.integers(1, 6, n), unit="D")).strftime("%Y-%m-%d")})
+
+
 def double_loaded_frames():
     """The shop with five order lines loaded twice: exact copies the views must drop."""
     frames = shop_frames()
@@ -92,6 +102,7 @@ CASES = {
     "tickets_count_only": ({"tickets": tickets_frame}, "auto", ()),
     "gap_quarter": ({"orders": gap_quarter_frame}, "auto", ()),
     "double_loaded": (double_loaded_frames, "auto", ()),
+    "ten_weeks": ({"orders": ten_weeks_frame}, "auto", ()),
 }
 
 
@@ -244,3 +255,18 @@ def test_trend_signals_ignore_noise_and_find_a_real_break():
     assert [u["period"] for u in m["unusual_periods"]] == ["2021-Q3"] and m["unusual_periods"][0]["baseline"] >= 4
     sql = {c.id: c for c in build_cells(d)}["trend_signals"].statements[0].sql["mysql"]
     assert "RANGE BETWEEN 8 PRECEDING AND 1 PRECEDING" in sql and "COUNT(baseline_value) OVER" in sql
+
+
+def test_short_uploads_are_analysed_by_iso_week(northwind_catalog):
+    catalog, d, cells = build("ten_weeks", northwind_catalog)
+    assert d.period == "week" and d.period_cols == ["order_isoyear", "week_number", "week_index"]
+    assert [d.label(p) for p in d.partial_periods] == ["2022-W01"] and d.label(d.complete_periods[-1]) == "2022-W10"
+    base = {c.id: c for c in cells}["base"].statements[0].sql
+    assert "YEARWEEK(order_date, 3) DIV 100 AS order_isoyear" in base["mysql"] and "WEEK(order_date, 3) AS week_number" in base["mysql"]
+    assert "FLOOR(DATEDIFF(order_date, DATE '1970-01-05') / 7.0) AS week_index" in base["mysql"]
+    assert "EXTRACT(ISOYEAR FROM order_date)::int AS order_isoyear" in base["postgres"]
+    assert "FLOOR((order_date - DATE '1970-01-05') / 7.0)::int AS week_index" in base["postgres"]
+    results, m = run_cells(cells, catalog)
+    assert m["qoq_last_complete"]["from"] == "2022-W09" and m["qoq_last_complete"]["to"] == "2022-W10"
+    assert "yoy" not in m and m["partial_periods"] == ["2022-W01"]
+    assert any("ISO weeks (Monday to Sunday)" in a for a in __import__("autosql").assumptions(d))

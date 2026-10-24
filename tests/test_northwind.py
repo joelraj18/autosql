@@ -54,7 +54,7 @@ def test_periods_and_root_cause(run):
     assert 0.79 < split["volume"] / split["delta"] < 0.81
     assert m["top_contributors"]["category_name"]["segment"] == "Beverages"
     assert m["driver_vs_symptom"]["driver"] == "avg_ship_days" and abs(m["driver_vs_symptom"]["driver_change_pct"]) < 10
-    assert m["cohort_sizes"]["1996-3"] == 43
+    assert m["cohort_sizes"]["1996-Q3"] == 43
 
 
 def test_windows_and_traps(run):

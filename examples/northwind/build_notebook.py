@@ -25,7 +25,7 @@ ROOT = HERE.parents[1]
 sys.path.insert(0, str(ROOT))
 
 from autosql import build_cells, decide, infer_schema, profile_catalog, read_folder  # noqa: E402
-from autosql.codegen import CHART_SETUP  # noqa: E402
+from autosql.codegen import CHART_SETUP, CHECK_HELPERS  # noqa: E402
 from autosql.exports import to_notebook  # noqa: E402
 
 OUT = HERE / "Northwind_sales_analysis.ipynb"
@@ -187,7 +187,7 @@ def build() -> nbformat.NotebookNode:
     decision = decide(catalog, profile, schema)
     nb = nbformat.reads(to_notebook(build_cells(decision), decision, catalog, "the Northwind CSVs in this folder"), as_version=4)
     generated = nb.cells[3:]  # after the generated title, the "Setup" heading and its code cell
-    cells = [new_markdown_cell(INTRO.strip()), new_markdown_cell("## Setup"), new_code_cell(SETUP.strip() + "\n\n" + CHART_SETUP),
+    cells = [new_markdown_cell(INTRO.strip()), new_markdown_cell("## Setup"), new_code_cell(SETUP.strip() + "\n\n" + CHART_SETUP + "\n\n" + CHECK_HELPERS),
              new_markdown_cell("# Part 1: what a naive analysis gets wrong")]
     for title, found, why, code in TRAPS:
         cells.append(new_markdown_cell(f"### {title}\n\n🔍 **What we found before:** {found}  \n💡 **Why it matters:** {why}"))
