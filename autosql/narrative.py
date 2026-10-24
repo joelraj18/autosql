@@ -360,11 +360,11 @@ def interpret(metrics: dict) -> list[str]:
                    + (f"; year over year {m['yoy']['period']} is **{m['yoy']['pct']:+.1f}%**." if m.get("yoy") else "."))
     split = m.get("driver_split")
     if split and split.get("delta"):
-        sizes = [abs(split["volume"]), abs(split["order_value"]), abs(split["interaction"])]
+        sizes = [abs(split["volume"]), abs(split["order_value"])]
         main = "the number of orders" if sizes[0] >= sizes[1] else "the average order value"
         share = max(sizes[:2]) / (sum(sizes) or 1.0)
         out.append(f"**What moved it:** {main} accounts for about {share:.0%} of the {split['delta']:+,.2f} movement "
-                   f"(orders {split['volume']:+,.2f}, order value {split['order_value']:+,.2f}, both {split['interaction']:+,.2f}).")
+                   f"(orders {split['volume']:+,.2f}, order value {split['order_value']:+,.2f}; each measured at the average of the other).")
     for col, c in m.get("top_contributors", {}).items():
         out.append(f"By `{col}`, **{c['segment']}** contributed most ({c['change']:+,.2f}, {c['share']:.0f}% of the change).")
     dv = m.get("driver_vs_symptom")

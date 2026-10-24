@@ -252,9 +252,9 @@ class Insight:
 
 
 def effect_shares(split: dict) -> dict[str, float]:
-    """Each effect's share of the total movement, by size: volume, order value and interaction always add up to 100%
-    (a share of the *net* change can exceed 100% when effects pull in opposite directions)."""
-    sizes = {k: abs(split[k]) for k in ("volume", "order_value", "interaction")}
+    """Each effect's share of the total movement, by size, so that the shares add up to 100% (a share of the *net* change can
+    exceed 100% when effects pull in opposite directions). The split is the two-effect Shapley split of the driver tree."""
+    sizes = {k: abs(split.get(k, 0.0)) for k in ("volume", "order_value")}
     total = sum(sizes.values()) or 1.0
     return {k: v / total for k, v in sizes.items()}
 
@@ -357,8 +357,8 @@ def insights(d: Decision, metrics: dict) -> list[Insight]:
                             for name, t in (("orders", tests.get("orders")), ("order value", tests.get("avg_order_value"))) if t)
         out.append(Insight("Drivers", f"{main_driver.capitalize()} accounts for {shares['volume' if main_driver == 'order volume' else 'order_value']:.0%} "
                            "of the movement",
-                           f"{split['from']} → {split['to']}: {_money(split['delta'])} = volume {_money(split['volume'])} + order value "
-                           f"{_money(split['order_value'])} + both {_money(split['interaction'])}" + (f"; {checked}" if checked else ""),
+                           f"{split['from']} → {split['to']}: {_money(split['delta'])} = number of orders {_money(split['volume'])} "
+                           f"+ order value {_money(split['order_value'])}" + (f"; {checked}" if checked else ""),
                            implication if real else "That effect is within normal variation, so treat it as a lead, not a finding. " + implication,
                            action, 2, "measured" if real else "indicative", "driver_tree"))
     for col, c in list((m.get("top_contributors") or {}).items())[:2]:

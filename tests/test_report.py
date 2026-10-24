@@ -54,7 +54,7 @@ def test_northwind_brief(nw):
     assert marks and all('tabindex="0"' in x and "data-tip=" in x for x in marks)
     # the waterfall's steps add up: before + volume + value + both = after
     split = m["driver_split"]
-    assert abs(split["volume"] + split["order_value"] + split["interaction"] - split["delta"]) < 0.01
+    assert abs(split["volume"] + split["order_value"] - split["delta"]) < 0.01
 
 
 def test_fragment_mode_for_hosts_that_add_the_skeleton(nw):

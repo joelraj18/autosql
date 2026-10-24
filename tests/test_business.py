@@ -37,7 +37,7 @@ def test_northwind_trust_and_insights(nw):
     found = insights(d, m)
     assert found[0].area == "Data" and found[0].headline == "1998-Q2 is incomplete" and found[0].priority == 1
     heads = " | ".join(i.headline for i in found)
-    assert "Revenue grew 64.3% in 1998-Q1" in heads and "Order volume accounts for 80% of the movement" in heads
+    assert "Revenue grew 64.3% in 1998-Q1" in heads and "Order volume accounts for 84% of the movement" in heads
     assert "Beverages drove 57% of the change" in heads and "The top 20% of customers bring 60% of revenue" in heads
     assert "Discounts cost 6.5% of gross revenue" in heads and "5 repeat customers are overdue" in heads
     ops = next(i for i in found if i.area == "Operations")
@@ -57,8 +57,8 @@ def test_new_wheels_shape_flags_shipping_for_a_controlled_test(new_wheels_catalo
 
 
 def test_effect_shares_never_exceed_100_percent():
-    shares = effect_shares({"volume": -2.47, "order_value": 1.01, "interaction": -0.25, "delta": -1.71})
-    assert abs(sum(shares.values()) - 1) < 1e-9 and max(shares.values()) < 1
+    shares = effect_shares({"volume": -2.72, "order_value": 1.01, "delta": -1.71})   # effects pulling in opposite directions
+    assert abs(sum(shares.values()) - 1) < 1e-9 and max(shares.values()) < 1 and round(shares["volume"], 2) == 0.73
 
 
 def test_count_only_and_validation_summaries(northwind_catalog):

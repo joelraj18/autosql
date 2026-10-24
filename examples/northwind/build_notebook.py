@@ -2,6 +2,7 @@
 
     python examples/northwind/build_notebook.py          # build + run, saves outputs
     python examples/northwind/build_notebook.py --no-run # build only
+    python examples/northwind/build_notebook.py --brief-only   # only rewrite business_brief.html
 
 The notebook has two parts:
 
@@ -197,7 +198,23 @@ def build() -> nbformat.NotebookNode:
     return nb
 
 
+def write_brief() -> None:
+    """Only rewrite business_brief.html (the notebook's Part 3 writes the same file when it runs)."""
+    from autosql import run_cells
+    from autosql.report import to_business_brief
+    catalog = read_folder(HERE, "*.csv")
+    profile = profile_catalog(catalog)
+    decision = decide(catalog, profile, infer_schema(catalog, profile))
+    _, metrics = run_cells(build_cells(decision), catalog)
+    (HERE / "business_brief.html").write_text(to_business_brief(decision, metrics, title="Northwind Traders",
+                                                                source="the Northwind sample (8 CSV files)"), encoding="utf-8")
+    print(f"wrote {(HERE / 'business_brief.html').relative_to(ROOT)}")
+
+
 def main() -> None:
+    if "--brief-only" in sys.argv:
+        write_brief()
+        return
     nb = build()
     if "--no-run" not in sys.argv:
         from nbclient import NotebookClient

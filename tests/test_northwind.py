@@ -50,8 +50,11 @@ def test_periods_and_root_cause(run):
     assert m["yoy"] == {"period": "1998-Q1", "pct": 115.8}
     split = m["driver_split"]
     assert round(split["delta"], 2) == 116810.09
-    assert round(split["volume"], 2) == 93868.75 and round(split["order_value"], 2) == 15126.16 and round(split["interaction"], 2) == 7815.18
-    assert 0.79 < split["volume"] / split["delta"] < 0.81
+    # Shapley split: each effect at the average of the other, so the two add up exactly (no interaction term to assign)
+    assert round(split["volume"], 2) == 97776.34 and round(split["order_value"], 2) == 19033.75
+    assert abs(split["volume"] + split["order_value"] - split["delta"]) < 1e-6 and 0.83 < split["volume"] / split["delta"] < 0.84
+    classic = split["classic"]                                         # the textbook split, kept for the teaching note
+    assert (round(classic["volume"], 2), round(classic["order_value"], 2), round(classic["interaction"], 2)) == (93868.75, 15126.16, 7815.18)
     assert m["top_contributors"]["category_name"]["segment"] == "Beverages"
     assert m["driver_vs_symptom"]["driver"] == "avg_ship_days" and abs(m["driver_vs_symptom"]["driver_change_pct"]) < 10
     assert m["cohort_sizes"]["1996-Q3"] == 43

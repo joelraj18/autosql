@@ -210,10 +210,10 @@ def period_line(rows: list[dict], key: str, unit: str, title: str) -> str:
 
 
 def waterfall(split: dict, before: str, after: str) -> str:
-    """Before → orders effect → order-value effect → both → after. Totals neutral, increases blue, decreases red."""
+    """Before → orders effect → order-value effect → after (an exact two-effect split). Totals neutral, increases blue, decreases red."""
     start = split["before_value"]
     steps = [(before, start, "total"), ("Orders", split["volume"], "step"), ("Order\nvalue", split["order_value"], "step"),
-             ("Both", split["interaction"], "step"), (after, start + split["delta"], "total")]
+             (after, start + split["delta"], "total")]
     spans, level = [], 0.0
     for name, amount, kind in steps:
         a, b = (0.0, amount) if kind == "total" else (level, level + amount)
@@ -629,11 +629,10 @@ def to_business_brief(d: Decision, metrics: dict, *, title: str = "Business brie
         shares = effect_shares(split)
         cards = [_card("Revenue = orders × average order value",
                        f"{esc(split['from'])} → {esc(split['to'])}: the number of orders explains {shares['volume']:.0%} of the movement, "
-                       f"order value {shares['order_value']:.0%}.",
+                       f"order value {shares['order_value']:.0%}. Each effect is measured at the average of the other, so the two add up exactly.",
                        waterfall(dict(split, before_value=before_value), split["from"], split["to"]),
                        table(["Step", "Amount"], [[split["from"], full(before_value)], ["Number of orders", f"{split['volume']:+,.2f}"],
                                                   ["Average order value", f"{split['order_value']:+,.2f}"],
-                                                  ["Both together", f"{split['interaction']:+,.2f}"],
                                                   [split["to"], full(before_value + split["delta"])]]))]
         for col, seg in list((m.get("segment_changes") or {}).items())[:3]:
             cards.append(_card(f"Change by {col.replace('_', ' ')}", "Blue bars added revenue, red bars removed it; biggest movers first.",
@@ -641,8 +640,8 @@ def to_business_brief(d: Decision, metrics: dict, *, title: str = "Business brie
                                table([col, split["from"], split["to"], "Change"],
                                      [[r["segment"], full(r["before"]), full(r["after"]), f"{r['change']:+,.2f}"] for r in seg])))
         sections.append(_section("drivers", "Drivers", "Why it moved",
-                                 f"The change from {esc(split['from'])} to {esc(split['to'])}, split exactly into its drivers "
-                                 "(the three steps add up to the total) and by segment.", f'<div class="grid2">{"".join(cards)}</div>'))
+                                 f"The change from {esc(split['from'])} to {esc(split['to'])}, split exactly into its two drivers "
+                                 "(the steps add up to the total) and by segment.", f'<div class="grid2">{"".join(cards)}</div>'))
         nav.append(("drivers", "Why"))
 
     # ── Customers ────────────────────────────────────────────────────────

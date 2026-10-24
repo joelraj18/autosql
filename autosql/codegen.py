@@ -1779,7 +1779,7 @@ def _driver_tree_cell(b: Builder) -> Cell:
         f"The last two complete {d.period}s are {lb} and {la}" + (f" ({', '.join(d.label(p) for p in d.partial_periods)} is partial and left out)" if d.partial_periods else "") + ".",
         "'Revenue changed' is a symptom. Revenue = orders × average order value, so the change comes from more or fewer orders, bigger or smaller orders, "
         "or both, and then from particular segments. Splitting it is how a KPI move becomes a cause someone can act on.",
-        f"We split the revenue change from {lb} to {la} into a volume effect, an order-value effect and their interaction, and then by "
+        f"We split the revenue change from {lb} to {la} into a volume effect and an order-value effect that add up exactly, and then by "
         + (_names([x.alias for x in d.dimensions]) if d.dimensions else "segment") + ", so that the change is traced to the part that moved.",
         "The first query computes each driver for both periods. The others use conditional aggregation (SUM(CASE WHEN period = … THEN revenue "
         "ELSE 0 END)) to put both periods side by side per segment, and a window SUM(…) OVER () to express each segment's change as a share of the total change.",
@@ -1790,10 +1790,12 @@ def _driver_tree_cell(b: Builder) -> Cell:
         o1, o2 = float(before.orders), float(after.orders)
         r1, r2 = float(before.revenue), float(after.revenue)
         a1, a2 = r1 / o1, r2 / o2
-        volume, value, both = (o2 - o1) * a1, o1 * (a2 - a1), (o2 - o1) * (a2 - a1)
+        # Shapley split: each effect is measured at the average of the other, so the two add up to the change exactly
+        volume, value = (o2 - o1) * (a1 + a2) / 2, (a2 - a1) * (o1 + o2) / 2
+        classic = {"volume": (o2 - o1) * a1, "order_value": o1 * (a2 - a1), "interaction": (o2 - o1) * (a2 - a1)}
         delta = r2 - r1
-        metrics["driver_split"] = {"from": <<lb>>, "to": <<la>>, "delta": delta, "volume": volume, "order_value": value, "interaction": both}
-        steps = [("before", r1), ("more/fewer orders", volume), ("order value", value), ("interaction", both)]
+        metrics["driver_split"] = {"from": <<lb>>, "to": <<la>>, "delta": delta, "volume": volume, "order_value": value, "classic": classic}
+        steps = [("before", r1), ("more/fewer orders", volume), ("order value", value)]
         fig, ax = plt.subplots(figsize=(8, 3.5))
         level = 0.0
         for i, (name, amount) in enumerate(steps):
@@ -1802,12 +1804,16 @@ def _driver_tree_cell(b: Builder) -> Cell:
             level = amount if i == 0 else level + amount
         ax.bar("after", r2, width=0.6, color=C_TOTAL)
         ax.set_title(<<lb>> + " → " + <<la>> + ": what moved revenue"); plt.tight_layout(); plt.show()
-        sizes = {"orders": abs(volume), "order value": abs(value), "both": abs(both)}
+        sizes = {"orders": abs(volume), "order value": abs(value)}
         main = "orders" if sizes["orders"] >= sizes["order value"] else "order value"
         share = sizes[main] / (sum(sizes.values()) or 1.0)   # share of the movement by size: never above 100%
         note(f"Revenue moved **{delta:+,.2f}** ({100 * delta / r1:+.1f}%): **{volume:+,.2f}** from the number of orders "
-             f"({int(o1):,} → {int(o2):,}), **{value:+,.2f}** from the average order value ({a1:,.2f} → {a2:,.2f}), and {both:+,.2f} from both together. "
+             f"({int(o1):,} → {int(o2):,}) and **{value:+,.2f}** from the average order value ({a1:,.2f} → {a2:,.2f}). "
              f"**{main.capitalize()}** accounts for about {share:.0%} of the movement.")
+        note(f"How the split works: each effect is measured at the average of the other (a Shapley split), so the two add up to the change "
+             f"exactly. The classic split (orders at the old order value, then order value at the new number of orders) gives "
+             f"{classic['volume']:+,.2f} and {classic['order_value']:+,.2f}, and leaves {classic['interaction']:+,.2f} of 'both' to be assigned "
+             "by convention; that leftover is why the classic shares depend on which effect is measured first.")
         if "orders_per_customer" in tree:
             note(f"Orders = customers × orders per customer: customers {int(before.customers):,} → {int(after.customers):,}, "
                  f"orders per customer {float(before.orders_per_customer):.2f} → {float(after.orders_per_customer):.2f}.")
