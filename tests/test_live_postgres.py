@@ -1,7 +1,8 @@
 """Run the exported PostgreSQL project on a real PostgreSQL server and compare every result with DuckDB.
 
-Uses $AUTOSQL_PG_URL when it is set; otherwise starts a throw-away server from the local PostgreSQL install
-(``initdb`` + ``pg_ctl``; as root, through ``runuser -u postgres``). Skipped when neither is available.
+Uses $AUTOSQL_PG_URL when it is set (a server where the user may create databases: each case gets its own); otherwise starts a
+throw-away server from the local PostgreSQL install (``initdb`` + ``pg_ctl``; as root, through ``runuser -u postgres``).
+Skipped when neither is available, or failed when AUTOSQL_REQUIRE_LIVE=1 (CI).
 """
 import glob
 import io
@@ -12,12 +13,14 @@ import subprocess
 import tempfile
 import zipfile
 from pathlib import Path
+from urllib.parse import urlsplit, urlunsplit
 
 import pandas as pd
 import pytest
 
 from autosql import run_cells
 from autosql.exports import to_project_zip
+from conftest import live_unavailable
 from test_codegen_runs import CASES, build
 
 PG_BIN = next(iter(sorted(glob.glob("/usr/lib/postgresql/*/bin"), reverse=True)), None)
@@ -33,13 +36,18 @@ def _free_port() -> int:
 def psql():
     url = os.environ.get("AUTOSQL_PG_URL")
     if url:
-        yield lambda db, *args, **kw: subprocess.run(["psql", url, *args], capture_output=True, text=True, **kw)
+        if not shutil.which("psql"):
+            live_unavailable("AUTOSQL_PG_URL is set but psql is not installed")
+        parts = urlsplit(url)
+        # the database named in the URL is only used to connect: every case runs in its own database on that server
+        yield lambda db, *args, **kw: subprocess.run(["psql", urlunsplit(parts._replace(path="/" + db)), *args],
+                                                     capture_output=True, text=True, **kw)
         return
     if not PG_BIN or not shutil.which("psql"):
-        pytest.skip("no PostgreSQL server: set AUTOSQL_PG_URL or install PostgreSQL")
+        live_unavailable("no PostgreSQL server: set AUTOSQL_PG_URL or install PostgreSQL")
     as_postgres = ["runuser", "-u", "postgres", "--"] if os.geteuid() == 0 else []
     if as_postgres and not shutil.which("runuser"):
-        pytest.skip("running as root without runuser: initdb refuses to run as root")
+        live_unavailable("running as root without runuser: initdb refuses to run as root")
     root = Path(tempfile.mkdtemp(prefix="autosql-pg-"))
     if as_postgres:
         shutil.chown(root, "postgres")

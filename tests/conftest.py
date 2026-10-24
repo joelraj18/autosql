@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import io
+import os
 from pathlib import Path
 
 import numpy as np
@@ -11,6 +12,12 @@ import pytest
 from autosql import decide, infer_schema, profile_catalog, read_files, read_folder
 
 NORTHWIND = Path(__file__).resolve().parents[1] / "examples" / "northwind"
+REQUIRE_LIVE = os.environ.get("AUTOSQL_REQUIRE_LIVE") == "1"   # CI: a live database that is missing fails the run instead of skipping
+
+
+def live_unavailable(reason: str):
+    """Skip a live-database test, or fail it when AUTOSQL_REQUIRE_LIVE=1, so that CI can't pass without running it."""
+    (pytest.fail if REQUIRE_LIVE else pytest.skip)(reason)
 
 
 def as_csv(df: pd.DataFrame) -> bytes:

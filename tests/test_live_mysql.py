@@ -4,6 +4,8 @@ Opt-in, because it needs a running container:
 
     docker run -d --name autosql-mysql -e MYSQL_ROOT_PASSWORD=autosql mysql:8.4 --local-infile=1
     AUTOSQL_MYSQL_CONTAINER=autosql-mysql pytest tests/test_live_mysql.py
+
+With AUTOSQL_REQUIRE_LIVE=1 (CI), a missing container fails the run instead of skipping it.
 """
 import io
 import os
@@ -16,13 +18,21 @@ import pytest
 
 from autosql import run_cells
 from autosql.exports import to_project_zip
+from conftest import live_unavailable
 from test_codegen_runs import CASES, build
 from test_live_postgres import _same
 
 CONTAINER = os.environ.get("AUTOSQL_MYSQL_CONTAINER")
 PASSWORD = os.environ.get("AUTOSQL_MYSQL_PASSWORD", "autosql")
-pytestmark = pytest.mark.skipif(not CONTAINER or not shutil.which("docker"),
-                                reason="set AUTOSQL_MYSQL_CONTAINER to a running MySQL 8 container (see the module docstring)")
+
+
+@pytest.fixture(scope="module", autouse=True)
+def mysql_server():
+    if not CONTAINER or not shutil.which("docker"):
+        live_unavailable("set AUTOSQL_MYSQL_CONTAINER to a running MySQL 8 container (see the module docstring)")
+    if subprocess.run(["docker", "exec", CONTAINER, "mysqladmin", "ping", "-uroot", f"-p{PASSWORD}", "--silent"],
+                      capture_output=True).returncode != 0:
+        live_unavailable(f"the MySQL container {CONTAINER!r} is not running or not ready")
 
 
 def mysql(db: str, sql: str | None = None, workdir: str | None = None, file: str | None = None) -> subprocess.CompletedProcess:
