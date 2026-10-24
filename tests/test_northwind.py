@@ -73,3 +73,11 @@ def test_rfm_scores_never_split_equal_customers(run):
     _, m = run
     assert m["rfm_ties_split"] == 0                       # with NTILE(5), 34 of 89 customers got their F score from their id
     assert m["rfm"]["Champions"] == {"customers": 24, "revenue_pct": 54.4}
+
+
+def test_correlation_claims_need_evidence(run):
+    results, m = run
+    corr = m["driver_corr"]["avg_ship_days"]
+    assert not corr["levels"]["significant"] and not corr["changes"]["significant"]     # 7 quarters can't show a relationship
+    notes = " ".join(results["drilldown"].notes)
+    assert "so this many periods can't show a relationship" in notes and "move together" not in notes

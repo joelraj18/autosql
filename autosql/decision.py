@@ -785,7 +785,9 @@ TREND_WINDOW = 8              # the baseline: up to 8 earlier complete periods (
 TREND_MIN_BASELINE = 4        # no z-score from fewer than 4 earlier complete periods
 # |z| a period needs to fall outside the 99% prediction interval of a baseline of n earlier periods: t(0.995, n - 1) * sqrt(1 + 1/n).
 # A fixed limit would be wrong: a spread measured on 4 points is so noisy that |z| > 2 happens by chance in about 1 period in 6.
-TREND_Z_LIMIT = {4: 6.53, 5: 5.04, 6: 4.36, 7: 3.96, 8: 3.71}
+TREND_Z_LIMIT = {n: round(checklib.T995[n - 1] * (1 + 1 / n) ** 0.5, 2) for n in range(TREND_MIN_BASELINE, TREND_WINDOW + 1)}
+# = {4: 6.53, 5: 5.04, 6: 4.36, 7: 3.96, 8: 3.71}; the check also fits a straight line to the same baseline (5+ periods) so that a
+# steadily growing series is not flagged just for growing: a period is unusual only outside both prediction intervals.
 
 
 def _skip_kpi_cells(d: Decision, reason: str) -> None:

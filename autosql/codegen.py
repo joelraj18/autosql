@@ -924,10 +924,11 @@ def _order_facts_sql(b: Builder, D: Dialect) -> str:
         select.append(f"{D.days_between(oc(table, start), oc(table, end), _lead_is_timestamp(b))} AS {d.lead_name}")
         if d.required:
             select.append(fill('''
-                CASE WHEN <<e>> IS NULL OR <<r>> IS NULL THEN NULL
+                CASE WHEN <<r>> IS NULL THEN NULL
                             WHEN <<e>> > <<r>> THEN 1
-                            ELSE 0
-                       END AS shipped_late''', e=oc(table, end), r=oc(table, d.required)))
+                            WHEN <<e>> IS NOT NULL THEN 0
+                            WHEN <<r>> < (SELECT MAX(<<dc>>) FROM <<dt>>) THEN 1    -- not shipped, already past its date
+                       END AS shipped_late''', e=oc(table, end), r=oc(table, d.required), dc=D.ident(d.date[1]), dt=D.ident(d.date[0])))
     if d.rating:
         rating = b.rating_expr(D, where[d.rating.table])
         select.append(f"{rating} AS rating_score")
@@ -1198,7 +1199,8 @@ def _kpis_cell(b: Builder) -> Cell:
         if d.lead:
             summary += [f"AVG({d.lead_name}) AS avg_{d.lead_name}", f"COUNT({d.lead_name}) AS orders_with_{d.lead_name}"]
         if d.required:
-            summary += ["SUM(shipped_late) AS late_orders", "COUNT(shipped_late) AS checked_orders"]
+            summary += ["SUM(shipped_late) AS late_orders", "COUNT(shipped_late) AS checked_orders",
+                        f"SUM(CASE WHEN {d.lead_name} IS NULL AND shipped_late = 1 THEN 1 ELSE 0 END) AS open_overdue"]
         if d.rating:
             summary.append("AVG(rating_score) AS avg_rating")
         ctes = [fill('''
@@ -1241,7 +1243,7 @@ def _kpis_cell(b: Builder) -> Cell:
         if d.lead:
             out += [f"{D.round(f'avg_{d.lead_name}', 2)} AS avg_{d.lead_name}", f"orders - orders_with_{d.lead_name} AS orders_without_{d.lead_name}"]
         if d.required:
-            out.append(f"{D.pct('late_orders', 'checked_orders')} AS late_pct")
+            out += ["late_orders", "checked_orders", "open_overdue", f"{D.pct('late_orders', 'checked_orders')} AS late_pct"]
         if d.rating:
             out.append(f"{D.round('avg_rating', 2)} AS avg_rating")
         return ("WITH " + ",\n".join(c.strip() for c in ctes) + "\nSELECT " + ",\n       ".join(out)
@@ -1275,7 +1277,10 @@ def _kpis_cell(b: Builder) -> Cell:
             missing = int(k[f"orders_without_{lead}"])
             note(f"Average {lead}: **{float(k[f'avg_{lead}']):.2f}**" + (f" (over the orders that have one; {missing:,} don't, and AVG skips them)." if missing else "."))
         if "late_pct" in k:
-            note(f"{float(k['late_pct']):.1f}% of orders went out after the promised date.")
+            open_overdue = int(k.get("open_overdue") or 0)
+            note(f"{float(k['late_pct']):.1f}% of orders went out after the promised date"
+                 + (f", counting {open_overdue:,} order(s) not shipped yet and already past it (leaving them out would flatter the figure)."
+                    if open_overdue else "; no unshipped order is past its date yet."))
         if "avg_rating" in k:
             note(f"Average rating: {float(k['avg_rating']):.2f}.")
     ''', lead=repr(d.lead_name if d.lead else None))
@@ -1928,10 +1933,17 @@ def _drilldown_cell(b: Builder) -> Cell:
                  f"{main} went from {float(s[main].iloc[0]):,.2f} to {float(s[main].iloc[-1]):,.2f}. The segment view shows where it moved.")
         if drivers and len(s) >= <<min_n>>:
             for x in drivers:
-                r = s[main].astype(float).corr(s[x].astype(float))
-                metrics.setdefault("driver_corr", {})[x] = float(r)
-                note(f"Across {len(s)} complete periods, {main} and {x} have a correlation of **{r:+.2f}** "
-                     + ("(they move against each other)" if r < -0.5 else "(they move together)" if r > 0.5 else "(little linear relationship)") + ".")
+                a, b = s[main].astype(float), s[x].astype(float)
+                levels, changes = ci_correlation(a.corr(b), len(s)), ci_correlation(a.diff().corr(b.diff()), len(s) - 1)
+                metrics.setdefault("driver_corr", {})[x] = {"levels": levels, "changes": changes}
+                said = []
+                for name, c in (("levels", levels), ("period-to-period changes", changes)):
+                    if c:
+                        said.append(f"{name} r = **{c['r']:+.2f}** (95% CI {c['lo']:+.2f} to {c['hi']:+.2f})")
+                verdict = ("so the data shows a relationship" if changes and changes["significant"] else
+                           "but only on levels: two series that both trend correlate even when unrelated" if levels and levels["significant"] else
+                           "and neither interval excludes zero, so this many periods can't show a relationship")
+                note(f"{main} and {x} over {len(s)} complete periods: " + "; ".join(said) + f", {verdict}.")
         elif drivers:
             note(f"Only {len(s)} complete periods: too few for a meaningful correlation (at least <<min_n>> are needed), so compare the columns side by side.")
         if drivers and len(s) >= 2:
@@ -2370,9 +2382,23 @@ def _trend_signals_cell(b: Builder) -> Cell:
         z = sig["z_score"].astype(float)
         limits = <<limits>>   # 99% prediction interval: t(0.995, n - 1) * sqrt(1 + 1/n) for a baseline of n periods
         sig["z_limit"] = [limits.get(int(k)) if pd.notna(k) else None for k in sig["baseline_periods"]]
-        unusual = sig[(z.abs() >= sig["z_limit"].astype(float)) & ~sig["partial"]]
+        level_flag = (z.abs() >= sig["z_limit"].astype(float)) & ~sig["partial"]
+        # Trend test: a straight line through the same baseline (5+ complete periods) and its 99% prediction interval, so that a
+        # steadily growing or shrinking series is not flagged just for continuing its trend
+        index = [period_index(<<unit_name>>, row[cols[0]], row[cols[1]] if n > 1 else 0) for _, row in sig.iterrows()]
+        values = sig["<<main>>"].astype(float).tolist()
+        expected, trend_flag = [None] * len(sig), []
+        for i in range(len(sig)):
+            base = [(index[j], values[j]) for j in range(len(sig)) if not sig["partial"].iloc[j] and index[i] - <<window>> <= index[j] < index[i]]
+            fit = trend_prediction([x for x, _ in base], [y for _, y in base], index[i]) if not sig["partial"].iloc[i] else None
+            if fit:
+                expected[i] = fit[0]
+            trend_flag.append(fit is None or abs(values[i] - fit[0]) > fit[1])
+        sig["trend_expected"] = expected
+        unusual = sig[level_flag & pd.Series(trend_flag, index=sig.index)]
         metrics["unusual_periods"] = [{"period": r.period, "z": float(r.z_score), "value": float(r.<<main>>),
-                                       "baseline": int(r.baseline_periods), "limit": float(r.z_limit)} for r in unusual.itertuples()]
+                                       "baseline": int(r.baseline_periods), "limit": float(r.z_limit),
+                                       "expected": None if pd.isna(r.trend_expected) else float(r.trend_expected)} for r in unusual.itertuples()]
         fig, ax = plt.subplots(figsize=(10, 3.4))
         ax.bar(sig["period"], sig["<<main>>"].astype(float), width=0.6, color=[C_MUTED if p else C_SERIES for p in sig["partial"]])
         ax.plot(sig["period"], sig["moving_avg_3"].astype(float), color=C_TOTAL, marker="o", markersize=4)
@@ -2381,16 +2407,20 @@ def _trend_signals_cell(b: Builder) -> Cell:
         last = sig[~sig["partial"]].iloc[-1]
         judged = int(z[~sig["partial"]].notna().sum())
         note(f"Moving average at the last complete <<unit>> ({last.period}): **{float(last.moving_avg_3):,.2f}**.")
+        dropped = int((level_flag & ~pd.Series(trend_flag, index=sig.index)).sum())
         if len(unusual):
-            note(f"Unusual <<unit>>s (outside the 99% prediction interval of up to <<window>> earlier complete <<unit>>s): "
-                 + ", ".join(f"**{r.period}** (z = {r.z_score:+.1f}; the limit for a baseline of {int(r.baseline_periods)} is {r.z_limit:.2f})"
-                             for r in unusual.itertuples())
+            note(f"Unusual <<unit>>s (outside the 99% prediction intervals of both the level and the trend of up to <<window>> earlier "
+                 f"complete <<unit>>s): " + ", ".join(
+                     f"**{r.period}** (z = {r.z_score:+.1f} against a limit of {r.z_limit:.2f}"
+                     + (f"; the trend predicted {r.trend_expected:,.2f}" if pd.notna(r.trend_expected) else "") + ")" for r in unusual.itertuples())
                  + ". Look for a one-off event (a big order, a promotion, a loading problem) before reading a trend into it.")
         elif judged:
             note(f"None of the {judged} <<unit>>s with a baseline of <<min_base>>+ earlier periods falls outside its 99% prediction interval: "
                  "the movement is within normal noise.")
         else:
             note(f"No <<unit>> has <<min_base>> earlier complete <<unit>>s yet, so no z-score is computed; the moving average still shows the direction.")
+        if dropped:
+            note(f"{dropped} <<unit>>(s) stood out from the recent average but follow the recent trend, so they are not flagged.")
     ''', n=len(d.period_cols), unit_name=repr(d.period), partial=repr([d.label(p) for p in d.partial_periods]), main=main,
         unit=d.period, limits=repr(TREND_Z_LIMIT), window=TREND_WINDOW, min_base=TREND_MIN_BASELINE)
     return Cell("trend_signals", "Moving average and unusual periods", SECTIONS[5], story,

@@ -54,3 +54,12 @@ def test_share_and_correlation_intervals():
     assert ci_share_change(5, 100, 40, 100)["significant"]                                  # 5% -> 40% is real
     assert not ci_correlation(0.6, 7)["significant"] and ci_correlation(0.95, 30)["significant"]
     assert ci_correlation(0.5, 3) is None and ci_rate_change(0, 1, 5, 1) is None
+
+
+def test_trend_prediction():
+    from autosql.checklib import trend_prediction
+    pred, half = trend_prediction([0, 1, 2, 3, 4], [1, 3, 5, 7, 9], 5)            # an exact line: y = 2x + 1
+    assert pred == pytest.approx(11) and half == pytest.approx(0, abs=1e-9)
+    pred, half = trend_prediction([0, 1, 2, 3, 4, 5], [79728.57, 128355.40, 138288.93, 143177.05, 153937.77, 181681.46], 6)
+    assert round(pred) == 196668 and 298491.55 - pred > half                       # Northwind 1998-Q1 is beyond its trend too
+    assert trend_prediction([0, 1, 2, 3], [1, 2, 3, 4], 4) is None                 # fewer than 5 points: no trend test

@@ -161,3 +161,19 @@ def ci_correlation(r, n):
     r = max(min(r, 0.999999), -0.999999)
     z, half = _math.atanh(r), Z[0.975] / _math.sqrt(n - 3)
     return dict(r=r, **_interval(_math.tanh(z - half), _math.tanh(z + half)))
+
+
+def trend_prediction(xs, ys, x0, prob=0.995):
+    """Fit a straight line through (xs, ys) by least squares and predict x0, with the half-width of its prediction interval:
+    t(prob, n - 2) * s * sqrt(1 + 1/n + (x0 - mean x)^2 / Sxx). Returns (predicted, half_width), or None below 5 points."""
+    n = len(xs)
+    if n < 5:
+        return None
+    mx, my = sum(xs) / n, sum(ys) / n
+    sxx = sum((x - mx) ** 2 for x in xs)
+    if sxx == 0:
+        return None
+    slope = sum((x - mx) * (y - my) for x, y in zip(xs, ys)) / sxx
+    intercept = my - slope * mx
+    s = _math.sqrt(sum((y - intercept - slope * x) ** 2 for x, y in zip(xs, ys)) / (n - 2))
+    return intercept + slope * x0, t_quantile(prob, n - 2) * s * _math.sqrt(1 + 1 / n + (x0 - mx) ** 2 / sxx)

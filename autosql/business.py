@@ -60,8 +60,9 @@ KPI_DICTIONARY: tuple[KPI, ...] = (
     KPI("avg_ship_days", "Average days to ship", "Days from order to shipment, averaged over shipped orders.", "AVG(shipped_date - order_date)", "down",
         "Slow fulfilment shows up later as lower ratings and fewer repeat orders.",
         "AVG skips unshipped orders (NULL ship date); report how many there are.", "Fulfilment investment, shipping SLAs."),
-    KPI("late_pct", "Late shipments", "Share of shipped orders sent after the promised date.", "100.0 * SUM(shipped_late) / COUNT(shipped_late)", "down",
-        "A broken promise is what customers remember.", "Needs a promised / required date; orders not shipped yet are excluded.",
+    KPI("late_pct", "Late shipments", "Share of orders shipped after the promised date, or not shipped and already past it.",
+        "100.0 * SUM(shipped_late) / COUNT(shipped_late)", "down",
+        "A broken promise is what customers remember.", "Needs a promised / required date; an order not shipped yet counts as late once past its date (leaving it out flatters the figure).",
         "Carrier choice, promise dates."),
     KPI("avg_rating", "Average rating", "Mean customer score (text scales mapped to 1-5).", "AVG(rating_score)", "up",
         "The customer's own view of the experience.", "Unrated orders are excluded; small samples move a lot.", "Service and product fixes."),
@@ -432,8 +433,9 @@ def insights(d: Decision, metrics: dict) -> list[Insight]:
                            "Cap or target discounts; measure the effect on volume.", 2, "indicative", "discounts"))
 
     for u in (m.get("unusual_periods") or [])[-1:]:
-        out.append(Insight("Growth", f"{u['period']} is far from its recent trend",
-                           f"z = {u['z']:+.1f} against the {u['baseline']} complete periods before it (99% limit: {u['limit']:.2f})",
+        out.append(Insight("Growth", f"{u['period']} is far {'above' if u['z'] > 0 else 'below'} its recent level and trend",
+                           f"z = {u['z']:+.1f} against the {u['baseline']} complete periods before it (99% limit: {u['limit']:.2f})"
+                           + (f"; their trend predicted {_money(u['expected'])}" if u.get("expected") is not None else ""),
                            "A break like this is either a new level or a one-off (a large order, a promotion, a data issue).",
                            "Check the largest orders of that period before planning on it.", 2, "indicative", "trend_signals"))
 

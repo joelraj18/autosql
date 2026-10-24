@@ -270,3 +270,19 @@ def test_short_uploads_are_analysed_by_iso_week(northwind_catalog):
     assert m["qoq_last_complete"]["from"] == "2022-W09" and m["qoq_last_complete"]["to"] == "2022-W10"
     assert "yoy" not in m and m["partial_periods"] == ["2022-W01"]
     assert any("ISO weeks (Monday to Sunday)" in a for a in __import__("autosql").assumptions(d))
+
+
+def test_open_orders_past_their_date_count_as_late():
+    days = pd.date_range("2022-01-01", periods=120, freq="D")
+    orders = pd.DataFrame({"order_id": range(1, 121), "amount": 10.0 + np.arange(120) % 7, "order_date": days.strftime("%Y-%m-%d"),
+                           "required_date": (days + pd.Timedelta(days=10)).strftime("%Y-%m-%d"),
+                           "shipped_date": (days + pd.Timedelta(days=3)).strftime("%Y-%m-%d")})
+    orders.loc[orders.order_id.isin([5, 6, 7]), "shipped_date"] = None            # never shipped, long past their date
+    orders.loc[orders.order_id == 118, "shipped_date"] = None                       # not shipped, but not due yet
+    catalog = catalog_from({"orders": orders})
+    d = analyse(catalog)
+    assert d.required == "required_date"
+    _, m = run_cells([c for c in build_cells(d) if c.id in ("base", "kpis")], catalog)
+    k = m["kpis"]
+    assert (k["late_orders"], k["checked_orders"], k["open_overdue"]) == (3, 119, 3)    # 117 shipped on time + 3 overdue; 1 not due
+    assert round(k["late_pct"], 1) == 2.5
