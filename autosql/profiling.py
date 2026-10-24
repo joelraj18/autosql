@@ -73,6 +73,7 @@ class ColumnProfile:
     maximum: object = None
     scale: tuple[tuple[str, int], ...] = ()   # text ratings: (label, score) pairs, labels as they appear in the data
     unit: str = ""                            # '$', 'EUR', '%' or 'mixed', when the upload wrote it next to the numbers
+    percent: bool = False                     # discounts: written in percent (5 = 5%) rather than as a fraction (0.05)
 
     @property
     def null_frac(self) -> float:
@@ -222,8 +223,8 @@ def profile_column(table: Table, name: str) -> ColumnProfile:
     if logical in ("integer", "decimal", "float", "date", "timestamp") and not present.empty:
         base.update(minimum=present.min(), maximum=present.max())
 
-    def make(role: str, reason: str, kind: str = "", scale=()) -> ColumnProfile:
-        return ColumnProfile(**base, role=role, reason=reason, kind=kind, scale=scale)
+    def make(role: str, reason: str, kind: str = "", scale=(), percent: bool = False) -> ColumnProfile:
+        return ColumnProfile(**base, role=role, reason=reason, kind=kind, scale=scale, percent=percent)
 
     if n_unique <= 1:
         return make("constant", "only one distinct value" if n_unique else "always empty")
@@ -245,9 +246,13 @@ def profile_column(table: Table, name: str) -> ColumnProfile:
         if logical == "integer" and n_unique == 2 and set(present.unique()) <= {0, 1}:
             return make("dimension", "0 / 1 flag")
         kind = _measure_kind(name, present)
+        # a discount is in percent when most of its non-zero values are above 1: decided by the bulk of the values, so that one
+        # mistyped 1.5 among fractions doesn't turn every 0.05 into 0.05% (it is reported as an impossible discount instead)
+        nonzero = present[present != 0] if kind == "discount" else present.iloc[:0]
+        percent = kind == "discount" and (base["unit"] == "%" or (len(nonzero) > 0 and float((nonzero.abs() > 1).mean()) > 0.5))
         return make("measure", {"price": "a price", "quantity": "a quantity", "discount": "a discount",
                                 "amount": "a money amount", "charge": "a charge such as freight or tax",
-                                "other": "numbers"}[kind], kind=kind)
+                                "other": "numbers"}[kind], kind=kind, percent=percent)
     # text
     scale = match_scale(present)
     if scale:

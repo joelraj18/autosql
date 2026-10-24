@@ -1380,6 +1380,138 @@
    }
   }
  },
+ "case:impossible_values": {
+  "fanouts": [],
+  "relationships": [],
+  "skipped": [],
+  "tables": {
+   "orders": {
+    "ambiguous_dates": [],
+    "cleaned": {},
+    "column_map": {
+     "customer_id": "customer_id",
+     "discount": "discount",
+     "order_date": "order_date",
+     "order_id": "order_id",
+     "quantity": "quantity",
+     "unit_price": "unit_price"
+    },
+    "columns": {
+     "customer_id": [
+      "identifier",
+      "",
+      0,
+      39,
+      "",
+      [],
+      0.0,
+      0,
+      "1",
+      "39",
+      "named like an ID or code"
+     ],
+     "discount": [
+      "measure",
+      "discount",
+      0,
+      5,
+      "",
+      [],
+      0.0,
+      0,
+      "np.float64(0.0)",
+      "np.float64(1.5)",
+      "a discount"
+     ],
+     "order_date": [
+      "datetime",
+      "",
+      0,
+      240,
+      "",
+      [],
+      0.0,
+      0,
+      "2022-01-01T00:00:00",
+      "2023-12-19T00:00:00",
+      "dates"
+     ],
+     "order_id": [
+      "identifier",
+      "",
+      0,
+      240,
+      "",
+      [],
+      0.0,
+      0,
+      "1",
+      "240",
+      "named like an ID or code"
+     ],
+     "quantity": [
+      "measure",
+      "quantity",
+      0,
+      7,
+      "",
+      [],
+      0.0,
+      0,
+      "-2",
+      "4",
+      "a quantity"
+     ],
+     "unit_price": [
+      "measure",
+      "price",
+      0,
+      234,
+      "",
+      [],
+      0.0,
+      0,
+      "np.float64(-12.5)",
+      "np.float64(49.94)",
+      "a price"
+     ]
+    },
+    "date_formats": {
+     "order_date": "%Y-%m-%d"
+    },
+    "duplicate_keys": 0,
+    "exact_duplicates": 0,
+    "extra_rows": 0,
+    "grain": "one row per `order_id`",
+    "hashes": {
+     "customer_id": "b636d605d830c57b",
+     "discount": "6c06c633a82307fc",
+     "order_date": "bf00f7ca77fea173",
+     "order_id": "33a603bce33a6cfb",
+     "quantity": "e5daf1943edb1ddd",
+     "unit_price": "f87d18a1f4ec802c"
+    },
+    "key_status": "single",
+    "placeholders": {},
+    "primary_key": [
+     "order_id"
+    ],
+    "rows": 240,
+    "source": "orders.csv",
+    "types": {
+     "customer_id": "integer",
+     "discount": "decimal",
+     "order_date": "date",
+     "order_id": "integer",
+     "quantity": "integer",
+     "unit_price": "decimal"
+    },
+    "units": {},
+    "unparsed_dates": {},
+    "unparsed_numbers": {}
+   }
+  }
+ },
  "case:list_price": {
   "fanouts": [],
   "relationships": [

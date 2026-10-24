@@ -535,8 +535,15 @@ def _context(d: Decision, m: dict) -> list[tuple[str, str]]:
         facts.append(("Orders", f"{k['orders']:,.0f}" + (f" from {k['customers']:,.0f} customers" if k.get("customers") else "")))
     if k.get("revenue") is not None:
         facts.append(("Revenue, all periods", full(k["revenue"])))
+    ov = (m.get("typical") or {}).get("order_value")
+    if ov and ov["median"]:
+        facts.append(("Typical order", f"{full(ov['median'])} (median); the average is {ov['mean'] / ov['median']:.1f}× it"))
     if d.kpi and d.revenue:
         facts.append(("Revenue is", Builder(d).revenue_formula()))
+    lo = m.get("left_out")
+    if lo:
+        facts.append(("Not sales, left out", f"{lo['rows']:,} rows, {lo['share_pct']:.1f}% of the raw "
+                                              + ("revenue" if m.get("main_measure", "revenue") == "revenue" else "rows")))
     if d.period:
         n, partial = len(d.complete_periods), [d.label(p) for p in d.partial_periods]
         facts.append(("Periods", f"{n} complete {d.period}s" + (f"; {', '.join(partial)} partial" if partial else "")))

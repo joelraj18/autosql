@@ -95,6 +95,20 @@ def northwind_double_loaded():
     return frames
 
 
+def impossible_values_frame():
+    """Orders with values no sale can have (a negative price, a 150% discount) and returns written as negative quantities."""
+    rng = np.random.default_rng(14)
+    n = 240
+    df = pd.DataFrame({"order_id": range(1, n + 1), "customer_id": rng.integers(1, 40, n),
+                       "order_date": pd.date_range("2022-01-01", periods=n, freq="3D").strftime("%Y-%m-%d"),
+                       "unit_price": rng.uniform(5, 50, n).round(2), "quantity": rng.integers(1, 5, n),
+                       "discount": rng.choice([0.0, 0.05, 0.1, 0.2], n)})
+    df.loc[[3, 9], "unit_price"] = [-12.5, -3.0]
+    df.loc[5, "discount"] = 1.5
+    df.loc[[7, 8, 11], "quantity"] = [-1, -2, 0]
+    return df
+
+
 def business_rules_frames():
     """A shop whose extract holds rows that are not sales: cancelled, returned, test and EUR orders, and returned lines."""
     frames = shop_frames(seed=12)
@@ -137,6 +151,7 @@ CASES = {
     "double_loaded": (double_loaded_frames, "auto", ()),
     "ten_weeks": ({"orders": ten_weeks_frame}, "auto", ()),
     "northwind_double_loaded": (northwind_double_loaded, "auto", ()),
+    "impossible_values": ({"orders": impossible_values_frame}, "auto", ()),
     "business_rules": (business_rules_frames, "auto", ()),
     "signed_amounts": ({"orders": signed_amounts_frame}, "auto", ()),
 }
@@ -229,6 +244,19 @@ def test_copies_are_dropped_before_every_total(northwind_catalog):
     assert not [r.error for r in results if r.error]                      # the discount bands once read a CTE they never defined
     assert round(m["revenue_total"], 2) == 1265793.04 and round(m["revenue_gross"], 2) == 1354458.59   # as if loaded once
     assert round(m["discounts"]["given"], 2) == round(1354458.59 - 1265793.04, 2)
+
+
+def test_impossible_values_are_counted_not_rescaled(northwind_catalog):
+    from autosql.business import trust_score
+    catalog, d, cells = build("impossible_values", northwind_catalog)
+    assert d.revenue.discount_scale == 1                 # one mistyped 1.5 must not turn every 0.05 into 0.05%
+    results, m = run_cells(cells, catalog)
+    assert m["impossible"] == {"orders.unit_price": {"rule": "negative price", "rows": 2},
+                               "orders.discount": {"rule": "discount outside 0-1", "rows": 1},
+                               "orders.quantity": {"rule": "zero or negative quantity", "rows": 3}}
+    assert (m["impossible_values"], m["questionable_values"]) == (3, 3)   # returns are questionable, not impossible
+    validity = next(x for x in trust_score(d, m).dimensions if x.name == "Validity")
+    assert validity.score == 97 and "3 impossible value(s)" in validity.detail
 
 
 def test_error_skips_later_cells(northwind_catalog):

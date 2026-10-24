@@ -660,6 +660,21 @@ def _nulls_cell(b: Builder) -> Cell:
                 if only_gappy else "")
         return head + "\nUNION ALL\n".join(parts)
 
+    rules = _impossible_rules(b)
+
+    def impossible(D: Dialect) -> str:
+        parts = []
+        for table, col, rule, cond, _ in rules:
+            c = D.ident(col)
+            parts.append(fill('''
+                SELECT <<t>> AS table_name, <<c>> AS column_name, <<rule>> AS rule,
+                       COUNT(<<col>>) AS rows_checked,
+                       SUM(CASE WHEN <<cond>> THEN 1 ELSE 0 END) AS bad_rows,
+                       MIN(<<col>>) AS lowest,
+                       MAX(<<col>>) AS highest
+                FROM   <<tq>>''', t=D.literal(table), c=D.literal(col), rule=D.literal(rule), col=c, cond=cond.format(c=c), tq=D.ident(table)))
+        return union_all(parts)
+
     gappy = sorted((c for t in p.tables.values() for c in t.columns if c.n_null), key=lambda c: -c.null_frac)
     story = Step(
         "nulls",
@@ -669,10 +684,14 @@ def _nulls_cell(b: Builder) -> Cell:
         "and a NULL foreign key drops the row from an inner join.",
         "We count NULLs in every column, so that every average and join later can be read with the right caveat.",
         "For every column: COUNT(*) − COUNT(column). COUNT(*) counts rows; COUNT(column) counts only rows where the column has a value, "
-        "so the difference is the number of NULLs. One line per column, stacked with UNION ALL.",
+        "so the difference is the number of NULLs. One line per column, stacked with UNION ALL."
+        + (" A second query counts values that can't be right: a negative price or charge, a discount outside its range, and a zero or "
+           "negative quantity or amount (a return written as a negative line, or an error), with SUM(CASE WHEN … THEN 1 ELSE 0 END)."
+           if rules else ""),
     )
     check = fill('''
-        nulls = result.assign(null_pct=100 * result["null_rows"] / result["row_count"].clip(lower=1))
+        nulls = outputs["nulls"]
+        nulls = nulls.assign(null_pct=100 * nulls["null_rows"] / nulls["row_count"].clip(lower=1))
         gappy = nulls[nulls["null_rows"] > 0].sort_values("null_pct", ascending=False)
         metrics["nulls"] = {f"{r.table_name}.{r.column_name}": round(float(r.null_pct), 1) for r in gappy.itertuples()}
         if gappy.empty:
@@ -689,8 +708,42 @@ def _nulls_cell(b: Builder) -> Cell:
             row = nulls[(nulls["table_name"] == table) & (nulls["column_name"] == col)]
             if len(row) and int(row["null_rows"].iloc[0]):
                 note(f"`{table}.{col}` is empty in {int(row['null_rows'].iloc[0]):,} row(s): {meaning}")
-    ''', watch=repr(_null_watch(b)))
-    return Cell("nulls", "Profile NULLs", SECTIONS[2], story, (stmt("nulls", "NULLs per column: COUNT(*) − COUNT(column)", sql),), check)
+        if "impossible" in outputs:
+            checked = outputs["impossible"]
+            bad = checked[checked["bad_rows"].fillna(0) > 0]
+            severe = <<severe>>                                  # rules no real sale can break; the others may be returns
+            metrics["impossible"] = {f"{r.table_name}.{r.column_name}": {"rule": r.rule, "rows": int(r.bad_rows)} for r in bad.itertuples()}
+            metrics["impossible_values"] = int(bad.loc[bad["rule"].isin(severe), "bad_rows"].sum())
+            metrics["questionable_values"] = int(bad.loc[~bad["rule"].isin(severe), "bad_rows"].sum())
+            if bad.empty:
+                note("Checked for " + ", ".join(sorted(set(checked["rule"]))) + ": none found.")
+            for r in bad.itertuples():
+                note(f"`{r.table_name}.{r.column_name}`: {int(r.bad_rows):,} of {int(r.rows_checked):,} value(s) are a {r.rule} "
+                     f"(from {r.lowest:g} to {r.highest:g}). "
+                     + ("No real sale has one: fix them at the source; they count against the data-trust score." if r.rule in severe else
+                        "These are usually returns or credits written as negative lines: they reduce revenue, so check that is intended."))
+    ''', watch=repr(_null_watch(b)), severe=repr(sorted({rule for _, _, rule, _, sev in rules if sev})))
+    statements = [stmt("nulls", "NULLs per column: COUNT(*) − COUNT(column)", sql)]
+    if rules:
+        statements.append(stmt("impossible", "Values that can't be right (negative prices, discounts out of range, …)", impossible))
+    return Cell("nulls", "Missing and impossible values", SECTIONS[2], story, tuple(statements), check)
+
+
+def _impossible_rules(b: Builder) -> list[tuple[str, str, str, str, bool]]:
+    """(table, column, rule, condition with {c} for the column, severe?) for every money, quantity and discount column."""
+    out = []
+    for t in b.p.tables.values():
+        for c in t.by_role("measure"):
+            if c.kind in ("price", "charge"):
+                out.append((t.name, c.name, f"negative {c.kind}", "{c} < 0", True))
+            elif c.kind == "discount":
+                top = 100 if c.percent else 1
+                out.append((t.name, c.name, f"discount outside 0-{top}", f"({{c}} < 0 OR {{c}} > {top})", True))
+            elif c.kind == "quantity":
+                out.append((t.name, c.name, "zero or negative quantity", "{c} <= 0", False))
+            elif c.kind == "amount":
+                out.append((t.name, c.name, "negative amount", "{c} < 0", False))
+    return out
 
 
 def _null_watch(b: Builder) -> list[tuple[str, str, str]]:
@@ -1376,6 +1429,32 @@ def _kpis_cell(b: Builder) -> Cell:
         return ("WITH " + ",\n".join(c.strip() for c in ctes) + "\nSELECT " + ",\n       ".join(out)
                 + "\nFROM   " + "\nCROSS  JOIN ".join(joins))
 
+    measures = ([("order_value", "revenue")] if b.money else []) + ([(d.lead_name, d.lead_name)] if d.lead else [])
+
+    def typical(D: Dialect) -> str:
+        ctes, parts = [], []
+        for name, col in measures:
+            ctes.append(fill('''
+                <<name>>_ranked AS (
+                    SELECT <<col>> AS v,
+                           ROW_NUMBER() OVER (ORDER BY <<col>>) AS rn,
+                           COUNT(*) OVER () AS cnt
+                    FROM   order_facts
+                    WHERE  <<col>> IS NOT NULL
+                )''', name=name, col=D.ident(col)))
+            parts.append(fill('''
+                SELECT <<label>> AS measure,
+                       COUNT(*) AS orders,
+                       <<mean>> AS mean,
+                       <<median>> AS median,
+                       <<p90>> AS p90
+                FROM   <<name>>_ranked''', label=D.literal(name), name=name, mean=D.round("AVG(v)", 2),
+                       median=D.round("AVG(CASE WHEN rn IN (FLOOR((cnt + 1) / 2.0), FLOOR((cnt + 2) / 2.0)) THEN v END)", 2),
+                       p90=D.round("MIN(CASE WHEN rn >= CEIL(0.9 * cnt) THEN v END)", 2)))
+        return ("-- Median = the middle row (the mean of the two middle rows for an even count); P90 = the first row at or above 90%.\n"
+                "-- By rank, so that MySQL (no PERCENTILE_CONT) gives the same answer as PostgreSQL and DuckDB.\n"
+                "WITH " + ",\n".join(c.strip() for c in ctes) + "\n" + union_all(parts))
+
     story = Step(
         "kpis",
         "`order_facts` has one row per order and reconciles to the source.",
@@ -1384,10 +1463,13 @@ def _kpis_cell(b: Builder) -> Cell:
         "We compute the headline KPIs in one query, so that every later breakdown can be compared with the overall figure.",
         "One CTE summarises order_facts (SUM, COUNT, AVG); another counts customers with two or more orders (GROUP BY … HAVING COUNT(*) >= 2). "
         "The final SELECT divides with 1.0 * … / NULLIF(…, 0) and 100.0 * …, so that ratios stay decimal and never divide by zero."
-        + (" The average *line* value is shown next to the AOV to make the grain difference visible." if d.line_level else ""),
+        + (" The average *line* value is shown next to the AOV to make the grain difference visible." if d.line_level else "")
+        + (" A second query finds the median and the 90th percentile by rank: ROW_NUMBER() and COUNT(*) OVER () number the orders, and "
+           "the middle rank is FLOOR((cnt + 1) / 2.0). The 2.0 matters: MySQL's / always returns a decimal (5 / 2 = 2.5) while PostgreSQL's "
+           "integer / truncates (5 / 2 = 2), so FLOOR(… / 2.0) is the one form that gives the same rank in both." if measures else ""),
     )
     check = fill('''
-        k = result.iloc[0].to_dict()
+        k = outputs["kpis"].iloc[0].to_dict()
         metrics["kpis"] = {key: (float(v) if v is not None and not pd.isna(v) else None) for key, v in k.items()}
         if "revenue" in k:
             note(f"Revenue **{float(k['revenue']):,.2f}** from **{int(k['orders']):,}** orders: average order value **{float(k['avg_order_value']):,.2f}**.")
@@ -1410,8 +1492,25 @@ def _kpis_cell(b: Builder) -> Cell:
                     if open_overdue else "; no unshipped order is past its date yet."))
         if "avg_rating" in k:
             note(f"Average rating: {float(k['avg_rating']):.2f}.")
+        if "typical" in outputs:
+            typical = {r.measure: {"n": int(r.orders), "mean": float(r.mean), "median": float(r.median), "p90": float(r.p90)}
+                       for r in outputs["typical"].itertuples()}
+            metrics["typical"] = typical
+            ov = typical.get("order_value")
+            if ov:
+                metrics["kpis"]["median_order_value"] = ov["median"]
+                ratio = ov["mean"] / ov["median"] if ov["median"] else float("nan")
+                note(f"The typical (median) order is **{ov['median']:,.2f}**; the average, {ov['mean']:,.2f}, is {ratio:.2f}× it"
+                     + (": a few large orders pull the average up, so a target set on the average is set on them." if ratio >= 1.25 else
+                        ", so the average is a fair picture of a typical order.") + f" 90% of orders are below {ov['p90']:,.2f}.")
+            if lead in typical:
+                t = typical[lead]
+                note(f"`{lead}`: half of the orders take {t['median']:g} days or less and 90% take {t['p90']:g} or less; the average is {t['mean']:.2f}.")
     ''', lead=repr(d.lead_name if d.lead else None))
-    return Cell("kpis", "Headline KPIs", SECTIONS[4], story, (stmt("kpis", "Headline KPIs", sql),), check)
+    statements = [stmt("kpis", "Headline KPIs", sql)]
+    if measures:
+        statements.append(stmt("typical", "Typical values: median and 90th percentile", typical))
+    return Cell("kpis", "Headline KPIs", SECTIONS[4], story, tuple(statements), check)
 
 
 PERIOD_CTE = {"quarter": "quarterly", "month": "monthly", "year": "yearly", "week": "weekly"}

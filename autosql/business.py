@@ -39,12 +39,18 @@ KPI_DICTIONARY: tuple[KPI, ...] = (
         "The top line every plan and target starts from.", "Gross vs net (before or after discounts) must be stated; a partial period looks like a fall.",
         "Targets, budgets, investor reporting."),
     KPI("orders", "Orders", "Distinct orders placed in the period.", "COUNT(DISTINCT order_id)", "up",
-        "Volume: what operations, stock and service must handle.", "Count orders, not order lines; cancelled or test orders may need excluding.",
+        "Volume: what operations, stock and service must handle.",
+        "Count orders, not order lines; cancelled, returned and test orders are left out (the assumptions list the rules).",
         "Capacity planning, staffing."),
     KPI("aov", "Average order value (AOV)", "Revenue per order.", "SUM(revenue) / COUNT(DISTINCT order_id)", "up",
         "With orders, it is one of the two levers of revenue (revenue = orders × AOV).",
         "The average of order lines is not AOV: it understates it by the number of lines per order.",
         "Pricing, bundles, free-shipping thresholds."),
+    KPI("median_order_value", "Median order value", "The order in the middle: half of the orders are smaller, half are larger.",
+        "AVG(revenue) WHERE rn IN (FLOOR((cnt + 1) / 2.0), FLOOR((cnt + 2) / 2.0))", "up",
+        "The typical order. A few very large orders pull the average up; the median doesn't move with them.",
+        "When the average is well above the median, a target set on the average is really set on a handful of large orders.",
+        "Pricing tiers, free-shipping thresholds, sales targets."),
     KPI("customers", "Active customers", "Distinct customers who ordered in the period.", "COUNT(DISTINCT customer_id)", "up",
         "The reach of the business.", "A customer with no orders in the period is not active, even if they exist in the customer table.",
         "Acquisition and retention budgets."),
@@ -208,6 +214,7 @@ def trust_score(d: Decision, metrics: dict) -> TrustScore:
               (d.quality.get("ambiguous_dates", 0), "date column(s) where day and month can't be told apart", 10),
               (d.quality.get("type_mismatches", 0), "link(s) joining text to numbers", 10),
               (metrics.get("negative_lead") or 0, "shipment(s) dated before their order", 1),
+              (metrics.get("impossible_values") or 0, "impossible value(s), such as a negative price or a discount out of range", 1),
               (metrics.get("date_part_mismatches") or 0, "stored year / quarter / month value(s) that disagree with the date", 1))
     for n, what, weight in checks:
         if n:
@@ -446,6 +453,16 @@ def insights(d: Decision, metrics: dict) -> list[Insight]:
         out.append(Insight("Data", f"{n:,} records point at nothing", ", ".join(f"{k}: {v:,}" for k, v in m["orphans"].items()),
                            "They are kept as 'Unknown' in the analysis, but reports by customer or product will miss them.",
                            "Fix the missing parent records at the source.", 2, "measured", "orphans"))
+    bad = m.get("impossible") or {}
+    if bad:
+        severe = m.get("impossible_values") or 0
+        out.append(Insight(
+            "Data", f"{severe:,} value(s) can't be right" if severe else "Some lines look like returns",
+            "; ".join(f"`{k}`: {v['rows']:,} with a {v['rule']}" for k, v in bad.items()),
+            "They flow into revenue and every average built on it." if severe else
+            "Negative lines reduce revenue: right for returns and credits, wrong for typing errors.",
+            "Correct them at the source." if severe else "Confirm with the data owner that they are returns.",
+            2 if severe else 3, "measured", "nulls"))
     lo = m.get("left_out")
     if lo and d.row_filters:
         sales = [f for f in d.row_filters if f.kind != "currency"]

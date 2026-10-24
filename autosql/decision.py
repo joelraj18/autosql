@@ -611,11 +611,8 @@ def _choose_row_filters(d: Decision, catalog: Catalog, picks: dict) -> None:
 
 
 def _with_discount(rev: Revenue, ft: TableProfile) -> Revenue:
-    if rev.discount:
-        col = ft.col(rev.discount)
-        top = col.maximum
-        if col.unit == "%" or (top is not None and 1 < float(top) <= 100):   # '0.5%' is half a percent, not 50%
-            rev.discount_scale = 100
+    if rev.discount and ft.col(rev.discount).percent:    # 5 means 5%; '0.5%' is half a percent, not 50%
+        rev.discount_scale = 100
     return rev
 
 
