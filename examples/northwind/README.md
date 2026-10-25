@@ -29,12 +29,12 @@ Microsoft's Northwind sample: a small food importer with **8 tables**, 91 custom
 
 | Question | Answer |
 |---|---|
-| How big? | 830 orders, average order value **1,525.05** (the average *line* is only 587.37), 89 customers, 98.9% of them ordered more than once |
-| Trend | last two complete quarters (1997-Q4 → 1998-Q1): **+64.3%**; year over year 1998-Q1: **+115.8%**. A naive "latest quarter" says **−52.4%**, but that quarter has only 36 days of data |
-| What drove it | of the +116,810.09 change, **+93,868.75** comes from more orders (120 → 182), +15,126.16 from a higher order value (1,514.01 → 1,640.06), +7,815.18 from both: **about 80% volume** |
+| How big? | 830 orders, average order value **1,525.05** (the average *line* is only 587.37; the median order is 943.25 and 90% of orders are below 3,160.60), 89 customers, 98.9% of them ordered more than once |
+| Trend | last two complete quarters (1997-Q4 → 1998-Q1): **+64.3%** (95% CI +15.0% to +134.7%, so real); year over year 1998-Q1: **+115.8%**. A naive "latest quarter" says **−52.4%**, but that quarter has only 36 days of data |
+| What drove it | of the +116,810.09 change, **+97,776.34** comes from more orders (120 → 182) and +19,033.75 from a higher order value (1,514.01 → 1,640.06), each measured at the average of the other: **84% volume**. Orders +51.7% is real; order value +8.3% is within normal variation (95% CI −20.3% to +36.9%) |
 | Where | Beverages contributed 57% of the change; by country, the USA 21% |
-| Shipping | ship days moved 9.2 → 8.6 (−6.5%) while revenue rose 64%: shipping time does **not** explain this change |
-| Customers | Champions (22 of 89 customers) bring 52.2% of revenue; 43 customers first ordered in 1996-Q3 |
+| Shipping | ship days moved 9.2 → 8.6 (−6.5%) while revenue rose 64%: shipping time does **not** explain this change. Over 7 complete quarters the two show no relationship either (levels r = +0.02, 95% CI −0.74 to +0.76) |
+| Customers | Champions (24 of 89 customers) bring 54.4% of revenue; 43 customers first ordered in 1996-Q3 |
 | Correctness | `NOT IN` finds 0 employees who manage nobody; `NOT EXISTS` finds 7, because `reports_to` is NULL for the top manager |
 
 ## The business reading
@@ -44,17 +44,18 @@ From [`business_brief.html`](business_brief.html), ordered by urgency:
 | Priority | Recommendation | Evidence | Next step |
 |---|---|---|---|
 | Act now | 1998-Q2 is incomplete | 36 of 91 days; a naive report would show −52.4% | report it only once complete, or against the same days a year earlier |
-| Plan | Revenue grew 64.3% in 1998-Q1 | +115.8% year over year, so not seasonal | headline the last complete quarter; plan on the year-over-year figure |
-| Plan | 1998-Q1 is far from its recent trend | z = +4.8 against 6 earlier quarters (99% limit 4.36) | check the largest orders of the quarter before planning on it |
-| Plan | Order volume accounts for 80% of the movement | 120 → 182 orders; AOV +8.3% | plan capacity for the volume |
+| Plan | Revenue grew 64.3% in 1998-Q1 | 95% CI +15.0% to +134.7%; +115.8% year over year, so not seasonal | headline the last complete quarter; plan on the year-over-year figure |
+| Plan | 1998-Q1 is far above its recent level and trend | z = +4.8 against 6 earlier quarters (99% limit 4.36); their trend predicted 196,668.16 | check the largest orders of the quarter before planning on it |
+| Plan | Order volume accounts for 84% of the movement | orders +51.7% (real); order value +8.3% (within normal variation) | plan capacity for the volume |
 | Plan | Beverages drove 57% of the change | +66,503.58 by category | find out whether it can last |
 | Plan | The top 20% of customers bring 60% of revenue | class A: 34 customers (38% of them) = 80% of revenue | named account owners for class A |
 | Plan | 5 repeat customers are overdue | silent for more than twice their usual gap (59 days) | win-back calls, largest first |
-| Plan | 8 once-frequent customers are slipping | RFM "At risk": 5.1% of revenue | reactivation offer |
+| Plan | 7 once-frequent customers are slipping | RFM "At risk": 4.6% of revenue | reactivation offer |
 | Plan | Discounts cost 6.5% of gross revenue | 88,665.55 on 39% of lines; discounted lines are 25% bigger | test discount levels before changing the policy |
 | Monitor | Ship days did not explain the change | −6.5% while revenue +64.3% | look at the driver tree instead |
 
 **Data trust: 99/100, High.** The only deduction: `orders.shipped_date` is 2.5% empty (21 unshipped orders).
 
-Every number above is printed by the notebook, and checked by `tests/test_northwind.py` and `tests/test_business.py`. The exported project gives the same
-results on PostgreSQL 16 and MySQL 8.4 (`tests/test_live_postgres.py`, `tests/test_live_mysql.py`).
+Every number above is printed by the notebook: `tests/test_docs_claims.py` fails if one isn't, and `tests/test_northwind.py` and
+`tests/test_business.py` pin the important ones. The exported project gives the same results on PostgreSQL 16 and MySQL 8.4
+(`tests/test_live_postgres.py`, `tests/test_live_mysql.py`, run by CI on every push).

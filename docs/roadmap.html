@@ -145,6 +145,7 @@ pre { margin: 0; overflow-x: auto; background: var(--chip); border-radius: 8px; 
         <ul class="rules">
           <li><span class="if">IF</span><span>whole numbers with no leading zero <b>→ integer</b>; with ≤ 4 decimals <b>→ decimal</b></span></li>
           <li><span class="if">IF</span><span>≥ 95% of values parse with <i>one</i> date format <b>→ DATE</b> (or TIMESTAMP when times appear); no day above 12 in m/d vs d/m <b>→ warn: ambiguous</b></span></li>
+          <li><span class="if">IF</span><span>≥ 95% are numbers once a currency sign, thousands separators, <code>%</code> and <code>(12.50)</code> are read <b>→ number</b>, with the sign kept as the unit; <code>-</code>, <code>#N/A</code> <b>→ NULL</b></span></li>
           <li><span class="if">ALWAYS</span><span>names <b>→ snake_case</b> (<code>OrderID</code> → <code>order_id</code>); a CSV is a table, each Excel sheet is a table, a ZIP holds up to 50 of them</span></li>
         </ul>
         <p class="ex" data-ex="nw">8 CSVs; 75 columns renamed; 18 postal codes keep their leading zero; <code>OrderDate</code> becomes a DATE.</p>
@@ -157,7 +158,7 @@ pre { margin: 0; overflow-x: auto; background: var(--chip); border-radius: 8px; 
         <p class="why">A column's <i>type</i> is how it is stored; its <i>role</i> is how SQL should use it: join on an identifier, add up a measure, group by a dimension. The key says what one row is.</p>
         <ul class="rules">
           <li><span class="if">IF</span><span>named like <code>…_id</code> / <code>…_code</code> / <code>…_no</code> <b>→ identifier</b>; a number <b>→ measure</b> (price, quantity, discount, charge, amount); 2–50 labels <b>→ dimension</b>; "Very Bad … Very Good" <b>→ rating</b> (1–5)</span></li>
-          <li><span class="if">KEY</span><span>one unique, never-empty column (scored by name and position) <b>→ single</b>; else two IDs together <b>→ composite</b> (order lines); else an ID unique in ≥ 90% <b>→ meant to be the key</b>: duplicates are listed and removed with <code>ROW_NUMBER()</code></span></li>
+          <li><span class="if">KEY</span><span>one unique, never-empty column (scored by name and position) <b>→ single</b>; else two IDs together <b>→ composite</b> (order lines); else an ID unique once exact copies are removed, or in ≥ 90% of rows <b>→ meant to be the key</b>: duplicates are listed and removed with <code>ROW_NUMBER()</code></span></li>
           <li><span class="if">PROOF</span><span><code>COUNT(*)</code> vs <code>COUNT(DISTINCT key)</code> per table, in SQL</span></li>
         </ul>
         <p class="ex" data-ex="nw"><code>order_details</code>: (<code>order_id</code>, <code>product_id</code>), one row per order line. <code>customers</code>: <code>customer_id</code> beats the also-unique <code>company_name</code>.</p>
@@ -170,6 +171,7 @@ pre { margin: 0; overflow-x: auto; background: var(--chip); border-radius: 8px; 
         <p class="why">Matching values prove little: the codes 1, 2, 3 are valid keys of many tables. Names are strong evidence; values alone are only a suggestion.</p>
         <ul class="rules">
           <li><span class="if">IF</span><span>named like another table's key and ≥ 95% of values found there <b>→ used</b></span></li>
+          <li><span class="if">IF</span><span>both columns of a two-column key (<code>region</code> + <code>store_no</code>) and ≥ 95% of the pairs found <b>→ used, joined on both</b></span></li>
           <li><span class="if">IF</span><span><code>reports_to</code> / <code>manager_id</code> / <code>parent_id</code>, all found in the same table <b>→ used (self-reference)</b></span></li>
           <li><span class="if">IF</span><span>values only: all found, and equal value sets or a shared name stem <b>→ suggested</b>: you tick it</span></li>
           <li><span class="if">THEN</span><span>children per parent (1:1 or 1:N); parent numbers summed before and after the join <b>→ fan-out</b></span></li>
@@ -183,12 +185,12 @@ pre { margin: 0; overflow-x: auto; background: var(--chip); border-radius: 8px; 
         <p class="why">Duplicates, NULLs, orphans and missing days all change totals without raising an error.</p>
         <ul class="rules">
           <li><span class="if">CHECK</span><span>duplicates: <code>GROUP BY key HAVING COUNT(*) &gt; 1</code></span></li>
-          <li><span class="if">CHECK</span><span>NULLs: <code>COUNT(*) - COUNT(col)</code> for every column</span></li>
+          <li><span class="if">CHECK</span><span>NULLs: <code>COUNT(*) - COUNT(col)</code> for every column; impossible values: a negative price, a discount out of range (negative quantities: likely returns)</span></li>
           <li><span class="if">CHECK</span><span>dates: MIN / MAX, rows per period; a first or last period with &lt; 90% of its days <b>→ partial</b></span></li>
           <li><span class="if">CHECK</span><span>orphans: <code>LEFT JOIN … WHERE parent.key IS NULL</code>, and parents nobody points at (<code>NOT EXISTS</code>)</span></li>
           <li><span class="if stopflag">STOP IF</span><span>no table has any rows</span></li>
         </ul>
-        <p class="ex" data-ex="nw">0 duplicates, 0 orphans; 2 customers never ordered; 21 orders not shipped; 1998-Q2 partial (36 of 91 days).</p>
+        <p class="ex" data-ex="nw">0 duplicates, 0 orphans, no impossible values; 2 customers never ordered; 21 orders not shipped; 1998-Q2 partial (36 of 91 days).</p>
         <p class="ex" data-ex="wheels">No NULLs; 4 complete quarters; <code>quarter_number</code> agrees with <code>order_date</code> on every row.</p>
         <p class="ex" data-ex="staff">The one NULL <code>manager_id</code> is the top of the org chart.</p>
       </article>
@@ -218,6 +220,7 @@ pre { margin: 0; overflow-x: auto; background: var(--chip); border-radius: 8px; 
             <li><span class="if">FACT</span><span>the table with price × quantity (or an amount) and the most rows</span></li>
             <li><span class="if">IF</span><span>the order key repeats <b>→ line level</b>: roll lines up to orders <b>before</b> joining order tables</span></li>
             <li><span class="if">REVENUE</span><span>price × quantity × (1 − discount) › SUM(amount) › row counts; a list price from another table is flagged</span></li>
+            <li><span class="if">IF</span><span>a status (cancelled, refunded, returned, test…), an <code>is_test</code> flag or a second currency <b>→ left out</b> with <code>col IS NULL OR col NOT IN (…)</code>, and reconciled as its own row</span></li>
           </ul>
           <p class="ex" data-ex="nw"><code>order_details</code>, line level, order table <code>orders</code>; revenue net of discount = 1,265,793.04.</p>
           <p class="ex" data-ex="wheels"><code>orders</code>, one row per order; revenue = vehicle_price × quantity × (1 − discount).</p>
@@ -226,7 +229,7 @@ pre { margin: 0; overflow-x: auto; background: var(--chip); border-radius: 8px; 
           <p class="kicker">KPIs · 2</p><h3>Views with CTEs, reconciled</h3>
           <ul class="rules">
             <li><span class="if">BUILD</span><span><code>order_facts</code> (one row per order) and <code>line_facts</code> (one row per line), LEFT JOIN + 'Unknown'</span></li>
-            <li><span class="if">CHECK</span><span>raw table = each view = pandas on the uploaded file, to the cent</span></li>
+            <li><span class="if">CHECK</span><span>raw table (less what the business rules leave out) = each view = pandas on the uploaded file, to the cent</span></li>
           </ul>
           <p class="ex" data-ex="nw">1,265,793.04 four times; gross 1,354,458.59.</p>
           <p class="ex" data-ex="wheels">One view; reconciled.</p>
@@ -234,10 +237,11 @@ pre { margin: 0; overflow-x: auto; background: var(--chip); border-radius: 8px; 
         <article class="stop on" data-routes="nw wheels">
           <p class="kicker">KPIs · 3</p><h3>KPIs per period, driver next to symptom</h3>
           <ul class="rules">
-            <li><span class="if">PERIOD</span><span>&gt; 5 years <b>→ year</b>; ≥ 4 complete quarters <b>→ quarter</b>; else <b>→ month</b></span></li>
-            <li><span class="if">ALWAYS</span><span>AOV = revenue ÷ COUNT(DISTINCT order); <code>period_index = year × 4 + quarter</code>; <code>LAG</code> kept only for the calendar neighbour (QoQ), YoY by joining on <code>period_index − 4</code>; partial periods labelled</span></li>
+            <li><span class="if">PERIOD</span><span>&gt; 5 years <b>→ year</b>; ≥ 4 complete quarters <b>→ quarter</b>; ≥ 3 complete months <b>→ month</b>; ≥ 4 complete ISO weeks <b>→ week</b>; else <b>→ month</b></span></li>
+            <li><span class="if">ALWAYS</span><span>AOV = revenue ÷ COUNT(DISTINCT order), with the median and P90 by rank; <code>period_index = year × 4 + quarter</code>; <code>LAG</code> kept only for a complete calendar neighbour (QoQ), YoY by joining on <code>period_index − 4</code> (complete periods only); partial periods labelled</span></li>
+            <li><span class="if">THEN</span><span>per day when the two periods differ in length by ≥ 3%; a 95% interval on every change <b>→ real, or within noise</b></span></li>
           </ul>
-          <p class="ex" data-ex="nw">AOV 1,525.05 (a line: 587.37). 1997-Q4 → 1998-Q1 +64.3%; naive 1998-Q2 −52.4% (partial).</p>
+          <p class="ex" data-ex="nw">AOV 1,525.05 (a line: 587.37; the median order: 943.25). 1997-Q4 → 1998-Q1 +64.3%, real; AOV +8.3%, within noise; naive 1998-Q2 −52.4% (partial).</p>
           <p class="ex" data-ex="wheels">Revenue falls each quarter while ship days rise (40 → 46 in the last two).</p>
         </article>
         <article class="stop on optional" data-routes="nw wheels">
@@ -259,9 +263,9 @@ pre { margin: 0; overflow-x: auto; background: var(--chip); border-radius: 8px; 
           <p class="kicker">Windows · 2</p><h3>Moving average and unusual periods</h3>
           <ul class="rules">
             <li><span class="if">IF</span><span>≥ 5 periods <b>→</b> 3-period moving average (<code>RANGE BETWEEN 2 PRECEDING AND CURRENT ROW</code>)</span></li>
-            <li><span class="if">THEN</span><span>flag a period only outside the 99% prediction interval of up to 8 earlier complete periods: |z| ≥ t(0.995, n−1)·√(1 + 1/n)</span></li>
+            <li><span class="if">THEN</span><span>flag a period only outside the 99% prediction intervals of up to 8 earlier complete periods: their level, |z| ≥ t(0.995, n−1)·√(1 + 1/n), <i>and</i> their trend (a fitted line), so steady growth is not unusual</span></li>
           </ul>
-          <p class="ex" data-ex="nw">1998-Q1: z = +4.8 against a limit of 4.36 (6 earlier quarters).</p>
+          <p class="ex" data-ex="nw">1998-Q1: z = +4.8 against a limit of 4.36 (6 earlier quarters); the trend predicted 196,668.16.</p>
         </article>
         <article class="stop on optional" data-routes="nw wheels">
           <p class="kicker">Windows · 3</p><h3>Top N per group</h3>
@@ -279,9 +283,9 @@ pre { margin: 0; overflow-x: auto; background: var(--chip); border-radius: 8px; 
           <p class="kicker">Windows · 5</p><h3>Latest record and RFM</h3>
           <ul class="rules">
             <li><span class="if">IF</span><span>a customer and a date <b>→</b> <code>ROW_NUMBER() … = 1</code> per customer; recency to the last date in the data</span></li>
-            <li><span class="if">IF</span><span>and money <b>→</b> <code>NTILE(5)</code> R / F / M scores and named segments</span></li>
+            <li><span class="if">IF</span><span>and money <b>→</b> <code>CEIL(5 × CUME_DIST())</code> R / F / M scores (equal values, equal scores) and named segments</span></li>
           </ul>
-          <p class="ex" data-ex="nw">Champions: 22 of 89 customers, 52.2% of revenue.</p>
+          <p class="ex" data-ex="nw">Champions: 24 of 89 customers, 54.4% of revenue.</p>
           <p class="ex" data-ex="wheels">Recency and RFM for each customer.</p>
         </article>
         <article class="stop on optional" data-routes="nw wheels">
@@ -295,14 +299,14 @@ pre { margin: 0; overflow-x: auto; background: var(--chip); border-radius: 8px; 
       <div class="line clu">
         <article class="stop on optional" data-routes="nw wheels">
           <p class="kicker">Root cause · 1</p><h3>Driver tree</h3>
-          <ul class="rules"><li><span class="if">IF</span><span>two consecutive complete periods <b>→</b> Δrevenue = volume + order value + interaction; then Δ by segment with conditional aggregation</span></li></ul>
-          <p class="ex" data-ex="nw">+116,810.09: about 80% more orders (120 → 182); Beverages 57% of the change.</p>
+          <ul class="rules"><li><span class="if">IF</span><span>two consecutive complete periods <b>→</b> Δrevenue = volume + order value, each at the average of the other (exact, nothing left over); then Δ by segment with conditional aggregation</span></li></ul>
+          <p class="ex" data-ex="nw">+116,810.09: 84% from more orders (120 → 182); Beverages 57% of the change.</p>
           <p class="ex" data-ex="wheels">The fall is mostly fewer orders.</p>
         </article>
         <article class="stop on optional" data-routes="nw wheels">
           <p class="kicker">Root cause · 2</p><h3>Drill down: symptom next to driver</h3>
           <ul class="rules">
-            <li><span class="if">IF</span><span>a driver (ship days, late %, rating) <b>→</b> both per complete period and per segment; correlation only with ≥ 6 periods</span></li>
+            <li><span class="if">IF</span><span>a driver (ship days, late %, rating) <b>→</b> both per complete period and per segment; correlations only with ≥ 6 periods, on levels and on changes, each with a 95% interval</span></li>
             <li><span class="if">THEN</span><span>driver moved ≥ 10% <b>in the direction that would explain it</b> (more days while revenue fell; a falling rating while revenue fell) <b>→ candidate cause: confirm with a controlled test</b>; else <b>→ not the cause</b></span></li>
           </ul>
           <p class="ex" data-ex="nw">Ship days 9.2 → 8.6 while revenue +64%: not the cause.</p>
@@ -362,6 +366,7 @@ pre { margin: 0; overflow-x: auto; background: var(--chip); border-radius: 8px; 
         <ul class="rules">
           <li><span class="if">ALWAYS</span><span>Completeness 25% · Uniqueness 20% · Integrity 20% · Validity 15% · Consistency 20%, each 0–100 with its reason</span></li>
           <li><span class="if">THEN</span><span>≥ 90 <b>→ High</b>; ≥ 75 <b>→ Good, with caveats</b>; else <b>→ Use with care</b></span></li>
+          <li><span class="if">CAP</span><span>totals that don't reconcile <b>→ Use with care</b>; any check below 60 <b>→ at most Good, with caveats</b>, whatever the average</span></li>
         </ul>
         <p class="ex" data-ex="nw">99 / 100, High: only <code>shipped_date</code> is 2.5% empty.</p>
         <p class="ex" data-ex="wheels">100 / 100, High.</p>
@@ -374,13 +379,13 @@ pre { margin: 0; overflow-x: auto; background: var(--chip); border-radius: 8px; 
           <li><span class="if">IF</span><span>a partial period <b>→</b> it leads, as a data warning</span></li>
         </ul>
         <p class="ex" data-ex="nw">Act now: 1998-Q2 is incomplete. Plan: Beverages drove 57% of the change.</p>
-        <p class="ex" data-ex="wheels">Act now: revenue fell 17%; 16 customers overdue; ship days +15% (needs a test).</p>
+        <p class="ex" data-ex="wheels">Act now: 16 customers overdue; ship days +15% (needs a test). Monitor: revenue −13.3% per day, within normal variation.</p>
       </article>
       <article class="stop on" data-routes="nw wheels staff">
         <p class="kicker">Stop 9</p><h3>One-page brief</h3>
         <ul class="rules"><li><span class="if">ALWAYS</span><span>one offline HTML page: KPI tiles, what to do, trend with the driver on its own axis, revenue waterfall, segments, concentration, RFM, discounts, trust, method; a table view per chart</span></li></ul>
         <p class="ex" data-ex="nw">"Revenue reached 298,491.55 in 1998-Q1 (+64.3% on 1997-Q4, +115.8% year over year)."</p>
-        <p class="ex" data-ex="wheels">"Revenue reached 8.31M in 2018-Q4 (−17.0% on 2018-Q3). Most of the movement came from fewer orders."</p>
+        <p class="ex" data-ex="wheels">"Revenue reached 8.31M in 2018-Q4 (−17.0% on 2018-Q3, −13.3% per day). That is within normal variation (95% CI −31% to +9%). Most of the movement came from fewer orders."</p>
         <p class="ex" data-ex="staff">Validation only: the trust section and the method.</p>
       </article>
     </div>
@@ -428,22 +433,27 @@ pre { margin: 0; overflow-x: auto; background: var(--chip); border-radius: 8px; 
 SELECT * FROM org ORDER BY depth, employee_id;</pre>
       </article>
       <article>
-        <h3>Median order value</h3>
-        <p class="why">PostgreSQL has an ordered-set aggregate; MySQL needs window functions. Both return 943.25.</p>
+        <h3>Median per segment</h3>
+        <p class="why">The app reports the overall median order (943.25). Per category: PostgreSQL has an ordered-set aggregate; MySQL needs window functions. Both give Beverages a median line of 251.55.</p>
 <pre>-- PostgreSQL
-SELECT ROUND(PERCENTILE_CONT(0.5) WITHIN GROUP (ORDER BY revenue)::numeric, 2)
-FROM   order_facts;
+SELECT category_name,
+       ROUND(PERCENTILE_CONT(0.5) WITHIN GROUP (ORDER BY revenue)::numeric, 2) AS median_line_revenue
+FROM   line_facts
+GROUP  BY category_name
+ORDER  BY category_name;
 
--- MySQL 8
+-- MySQL 8 (also runs on PostgreSQL: / 2.0 never truncates)
 WITH ranked AS (
-    SELECT revenue,
-           ROW_NUMBER() OVER (ORDER BY revenue) AS row_num,
-           COUNT(*) OVER () AS n
-    FROM   order_facts
+    SELECT category_name, revenue,
+           ROW_NUMBER() OVER (PARTITION BY category_name ORDER BY revenue) AS row_num,
+           COUNT(*) OVER (PARTITION BY category_name) AS cnt
+    FROM   line_facts
 )
-SELECT ROUND(AVG(revenue), 2) AS median_order_value
+SELECT category_name, ROUND(AVG(revenue), 2) AS median_line_revenue
 FROM   ranked
-WHERE  row_num IN (FLOOR((n + 1) / 2), CEIL((n + 1) / 2));</pre>
+WHERE  row_num IN (FLOOR((cnt + 1) / 2.0), FLOOR((cnt + 2) / 2.0))
+GROUP  BY category_name
+ORDER  BY category_name;</pre>
       </article>
       <article>
         <h3>Pivot with conditional aggregation</h3>

@@ -12,7 +12,7 @@ def run(northwind, northwind_catalog):
     return {r.cell_id: r for r in results}, metrics
 
 
-def test_revenue_reconciles_three_ways(run):
+def test_revenue_reconciles_to_the_cent(run):
     _, m = run
     assert m["reconciled"] is True
     assert round(m["revenue_total"], 2) == 1265793.04 == round(m["revenue_source"], 2)
