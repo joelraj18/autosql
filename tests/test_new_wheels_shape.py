@@ -29,3 +29,6 @@ def test_the_planted_slowdown_is_found(new_wheels_catalog):
     notes = " ".join(n for r in results if r.cell_id == "drilldown" for n in r.notes)
     assert "controlled test" in notes
     assert m["driver_split"]["volume"] < 0                          # fewer orders explain most of the fall
+    tree = " ".join(n for r in results if r.cell_id == "driver_tree" for n in r.notes)
+    assert "S07** moved most (+382,476.51, against the overall fall of -1,707,042.10)" in tree   # it grew while the total fell
+    assert "-22% of the change" not in tree                          # a negative share of a change reads as nonsense

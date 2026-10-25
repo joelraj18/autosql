@@ -2,9 +2,10 @@
 
     python scripts/benchmark.py              # 1,000,000 orders
     python scripts/benchmark.py 200000       # another size
+    python scripts/benchmark.py northwind    # the worked example (8 tables)
 
 The data: one orders table with an id, a customer, an amount, a date and a region, written to CSV first so that loading
-goes through exactly the same path as an upload.
+goes through exactly the same path as an upload (or the Northwind CSV files, read as an upload).
 """
 from __future__ import annotations
 
@@ -28,8 +29,10 @@ def synthetic_orders(n: int, seed: int = 0) -> bytes:
     return df.to_csv(index=False).encode()
 
 
-def main(n: int) -> dict[str, float]:
-    raw = synthetic_orders(n)
+NORTHWIND = Path(__file__).resolve().parents[1] / "examples" / "northwind"
+
+
+def main(files: list[tuple[str, bytes]]) -> dict[str, float]:
     t, times = time.perf_counter(), {}
 
     def lap(name: str) -> None:
@@ -38,7 +41,7 @@ def main(n: int) -> dict[str, float]:
         times[name] = now - t
         t = now
 
-    catalog = read_files([("orders.csv", raw)]); lap("load")
+    catalog = read_files(files); lap("load")
     profile = profile_catalog(catalog); lap("profile")
     schema = infer_schema(catalog, profile); lap("relationships")
     d = decide(catalog, profile, schema); cells = build_cells(d); lap("decide + write SQL")
@@ -49,6 +52,8 @@ def main(n: int) -> dict[str, float]:
 
 
 if __name__ == "__main__":
-    n = int(sys.argv[1]) if len(sys.argv) > 1 else 1_000_000
-    for name, seconds in main(n).items():
+    arg = sys.argv[1] if len(sys.argv) > 1 else "1000000"
+    files = ([(p.name, p.read_bytes()) for p in sorted(NORTHWIND.glob("*.csv"))] if arg == "northwind" else
+             [("orders.csv", synthetic_orders(int(arg)))])
+    for name, seconds in main(files).items():
         print(f"{name:22} {seconds:7.2f} s")

@@ -551,12 +551,14 @@ def _choose_revenue(d: Decision, ft: TableProfile, picks: dict) -> Revenue | Ste
 def find_row_filters(catalog: Catalog, profile: CatalogProfile, table: str) -> list[RowFilter]:
     """Status, flag and currency columns of ``table`` whose rules leave some rows out (never all of them)."""
     out = []
+    candidates = [c for c in profile[table].columns if c.n_unique >= 2 and (
+        (c.logical_type == "text" and (STATUS_COLUMN.search(c.name) or CURRENCY_COLUMN.search(c.name))) or FLAG_COLUMN.search(c.name))]
+    if not candidates:
+        return out                      # decided by the names alone: no column of a big table is counted for nothing
     df = catalog.tables[table].df
     if profile[table].exact_duplicates:
         df = df.drop_duplicates()       # count each order once when the table was loaded twice (the views de-duplicate it)
-    for c in profile[table].columns:
-        if c.n_unique < 2 or c.name not in df:
-            continue
+    for c in candidates:
         counts = df[c.name].value_counts(dropna=True)
         values: list = []
         kind, kept = None, None

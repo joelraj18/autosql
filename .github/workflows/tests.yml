@@ -36,12 +36,12 @@ jobs:
       AUTOSQL_MYSQL_PASSWORD: autosql
       MPLBACKEND: Agg
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
       - name: Start MySQL 8.4 (LOAD DATA LOCAL INFILE needs --local-infile on the server)
         run: docker run -d --name autosql-mysql -e MYSQL_ROOT_PASSWORD=autosql mysql:8.4 --local-infile=1
 
-      - uses: actions/setup-python@v5
+      - uses: actions/setup-python@v6
         with:
           python-version: "3.13"
           cache: pip

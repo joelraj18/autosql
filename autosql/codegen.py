@@ -2068,7 +2068,7 @@ def _driver_tree_cell(b: Builder) -> Cell:
              f"({int(o1):,} → {int(o2):,}) and **{value:+,.2f}** from the average order value ({a1:,.2f} → {a2:,.2f}). "
              f"**{main.capitalize()}** accounts for about {share:.0%} of the movement.")
         note(f"How the split works: each effect is measured at the average of the other (a Shapley split), so the two add up to the change "
-             f"exactly. The classic split (orders at the old order value, then order value at the new number of orders) gives "
+             f"exactly. The classic split (each effect at the old value of the other) gives "
              f"{classic['volume']:+,.2f} and {classic['order_value']:+,.2f}, and leaves {classic['interaction']:+,.2f} of 'both' to be assigned "
              "by convention; that leftover is why the classic shares depend on which effect is measured first.")
         if "orders_per_customer" in tree:
@@ -2083,7 +2083,11 @@ def _driver_tree_cell(b: Builder) -> Cell:
             metrics.setdefault("segment_changes", {})[col] = [
                 {"segment": str(r[0]), "before": float(r.revenue_before), "after": float(r.revenue_after), "change": float(r.revenue_change)}
                 for r in seg.itertuples(index=False)]
-            note(f"By `{col}`: **{top[col]}** moved most ({float(top.revenue_change):+,.2f}, {float(top.share_of_change_pct):.0f}% of the change).")
+            total = float(seg["revenue_change"].sum())
+            share = float(top.share_of_change_pct)
+            note(f"By `{col}`: **{top[col]}** moved most ({float(top.revenue_change):+,.2f}, "
+                 + (f"{share:.0f}% of the change)." if share >= 0 else       # a negative share of a change reads as nonsense
+                    f"against the overall {'rise' if total > 0 else 'fall'} of {total:+,.2f})."))
         metrics["top_contributors"] = contributors
     ''', lb=repr(lb), la=repr(la))
     return Cell("driver_tree", "Driver tree: what moved revenue", SECTIONS[6], story, tuple(statements), check)
