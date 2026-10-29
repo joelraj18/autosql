@@ -272,6 +272,11 @@ class Insight:
     priority: int         # 1 = act now, 2 = plan, 3 = monitor
     confidence: str       # measured | indicative | needs a test
     source: str           # the SQL step that produced the evidence
+    # What the brief shows when this recommendation is opened: the cards and charts it was made from, as the keys the page marks
+    # them with ("tile:orders", "fact:periods", "chart:trend", "trust"; a key the page doesn't have is skipped) ...
+    shows: tuple[str, ...] = ()
+    # ... and the key figures that appear nowhere else on the page: (label, value)
+    figures: tuple[tuple[str, str], ...] = ()
 
 
 def effect_shares(split: dict) -> dict[str, float]:
@@ -305,6 +310,10 @@ def _money(v: float) -> str:
     return f"{v:,.2f}" if abs(v) < 1e6 else f"{v / 1e6:,.2f}M"
 
 
+def _signed(v: float) -> str:
+    return f"{v:+,.2f}" if abs(v) < 1e6 else f"{v / 1e6:+,.2f}M"
+
+
 def insights(d: Decision, metrics: dict) -> list[Insight]:
     m, out = metrics, []
     main = m.get("main_measure", "revenue")
@@ -315,7 +324,9 @@ def insights(d: Decision, metrics: dict) -> list[Insight]:
         if p is d.periods[0] and len(d.periods) > 1:     # the data starts part-way through it: it will never be complete
             out.append(Insight("Data", f"{label} is incomplete", f"the data starts part-way through it: {p.covered} of {p.days} days",
                                "Its totals are low only because the extract starts late; a trend starting there begins with a fake jump.",
-                               f"Start trends and year-over-year comparisons after {label}.", 2, "measured", "date_range"))
+                               f"Start trends and year-over-year comparisons after {label}.", 2, "measured", "date_range",
+                               shows=("chart:trend", "fact:periods"),
+                               figures=(("Days with data", f"{p.covered} of {p.days}"), ("Share of the period", f"{p.coverage:.0%}"))))
             continue
         out.append(Insight(
             "Data", f"{label} is incomplete", f"only {p.covered} of {p.days} days have data"
@@ -325,11 +336,16 @@ def insights(d: Decision, metrics: dict) -> list[Insight]:
              f"It is up even with days missing, so a comparison that includes it understates the real level of the {d.period}."
              if naive.get("period") == label else
              f"Its totals cover only part of the {d.period}, so any comparison that includes it is distorted."),
-            f"Report {label} only once it is complete, or compare it with the same days a year earlier.", 1, "measured", "date_range"))
+            f"Report {label} only once it is complete, or compare it with the same days a year earlier.", 1, "measured", "date_range",
+            shows=("chart:trend", "fact:periods"),
+            figures=(("Days with data", f"{p.covered} of {p.days}"), ("Share of the period", f"{p.coverage:.0%}"))
+            + ((("Compared naively", f"{naive['pct']:+.1f}%"),) if naive.get("period") == label else ())))
     if m.get("missing_periods"):
         out.append(Insight("Data", "Periods with no data at all", ", ".join(m["missing_periods"][:6]),
                            "Either the business stopped or the extract is incomplete; trends across the gap are unreliable.",
-                           "Confirm with the data owner whether these periods were really empty.", 1, "measured", "date_range"))
+                           "Confirm with the data owner whether these periods were really empty.", 1, "measured", "date_range",
+                           shows=("chart:trend", "fact:periods"),
+                           figures=(("Periods with no rows", f"{len(m['missing_periods'])}"), ("First one", m["missing_periods"][0]))))
 
     q = m.get("qoq_last_complete")
     if q:
@@ -355,10 +371,19 @@ def insights(d: Decision, metrics: dict) -> list[Insight]:
         if not real:
             implication = "The change is within normal variation, so it is not yet evidence of a real shift. " + implication
         priority = 1 if change < -10 and real else 3 if abs(change) < 0.5 or not real else 2
+        figs = [("Change", f"{q['pct']:+.1f}%")]
+        if adjusted:
+            figs.append(("Per day", f"{change:+.1f}%"))
+        if test:
+            figs.append(("95% interval", f"{test['lo']:+.1f}% to {test['hi']:+.1f}%"))
+        if yoy:
+            figs.append(("Year over year", f"{yoy['pct']:+.1f}%"))
         out.append(Insight("Growth", headline, evidence, implication,
                            "Use the last complete period as the headline, and the year-over-year figure for plans."
                            if change >= 0 else "Find which part of the business fell (see the driver tree) before cutting costs.",
-                           priority, "measured" if real else "indicative", "kpi_by_period"))
+                           priority, "measured" if real else "indicative", "kpi_by_period",
+                           shows=("chart:trend", "tile:revenue", "tile:orders", "tile:avg_order_value") if main == "revenue" else ("chart:trend", "tile:orders"),
+                           figures=tuple(figs)))
 
     split = m.get("driver_split")
     if split and split.get("delta"):
@@ -383,33 +408,46 @@ def insights(d: Decision, metrics: dict) -> list[Insight]:
                            f"{split['from']} → {split['to']}: {_money(split['delta'])} = number of orders {_money(split['volume'])} "
                            f"+ order value {_money(split['order_value'])}" + (f"; {checked}" if checked else ""),
                            implication if real else "That effect is within normal variation, so treat it as a lead, not a finding. " + implication,
-                           action, 2, "measured" if real else "indicative", "driver_tree"))
+                           action, 2, "measured" if real else "indicative", "driver_tree",
+                           shows=("chart:waterfall", "tile:revenue", "tile:orders", "tile:avg_order_value"),
+                           figures=(("Total change", _signed(split["delta"])), ("From the number of orders", _signed(split["volume"])),
+                                    ("From order value", _signed(split["order_value"])))
+                           + tuple((f"{name} change", f"{t['change']:+.1f}% ({'real' if t['significant'] else 'within noise'})")
+                                   for name, t in (("Orders", tests.get("orders")), ("Order value", tests.get("avg_order_value"))) if t)))
     for col, c in list((m.get("top_contributors") or {}).items())[:2]:
         if abs(c["share"]) >= 30:
             out.append(Insight("Drivers", f"{c['segment']} drove {c['share']:.0f}% of the change", f"by {col}: {_money(c['change'])}",
                                "One segment carries the result; if it reverses, the total reverses with it.",
                                f"Find out what changed in {c['segment']} (customers, products, prices) and whether it can last.", 2, "measured",
-                               "driver_tree"))
+                               "driver_tree", shows=(f"chart:segment:{col}",),
+                               figures=(("Segment", str(c["segment"])), ("Its change", _signed(c["change"])),
+                                        ("Share of the total change", f"{c['share']:.0f}%"), ("Sliced by", col.replace("_", " ")))))
 
     dv = m.get("driver_vs_symptom")
     if dv:
         name = dv["driver"].replace("avg_", "").replace("_", " ")
+        corr = ((m.get("driver_corr") or {}).get(dv["driver"]) or {}).get("levels")
+        figs = (("Driver change", f"{dv['driver_change_pct']:+.1f}%"), (f"{main.capitalize()} change", f"{dv['symptom_change_pct']:+.1f}%")) \
+            + ((("Correlation over the periods", f"r = {corr['r']:+.2f} (95% CI {corr['lo']:+.2f} to {corr['hi']:+.2f})"),) if corr else ())
+        evidence_keys = ("chart:driver", "chart:trend", f"tile:{dv['driver']}")
         if dv.get("candidate"):
             test = ("improve service for a random half of customers" if dv["driver"].endswith("rating") else
                     "a faster shipping promise for a random half of orders")
             out.append(Insight("Operations", f"{name} moved {dv['driver_change_pct']:+.0f}% while {main} moved {dv['symptom_change_pct']:+.0f}%",
                                "last two complete periods", "Operations is a candidate cause of the change, but correlation is not proof.",
-                               f"Run a controlled test: e.g. {test}, then compare.", 1, "needs a test", "drilldown"))
+                               f"Run a controlled test: e.g. {test}, then compare.", 1, "needs a test", "drilldown",
+                               shows=evidence_keys, figures=figs))
         else:
             out.append(Insight("Operations", f"{name} did not explain the change",
                                f"{dv['driver_change_pct']:+.1f}% vs {main} {dv['symptom_change_pct']:+.1f}%",
                                "The cause lies elsewhere (volume, mix, segments).", "Keep monitoring it; look at the driver tree instead.",
-                               3, "measured", "drilldown"))
+                               3, "measured", "drilldown", shows=evidence_keys, figures=figs))
     k = m.get("kpis") or {}
     if k.get("late_pct") is not None and k["late_pct"] >= 10:
         out.append(Insight("Operations", f"{k['late_pct']:.0f}% of orders ship late", "shipped after the promised date",
                            "Late deliveries erode repeat business.", "Review carriers and promise dates for the worst segments.", 2,
-                           "measured", "kpis"))
+                           "measured", "kpis", shows=("tile:late_pct", "chart:driver"),
+                           figures=(("Late shipments, all periods", f"{k['late_pct']:.1f}%"),)))
 
     pareto = (m.get("pareto") or {}).get("customers")
     if pareto:
@@ -424,7 +462,11 @@ def insights(d: Decision, metrics: dict) -> list[Insight]:
                            f"class A: {pareto['a_entities']} customers ({pareto['a_entities_pct']:.0f}%) = {pareto['a_revenue_pct']:.0f}% of revenue",
                            implication,
                            f"Give the {pareto['a_entities']} class-A customers named account owners and watch their order gaps."
-                           if share >= 40 else "Keep broad-based retention; concentration is not a risk here.", priority, "measured", "pareto"))
+                           if share >= 40 else "Keep broad-based retention; concentration is not a risk here.", priority, "measured", "pareto",
+                           shows=("chart:pareto",),
+                           figures=(("Top 20% of customers", f"{share}% of revenue"),
+                                    ("Class A customers", f"{pareto['a_entities']} ({pareto['a_entities_pct']:.0f}% of them)"),
+                                    ("Their share of revenue", f"{pareto['a_revenue_pct']:.0f}%"))))
     gaps = m.get("purchase_gaps")
     if gaps and gaps.get("overdue"):
         share = gaps.get("overdue_revenue_pct")
@@ -433,13 +475,17 @@ def insights(d: Decision, metrics: dict) -> list[Insight]:
                            + (f"; {share:.0f}% of repeat-customer revenue" if share is not None else ""),
                            "These are the earliest churn signals, before any fixed '180 days' rule fires.",
                            "Contact them now (win-back), largest first; the list is in the purchase-gaps step.",
-                           1 if (share or 0) >= 10 else 2, "measured", "purchase_gaps"))
+                           1 if (share or 0) >= 10 else 2, "measured", "purchase_gaps",
+                           figures=(("Typical gap between orders", f"{gaps['avg_days']:.0f} days"),
+                                    ("Overdue customers", f"{gaps['overdue']} of {gaps['judged']}"))
+                           + ((("Their share of repeat-customer revenue", f"{share:.0f}%"),) if share is not None else ())))
     rfm = m.get("rfm") or {}
     if "At risk" in rfm and rfm["At risk"]["customers"]:
         r = rfm["At risk"]
         out.append(Insight("Customers", f"{r['customers']} once-frequent customers are slipping",
                            f"RFM 'At risk': {r['revenue_pct']:.1f}% of revenue", "They used to order often and have gone quiet.",
-                           "Reactivation offer or account call; compare with the overdue list.", 2, "measured", "rfm"))
+                           "Reactivation offer or account call; compare with the overdue list.", 2, "measured", "rfm",
+                           shows=("chart:rfm",), figures=(("At-risk customers", str(r["customers"])), ("Their share of revenue", f"{r['revenue_pct']:.1f}%"))))
 
     disc = m.get("discounts")
     if disc:
@@ -452,20 +498,30 @@ def insights(d: Decision, metrics: dict) -> list[Insight]:
                            ("Discounts coincide with bigger lines, which may justify them." if lift is not None and lift > 10 else
                             "Discounts don't come with bigger lines: much of it may be margin given away."),
                            "Test discount levels with a controlled experiment before changing the policy." if lift is not None and lift > 10 else
-                           "Cap or target discounts; measure the effect on volume.", 2, "indicative", "discounts"))
+                           "Cap or target discounts; measure the effect on volume.", 2, "indicative", "discounts",
+                           shows=("chart:discount-bands", "chart:discount-units"),
+                           figures=(("Given away", _money(disc["given"])), ("Share of gross revenue", f"{disc['pct_of_gross']:.1f}%"),
+                                    ("Lines discounted", f"{disc['discounted_lines_pct']:.0f}%"))
+                           + ((("Units per line, discounted vs full price", f"{disc['qty_discounted']:.1f} vs {disc['qty_full_price']:.1f}"),)
+                              if disc.get("qty_discounted") and disc.get("qty_full_price") else ())))
 
     for u in (m.get("unusual_periods") or [])[-1:]:
         out.append(Insight("Growth", f"{u['period']} is far {'above' if u['z'] > 0 else 'below'} its recent level and trend",
                            f"z = {u['z']:+.1f} against the {u['baseline']} complete periods before it (99% limit: {u['limit']:.2f})"
                            + (f"; their trend predicted {_money(u['expected'])}" if u.get("expected") is not None else ""),
                            "A break like this is either a new level or a one-off (a large order, a promotion, a data issue).",
-                           "Check the largest orders of that period before planning on it.", 2, "indicative", "trend_signals"))
+                           "Check the largest orders of that period before planning on it.", 2, "indicative", "trend_signals",
+                           shows=("chart:trend",),
+                           figures=(("Actual", _money(u["value"])),)
+                           + ((("Trend predicted", _money(u["expected"])),) if u.get("expected") is not None else ())
+                           + (("z-score", f"{u['z']:+.1f}"), ("99% limit", f"{u['limit']:.2f}"), ("Periods compared with", str(u["baseline"])))))
 
     if m.get("orphans"):
         n = sum(m["orphans"].values())
         out.append(Insight("Data", f"{n:,} records point at nothing", ", ".join(f"{k}: {v:,}" for k, v in m["orphans"].items()),
                            "They are kept as 'Unknown' in the analysis, but reports by customer or product will miss them.",
-                           "Fix the missing parent records at the source.", 2, "measured", "orphans"))
+                           "Fix the missing parent records at the source.", 2, "measured", "orphans", shows=("trust",),
+                           figures=tuple((k, f"{v:,} rows") for k, v in m["orphans"].items())))
     bad = m.get("impossible") or {}
     if bad:
         severe = m.get("impossible_values") or 0
@@ -475,7 +531,8 @@ def insights(d: Decision, metrics: dict) -> list[Insight]:
             "They flow into revenue and every average built on it." if severe else
             "Negative lines reduce revenue: right for returns and credits, wrong for typing errors.",
             "Correct them at the source." if severe else "Confirm with the data owner that they are returns.",
-            2 if severe else 3, "measured", "nulls"))
+            2 if severe else 3, "measured", "nulls", shows=("trust",),
+            figures=tuple((k, f"{v['rows']:,} · {v['rule']}") for k, v in bad.items())))
     lo = m.get("left_out")
     if lo and d.row_filters:
         sales = [f for f in d.row_filters if f.kind != "currency"]
@@ -494,10 +551,18 @@ def insights(d: Decision, metrics: dict) -> list[Insight]:
             ("Track the cancellation and return rate as its own KPI, and find out why orders are cancelled or returned."
              if sales else "") + (" " if sales and money else "")
             + (f"Convert the other currencies to {money[0].kept} before loading them, so that they count." if money else ""),
-            2 if lo["share_pct"] >= 5 else 3, "measured", "reconcile"))
+            2 if lo["share_pct"] >= 5 else 3, "measured", "reconcile",
+            shows=("fact:not-sales-left-out", "trust"),
+            figures=tuple((f"{f.shown()} in {f.table}.{f.column}", f"{f.rows:,} of {f.total:,} rows") for f in d.row_filters)
+            + (("Left out in total", together),)))
     if m.get("reconciled") is False:
         out.append(Insight("Data", "Totals don't reconcile", "SQL vs uploaded file", "KPIs may be inflated or incomplete.",
-                           "Resolve duplicates and orphans before sharing any number.", 1, "measured", "reconcile"))
+                           "Resolve duplicates and orphans before sharing any number.", 1, "measured", "reconcile",
+                           shows=("trust", "fact:revenue-is"),
+                           figures=(("Reconciled", "no"),)
+                           + tuple((label, _money(m[key])) for label, key in (("Total from the views", "revenue_total"),
+                                                                              ("Total from the uploaded file", "revenue_source"))
+                                   if m.get(key) is not None)))
     out.sort(key=lambda i: (i.priority, ["Data", "Growth", "Drivers", "Customers", "Operations", "Pricing"].index(i.area)))
     return out
 

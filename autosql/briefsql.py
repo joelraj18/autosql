@@ -97,13 +97,14 @@ class SqlLibrary:
         many = f" ({len(found)} queries)" if len(found) > 1 else ""
         return f'<details class="sqlv"><summary>{esc(label)}{many}</summary>{code_block(found)}</details>'
 
-    def link(self, steps: list[str], text: str = "SQL") -> str:
-        """A small link from a card to the full code of the steps it comes from (the appendix, or a popup when scripts run)."""
+    def link(self, steps: list[str], text: str = "SQL", title: str = "") -> str:
+        """A small link from a card to the full code of the steps it comes from: the appendix, or a popup when scripts run."""
         steps = [s for s in steps if s in self.cells]
         if not steps:
             return ""
         self.used.update(steps)
-        return f'<a class="sqllink" href="#sql-{esc(steps[0])}" data-sql="{esc(" ".join(steps))}">{esc(text)}</a>'
+        return (f'<a class="sqllink" href="#sql-{esc(steps[0])}" data-sql="{esc(" ".join(steps))}" data-title="{esc(title)}" '
+                f'aria-label="SQL behind {esc(title or "this card")}">{esc(text)}</a>')
 
     def step_body(self, cell: Cell) -> str:
         """What the appendix (and the popups) show for one step: the question it answers, then every statement."""

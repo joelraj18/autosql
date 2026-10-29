@@ -8,7 +8,9 @@ import sqlglot
 
 from autosql import build_cells, run_cells
 from autosql.dialect import BANNED, RESERVED
+from autosql.report import to_business_brief
 from conftest import NORTHWIND, analyse, catalog_from, new_wheels_frame, shop_frames
+from htmltree import parse_tree
 
 
 def timestamps_frame():
@@ -206,6 +208,38 @@ def test_every_cell_runs(case):
     assert all(c.code("mysql").startswith("-- Why:") for c in cells)
     if d.kpi:
         assert metrics.get("reconciled") is True
+
+
+def test_the_brief_of_every_case_keeps_its_promises(case):
+    """What a page says about itself is true for any dataset: its evidence exists, its links lead somewhere, its SQL is the engine's."""
+    name, d, cells, _, metrics = case
+    page = to_business_brief(d, metrics, title=name)
+    tree = parse_tree(page)
+    by_id = {c.id: c for c in cells}
+    steps = {n.attrs["data-step"]: n for n in tree.find_all("details", cls="step")}
+    present = {n.attrs["data-ev"] for n in tree.find_all() if "data-ev" in n.attrs}
+
+    for step, node in steps.items():                                     # the appendix is the engine's own code, whole
+        for dialect in ("mysql", "postgres"):
+            code = node.find("div", cls=f"sql-{dialect}").find("code").text()
+            assert all(st.sql[dialect] in code for st in by_id[step].statements), (step, dialect)
+    for a in tree.find_all("a", cls="sqllink"):                          # every SQL link leads to a step that is on the page
+        assert all(t in steps for t in a.attrs["data-sql"].split()), a.attrs
+    for card in tree.find_all("div", cls="card"):                        # a chart always comes with its table view and its SQL
+        if card.attrs.get("data-ev", "").startswith("chart:"):
+            assert card.find("details", cls="tv") and card.find("details", cls="sqlv"), card.attrs["data-ev"]
+            for pane in card.find("details", cls="sqlv").find_all("div", cls="sqlpane"):
+                assert pane.find("code").text().strip(), card.attrs["data-ev"]
+    openers = tree.find_all("button", cls="evbtn")
+    for button in openers:                                               # a recommendation names only what the page has
+        keys = (button.attrs["data-cards"] + " " + button.attrs["data-charts"]).split()
+        assert set(keys) <= present, (button.attrs, sorted(present))
+        assert all(s in steps for s in button.attrs["data-sql"].split()), button.attrs
+    articles = tree.find_all("article", cls="action")
+    assert len(openers) == len(articles)                                 # and every one of them has something to open
+    assert (tree.find("dialog", id="evidence") is not None) == bool(openers or tree.find_all("a", cls="sqllink"))
+    text = re.sub(r"<(style|script|code|pre)\b.*?</\1>", " ", page, flags=re.S)
+    assert "`" not in text                                               # no markdown marks in a sentence
 
 
 def _strip_comments(sql: str) -> str:

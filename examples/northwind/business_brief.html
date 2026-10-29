@@ -156,6 +156,32 @@ details.step summary { cursor: pointer; display: flex; flex-wrap: wrap; gap: 4px
 details.step .sec { color: var(--muted); font-size: 0.8rem; }
 .sqlbody .q { color: var(--ink-2); font-size: 0.9rem; margin: 8px 0 0; }
 .sqlbody .by { color: var(--muted); }
+/* Recommendations open a popup with the charts, key cards and SQL they were made from */
+.action .more { margin: 2px 0 0; }
+.evbtn { font: 600 0.84rem/1 var(--sans); padding: 8px 14px; border: 1px solid var(--axis); border-radius: 999px; background: var(--bg); color: var(--ink); cursor: pointer; }
+.evbtn:hover { border-color: var(--ink); }
+.evbtn:focus-visible { outline: 2px solid var(--series); outline-offset: 2px; }
+.action.openable { cursor: pointer; }
+.action.openable:hover { border-color: var(--axis); }
+html:has(dialog[open]) { overflow: hidden; }
+dialog.ev { width: min(1040px, calc(100vw - 24px)); max-width: none; max-height: calc(100dvh - 24px); padding: 0; border: 1px solid var(--rule); border-radius: 14px;
+            background: var(--bg); color: var(--ink); overflow: hidden; cursor: auto; }
+dialog.ev[open] { display: flex; flex-direction: column; }
+dialog.ev::backdrop { background: rgba(11, 11, 11, 0.55); }
+.evhead { display: flex; justify-content: space-between; align-items: flex-start; gap: 12px; padding: 14px 18px; background: var(--surface); border-bottom: 1px solid var(--rule); }
+.evhead h2 { font-size: 1.12rem; }
+.evclose { flex: none; width: 2.2rem; height: 2.2rem; border-radius: 50%; border: 1px solid var(--rule); background: var(--bg); color: var(--ink); font-size: 0.95rem; cursor: pointer; }
+.evclose:hover { border-color: var(--ink); }
+.evclose:focus-visible { outline: 2px solid var(--series); outline-offset: 2px; }
+.evbody { overflow: auto; padding: 16px 18px 24px; display: grid; gap: 22px; min-height: 0; align-content: start; }
+.evsec { display: grid; gap: 10px; min-width: 0; }
+.evsec > h3 { font: 600 0.72rem/1.2 var(--sans); letter-spacing: 0.08em; text-transform: uppercase; color: var(--muted); }
+.evwhy { display: grid; gap: 6px; }
+.evgrid { display: grid; grid-template-columns: repeat(auto-fit, minmax(11rem, 1fr)); gap: 10px; }
+.evgrid > .facts { display: contents; }
+.evgrid .hero-figure .value { font-size: 2.1rem; }
+.evgrid .tile .value.long, .tile .value.long { font-size: 1.02rem; line-height: 1.3; }
+.evsec .grid2 > .meters { grid-column: 1 / -1; }
 .scroll { overflow-x: auto; }
 table { border-collapse: collapse; width: 100%; font-size: 0.86rem; margin-top: 8px; }
 th, td { text-align: left; padding: 6px 10px; border-bottom: 1px solid var(--rule); vertical-align: top; }
@@ -170,6 +196,10 @@ footer.end { color: var(--muted); font-size: 0.85rem; border-top: 1px solid var(
   .meter { grid-template-columns: minmax(0, 1fr) 2.6rem; } .meter .track { grid-column: 1 / 3; } .meter .detail { grid-column: 1 / 3; }
   .action { grid-template-columns: minmax(0, 1fr); }
   .card { padding: 14px 12px; }
+}
+@media (max-width: 600px) {   /* on a phone the popup is the whole screen */
+  dialog.ev { inset: 0; margin: 0; width: 100vw; height: 100dvh; max-height: none; border: 0; border-radius: 0; }
+  .evhead, .evbody { padding-left: max(14px, env(safe-area-inset-left, 0px)); padding-right: max(14px, env(safe-area-inset-right, 0px)); }
 }
 @media (max-width: 520px) {   /* the charts scale down to the phone width: enlarge their text to keep it legible */
   svg .tick, svg .cat, svg .note { font-size: 13px; } svg .val { font-size: 13.5px; }
@@ -281,7 +311,7 @@ SELECT order_year,
        ROUND((100.0 * (revenue - prev_revenue) / NULLIF(prev_revenue, 0))::numeric, 1) AS revenue_qoq_pct,
        ROUND((100.0 * (revenue - revenue_year_ago) / NULLIF(revenue_year_ago, 0))::numeric, 1) AS revenue_yoy_pct
 FROM   with_prev
-ORDER  BY order_year, quarter_number;</code></pre></div></div></details></section><section class="section" id="data" aria-labelledby="data-h"><header><p class="eyebrow">Context</p><h2 id="data-h">What this data is</h2></header><dl class="facts"><div data-ev="fact:tables"><dt>Tables<a class="sqllink" href="#sql-schema" data-sql="schema cardinality">SQL</a></dt><dd>8 tables, 7 links</dd></div><div data-ev="fact:one-row-is"><dt>One row is<a class="sqllink" href="#sql-grain" data-sql="grain">SQL</a></dt><dd>order_id × product_id</dd></div><div data-ev="fact:orders"><dt>Orders<a class="sqllink" href="#sql-kpis" data-sql="kpis">SQL</a></dt><dd>830 from 89 customers</dd></div><div data-ev="fact:revenue-all-periods"><dt>Revenue, all periods<a class="sqllink" href="#sql-kpis" data-sql="kpis">SQL</a></dt><dd>1,265,793.04</dd></div><div data-ev="fact:typical-order"><dt>Typical order<a class="sqllink" href="#sql-kpis" data-sql="kpis">SQL</a></dt><dd>943.25 (median); the average is 1.6× it</dd></div><div data-ev="fact:revenue-is"><dt>Revenue is<a class="sqllink" href="#sql-base" data-sql="base">SQL</a></dt><dd>unit_price × quantity × (1 − discount)</dd></div><div data-ev="fact:periods"><dt>Periods<a class="sqllink" href="#sql-date_range" data-sql="date_range">SQL</a></dt><dd>7 complete quarters; 1998-Q2 partial</dd></div></dl></section><section class="section" id="actions" aria-labelledby="actions-h"><header><p class="eyebrow">Recommendations</p><h2 id="actions-h">What to do</h2><p>Ordered by urgency. Each one cites its numbers and the SQL step that produced them. “Needs a test” marks a pattern in the data, not a proven cause.</p></header><div class="actions"><article class="action"><span class="pri p1">Act now</span><div class="body"><h3>1998-Q2 is incomplete</h3><p class="ev">only 36 of 91 days have data; a naive report would show -52.4%. Its totals are low only because days are missing: any report that includes it shows a fall that isn&#x27;t real.</p><p class="todo"><b>Next step:</b> Report 1998-Q2 only once it is complete, or compare it with the same days a year earlier.</p><div class="tags"><span class="tag">Data</span><span class="tag">measured</span><span class="tag mono">date_range</span></div></div></article><article class="action"><span class="pri p2">Plan</span><div class="body"><h3>Revenue grew 64.3% in 1998-Q1</h3><p class="ev">1997-Q4 → 1998-Q1: +64.3% (95% CI +15.0% to +134.7%); year over year +115.8%. The change also holds against the same period a year earlier, so it is not just seasonality.</p><p class="todo"><b>Next step:</b> Use the last complete period as the headline, and the year-over-year figure for plans.</p><div class="tags"><span class="tag">Growth</span><span class="tag">measured</span><span class="tag mono">kpi_by_period</span></div></div></article><article class="action"><span class="pri p2">Plan</span><div class="body"><h3>1998-Q1 is far above its recent level and trend</h3><p class="ev">z = +4.8 against the 6 complete periods before it (99% limit: 4.36); their trend predicted 196,668.16. A break like this is either a new level or a one-off (a large order, a promotion, a data issue).</p><p class="todo"><b>Next step:</b> Check the largest orders of that period before planning on it.</p><div class="tags"><span class="tag">Growth</span><span class="tag">indicative</span><span class="tag mono">trend_signals</span></div></div></article><article class="action"><span class="pri p2">Plan</span><div class="body"><h3>Order volume accounts for 84% of the movement</h3><p class="ev">1997-Q4 → 1998-Q1: 116,810.09 = number of orders 97,776.34 + order value 19,033.75; orders +51.7% (real); order value +8.3% (within normal variation). Growth comes from more orders, so fulfilment, stock and service have to scale with it.</p><p class="todo"><b>Next step:</b> Plan capacity for the higher volume; treat order value (bundles, thresholds) as a separate lever.</p><div class="tags"><span class="tag">Drivers</span><span class="tag">measured</span><span class="tag mono">driver_tree</span></div></div></article><article class="action"><span class="pri p2">Plan</span><div class="body"><h3>Beverages drove 57% of the change</h3><p class="ev">by category_name: 66,503.58. One segment carries the result; if it reverses, the total reverses with it.</p><p class="todo"><b>Next step:</b> Find out what changed in Beverages (customers, products, prices) and whether it can last.</p><div class="tags"><span class="tag">Drivers</span><span class="tag">measured</span><span class="tag mono">driver_tree</span></div></div></article><article class="action"><span class="pri p2">Plan</span><div class="body"><h3>The top 20% of customers bring 60% of revenue</h3><p class="ev">class A: 34 customers (38%) = 80% of revenue. High dependence on a few accounts: losing one of them moves the total.</p><p class="todo"><b>Next step:</b> Give the 34 class-A customers named account owners and watch their order gaps.</p><div class="tags"><span class="tag">Customers</span><span class="tag">measured</span><span class="tag mono">pareto</span></div></div></article><article class="action"><span class="pri p2">Plan</span><div class="body"><h3>5 repeat customers are overdue</h3><p class="ev">silent for more than twice their usual gap (typical gap 59 days); 4% of repeat-customer revenue. These are the earliest churn signals, before any fixed &#x27;180 days&#x27; rule fires.</p><p class="todo"><b>Next step:</b> Contact them now (win-back), largest first; the list is in the purchase-gaps step.</p><div class="tags"><span class="tag">Customers</span><span class="tag">measured</span><span class="tag mono">purchase_gaps</span></div></div></article><article class="action"><span class="pri p2">Plan</span><div class="body"><h3>7 once-frequent customers are slipping</h3><p class="ev">RFM &#x27;At risk&#x27;: 4.6% of revenue. They used to order often and have gone quiet.</p><p class="todo"><b>Next step:</b> Reactivation offer or account call; compare with the overdue list.</p><div class="tags"><span class="tag">Customers</span><span class="tag">measured</span><span class="tag mono">rfm</span></div></div></article></div></section><section class="section" id="trend" aria-labelledby="trend-h"><header><p class="eyebrow">Trend</p><h2 id="trend-h">What happened</h2></header><div class="grid2"><div class="card" data-ev="chart:trend"><h3>Revenue per quarter</h3><p class="sub">Grey: 1998-Q2 is partial, shown but never compared.</p><div class="chart"><svg viewBox="0 0 400 220" role="img" aria-label="revenue per quarter" preserveAspectRatio="xMinYMin meet"><line class="grid" x1="44" x2="392" y1="184.0" y2="184.0"/><text class="tick" x="38" y="188.0" text-anchor="end">0</text><line class="grid" x1="44" x2="392" y1="142.5" y2="142.5"/><text class="tick" x="38" y="146.5" text-anchor="end">100K</text><line class="grid" x1="44" x2="392" y1="101.0" y2="101.0"/><text class="tick" x="38" y="105.0" text-anchor="end">200K</text><line class="grid" x1="44" x2="392" y1="59.5" y2="59.5"/><text class="tick" x="38" y="63.5" text-anchor="end">300K</text><line class="grid" x1="44" x2="392" y1="18.0" y2="18.0"/><text class="tick" x="38" y="22.0" text-anchor="end">400K</text><path class="m-series" d="M53.8,184.0V154.9Q53.8,150.9 57.8,150.9H73.8Q77.8,150.9 77.8,154.9V184.0Z" tabindex="0" data-tip="1996-Q3: 79,728.57"/><path class="m-series" d="M97.2,184.0V134.7Q97.2,130.7 101.2,130.7H117.2Q121.2,130.7 121.2,134.7V184.0Z" tabindex="0" data-tip="1996-Q4: 128,355.40"/><path class="m-series" d="M140.8,184.0V130.6Q140.8,126.6 144.8,126.6H160.8Q164.8,126.6 164.8,130.6V184.0Z" tabindex="0" data-tip="1997-Q1: 138,288.93"/><path class="m-series" d="M184.2,184.0V128.6Q184.2,124.6 188.2,124.6H204.2Q208.2,124.6 208.2,128.6V184.0Z" tabindex="0" data-tip="1997-Q2: 143,177.04"/><path class="m-series" d="M227.8,184.0V124.1Q227.8,120.1 231.8,120.1H247.8Q251.8,120.1 251.8,124.1V184.0Z" tabindex="0" data-tip="1997-Q3: 153,937.77"/><path class="m-series" d="M271.2,184.0V112.6Q271.2,108.6 275.2,108.6H291.2Q295.2,108.6 295.2,112.6V184.0Z" tabindex="0" data-tip="1997-Q4: 181,681.46"/><path class="m-series" d="M314.8,184.0V64.1Q314.8,60.1 318.8,60.1H334.8Q338.8,60.1 338.8,64.1V184.0Z" tabindex="0" data-tip="1998-Q1: 298,491.55"/><text class="val" x="326.8" y="54.1" text-anchor="middle">298K</text><path class="m-muted" d="M358.2,184.0V129.0Q358.2,125.0 362.2,125.0H378.2Q382.2,125.0 382.2,129.0V184.0Z" tabindex="0" data-tip="1998-Q2: 142,132.31 (partial period: excluded from comparisons)"/><text class="note" x="370.2" y="119.0" text-anchor="middle">partial</text><line class="axis" x1="44" x2="392" y1="184.0" y2="184.0"/><text class="tick" x="65.8" y="199.0" text-anchor="middle"><tspan x="65.8" dy="0">Q3</tspan><tspan x="65.8" dy="13">1996</tspan></text><text class="tick" x="109.2" y="199.0" text-anchor="middle"><tspan x="109.2" dy="0">Q4</tspan></text><text class="tick" x="152.8" y="199.0" text-anchor="middle"><tspan x="152.8" dy="0">Q1</tspan><tspan x="152.8" dy="13">1997</tspan></text><text class="tick" x="196.2" y="199.0" text-anchor="middle"><tspan x="196.2" dy="0">Q2</tspan></text><text class="tick" x="239.8" y="199.0" text-anchor="middle"><tspan x="239.8" dy="0">Q3</tspan></text><text class="tick" x="283.2" y="199.0" text-anchor="middle"><tspan x="283.2" dy="0">Q4</tspan></text><text class="tick" x="326.8" y="199.0" text-anchor="middle"><tspan x="326.8" dy="0">Q1</tspan><tspan x="326.8" dy="13">1998</tspan></text><text class="tick" x="370.2" y="199.0" text-anchor="middle"><tspan x="370.2" dy="0">Q2</tspan></text></svg></div><div class="views"><details class="tv"><summary>Table view</summary><div class="scroll"><table><thead><tr><th>Period</th><th>Revenue</th><th>Status</th></tr></thead><tbody><tr><td>1996-Q3</td><td>79,728.57</td><td>complete</td></tr><tr><td>1996-Q4</td><td>128,355.40</td><td>complete</td></tr><tr><td>1997-Q1</td><td>138,288.93</td><td>complete</td></tr><tr><td>1997-Q2</td><td>143,177.04</td><td>complete</td></tr><tr><td>1997-Q3</td><td>153,937.77</td><td>complete</td></tr><tr><td>1997-Q4</td><td>181,681.46</td><td>complete</td></tr><tr><td>1998-Q1</td><td>298,491.55</td><td>complete</td></tr><tr><td>1998-Q2</td><td>142,132.31</td><td>partial</td></tr></tbody></table></div></details><details class="sqlv"><summary>SQL</summary><div class="sqlcode"><div class="sqlpane sql-mysql"><div class="sqlbar"><span class="lbl">MySQL 8</span><div class="dialect" role="group" aria-label="SQL dialect" hidden><button type="button" data-dialect="mysql" aria-pressed="false">MySQL 8</button><button type="button" data-dialect="postgres" aria-pressed="false">PostgreSQL</button></div><button type="button" class="copy" hidden>Copy</button></div><pre tabindex="0"><code><span class="c">-- KPIs per quarter with LAG()</span>
+ORDER  BY order_year, quarter_number;</code></pre></div></div></details></section><section class="section" id="data" aria-labelledby="data-h"><header><p class="eyebrow">Context</p><h2 id="data-h">What this data is</h2></header><dl class="facts"><div data-ev="fact:tables"><dt>Tables<a class="sqllink" href="#sql-schema" data-sql="schema cardinality" data-title="Tables" aria-label="SQL behind Tables">SQL</a></dt><dd>8 tables, 7 links</dd></div><div data-ev="fact:one-row-is"><dt>One row is<a class="sqllink" href="#sql-grain" data-sql="grain" data-title="One row is" aria-label="SQL behind One row is">SQL</a></dt><dd>order_id × product_id</dd></div><div data-ev="fact:orders"><dt>Orders<a class="sqllink" href="#sql-kpis" data-sql="kpis" data-title="Orders" aria-label="SQL behind Orders">SQL</a></dt><dd>830 from 89 customers</dd></div><div data-ev="fact:revenue-all-periods"><dt>Revenue, all periods<a class="sqllink" href="#sql-kpis" data-sql="kpis" data-title="Revenue, all periods" aria-label="SQL behind Revenue, all periods">SQL</a></dt><dd>1,265,793.04</dd></div><div data-ev="fact:typical-order"><dt>Typical order<a class="sqllink" href="#sql-kpis" data-sql="kpis" data-title="Typical order" aria-label="SQL behind Typical order">SQL</a></dt><dd>943.25 (median); the average is 1.6× it</dd></div><div data-ev="fact:revenue-is"><dt>Revenue is<a class="sqllink" href="#sql-base" data-sql="base" data-title="Revenue is" aria-label="SQL behind Revenue is">SQL</a></dt><dd>unit_price × quantity × (1 − discount)</dd></div><div data-ev="fact:periods"><dt>Periods<a class="sqllink" href="#sql-date_range" data-sql="date_range" data-title="Periods" aria-label="SQL behind Periods">SQL</a></dt><dd>7 complete quarters; 1998-Q2 partial</dd></div></dl></section><section class="section" id="actions" aria-labelledby="actions-h"><header><p class="eyebrow">Recommendations</p><h2 id="actions-h">What to do</h2><p>Ordered by urgency. Each one cites its numbers and the SQL step that produced them; open one to see the charts, figures and SQL it was made from. “Needs a test” marks a pattern in the data, not a proven cause.</p></header><div class="actions"><article class="action" data-priority="Act now" data-area="Data"><span class="pri p1">Act now</span><div class="body"><h3>1998-Q2 is incomplete</h3><p class="ev">only 36 of 91 days have data; a naive report would show -52.4%. Its totals are low only because days are missing: any report that includes it shows a fall that isn&#x27;t real.</p><p class="todo"><b>Next step:</b> Report 1998-Q2 only once it is complete, or compare it with the same days a year earlier.</p><div class="tags"><span class="tag">Data</span><span class="tag">measured</span><span class="tag mono">date_range</span></div><p class="more"><button type="button" class="evbtn" hidden data-cards="fact:periods" data-charts="chart:trend" data-sql="date_range" aria-haspopup="dialog">Show the charts, figures and SQL behind this</button></p><template class="figs"><div class="tile"><span class="label">Days with data</span><span class="value">36 of 91</span></div><div class="tile"><span class="label">Share of the period</span><span class="value">40%</span></div><div class="tile"><span class="label">Compared naively</span><span class="value">-52.4%</span></div></template></div></article><article class="action" data-priority="Plan" data-area="Growth"><span class="pri p2">Plan</span><div class="body"><h3>Revenue grew 64.3% in 1998-Q1</h3><p class="ev">1997-Q4 → 1998-Q1: +64.3% (95% CI +15.0% to +134.7%); year over year +115.8%. The change also holds against the same period a year earlier, so it is not just seasonality.</p><p class="todo"><b>Next step:</b> Use the last complete period as the headline, and the year-over-year figure for plans.</p><div class="tags"><span class="tag">Growth</span><span class="tag">measured</span><span class="tag mono">kpi_by_period</span></div><p class="more"><button type="button" class="evbtn" hidden data-cards="tile:revenue tile:orders tile:avg_order_value" data-charts="chart:trend" data-sql="kpi_by_period" aria-haspopup="dialog">Show the charts, figures and SQL behind this</button></p><template class="figs"><div class="tile"><span class="label">Change</span><span class="value">+64.3%</span></div><div class="tile"><span class="label">95% interval</span><span class="value long">+15.0% to +134.7%</span></div><div class="tile"><span class="label">Year over year</span><span class="value">+115.8%</span></div></template></div></article><article class="action" data-priority="Plan" data-area="Growth"><span class="pri p2">Plan</span><div class="body"><h3>1998-Q1 is far above its recent level and trend</h3><p class="ev">z = +4.8 against the 6 complete periods before it (99% limit: 4.36); their trend predicted 196,668.16. A break like this is either a new level or a one-off (a large order, a promotion, a data issue).</p><p class="todo"><b>Next step:</b> Check the largest orders of that period before planning on it.</p><div class="tags"><span class="tag">Growth</span><span class="tag">indicative</span><span class="tag mono">trend_signals</span></div><p class="more"><button type="button" class="evbtn" hidden data-cards="" data-charts="chart:trend" data-sql="trend_signals" aria-haspopup="dialog">Show the charts, figures and SQL behind this</button></p><template class="figs"><div class="tile"><span class="label">Actual</span><span class="value">298,491.55</span></div><div class="tile"><span class="label">Trend predicted</span><span class="value">196,668.16</span></div><div class="tile"><span class="label">z-score</span><span class="value">+4.8</span></div><div class="tile"><span class="label">99% limit</span><span class="value">4.36</span></div><div class="tile"><span class="label">Periods compared with</span><span class="value">6</span></div></template></div></article><article class="action" data-priority="Plan" data-area="Drivers"><span class="pri p2">Plan</span><div class="body"><h3>Order volume accounts for 84% of the movement</h3><p class="ev">1997-Q4 → 1998-Q1: 116,810.09 = number of orders 97,776.34 + order value 19,033.75; orders +51.7% (real); order value +8.3% (within normal variation). Growth comes from more orders, so fulfilment, stock and service have to scale with it.</p><p class="todo"><b>Next step:</b> Plan capacity for the higher volume; treat order value (bundles, thresholds) as a separate lever.</p><div class="tags"><span class="tag">Drivers</span><span class="tag">measured</span><span class="tag mono">driver_tree</span></div><p class="more"><button type="button" class="evbtn" hidden data-cards="tile:revenue tile:orders tile:avg_order_value" data-charts="chart:waterfall" data-sql="driver_tree" aria-haspopup="dialog">Show the charts, figures and SQL behind this</button></p><template class="figs"><div class="tile"><span class="label">Total change</span><span class="value">+116,810.09</span></div><div class="tile"><span class="label">From the number of orders</span><span class="value">+97,776.34</span></div><div class="tile"><span class="label">From order value</span><span class="value">+19,033.75</span></div><div class="tile"><span class="label">Orders change</span><span class="value">+51.7% (real)</span></div><div class="tile"><span class="label">Order value change</span><span class="value long">+8.3% (within noise)</span></div></template></div></article><article class="action" data-priority="Plan" data-area="Drivers"><span class="pri p2">Plan</span><div class="body"><h3>Beverages drove 57% of the change</h3><p class="ev">by category_name: 66,503.58. One segment carries the result; if it reverses, the total reverses with it.</p><p class="todo"><b>Next step:</b> Find out what changed in Beverages (customers, products, prices) and whether it can last.</p><div class="tags"><span class="tag">Drivers</span><span class="tag">measured</span><span class="tag mono">driver_tree</span></div><p class="more"><button type="button" class="evbtn" hidden data-cards="" data-charts="chart:segment:category_name" data-sql="driver_tree" aria-haspopup="dialog">Show the charts, figures and SQL behind this</button></p><template class="figs"><div class="tile"><span class="label">Segment</span><span class="value">Beverages</span></div><div class="tile"><span class="label">Its change</span><span class="value">+66,503.58</span></div><div class="tile"><span class="label">Share of the total change</span><span class="value">57%</span></div><div class="tile"><span class="label">Sliced by</span><span class="value">category name</span></div></template></div></article><article class="action" data-priority="Plan" data-area="Customers"><span class="pri p2">Plan</span><div class="body"><h3>The top 20% of customers bring 60% of revenue</h3><p class="ev">class A: 34 customers (38%) = 80% of revenue. High dependence on a few accounts: losing one of them moves the total.</p><p class="todo"><b>Next step:</b> Give the 34 class-A customers named account owners and watch their order gaps.</p><div class="tags"><span class="tag">Customers</span><span class="tag">measured</span><span class="tag mono">pareto</span></div><p class="more"><button type="button" class="evbtn" hidden data-cards="" data-charts="chart:pareto" data-sql="pareto" aria-haspopup="dialog">Show the charts, figures and SQL behind this</button></p><template class="figs"><div class="tile"><span class="label">Top 20% of customers</span><span class="value">60% of revenue</span></div><div class="tile"><span class="label">Class A customers</span><span class="value long">34 (38% of them)</span></div><div class="tile"><span class="label">Their share of revenue</span><span class="value">80%</span></div></template></div></article><article class="action" data-priority="Plan" data-area="Customers"><span class="pri p2">Plan</span><div class="body"><h3>5 repeat customers are overdue</h3><p class="ev">silent for more than twice their usual gap (typical gap 59 days); 4% of repeat-customer revenue. These are the earliest churn signals, before any fixed &#x27;180 days&#x27; rule fires.</p><p class="todo"><b>Next step:</b> Contact them now (win-back), largest first; the list is in the purchase-gaps step.</p><div class="tags"><span class="tag">Customers</span><span class="tag">measured</span><span class="tag mono">purchase_gaps</span></div><p class="more"><button type="button" class="evbtn" hidden data-cards="" data-charts="" data-sql="purchase_gaps" aria-haspopup="dialog">Show the charts, figures and SQL behind this</button></p><template class="figs"><div class="tile"><span class="label">Typical gap between orders</span><span class="value">59 days</span></div><div class="tile"><span class="label">Overdue customers</span><span class="value">5 of 86</span></div><div class="tile"><span class="label">Their share of repeat-customer revenue</span><span class="value">4%</span></div></template></div></article><article class="action" data-priority="Plan" data-area="Customers"><span class="pri p2">Plan</span><div class="body"><h3>7 once-frequent customers are slipping</h3><p class="ev">RFM &#x27;At risk&#x27;: 4.6% of revenue. They used to order often and have gone quiet.</p><p class="todo"><b>Next step:</b> Reactivation offer or account call; compare with the overdue list.</p><div class="tags"><span class="tag">Customers</span><span class="tag">measured</span><span class="tag mono">rfm</span></div><p class="more"><button type="button" class="evbtn" hidden data-cards="" data-charts="chart:rfm" data-sql="rfm" aria-haspopup="dialog">Show the charts, figures and SQL behind this</button></p><template class="figs"><div class="tile"><span class="label">At-risk customers</span><span class="value">7</span></div><div class="tile"><span class="label">Their share of revenue</span><span class="value">4.6%</span></div></template></div></article><article class="action" data-priority="Plan" data-area="Pricing"><span class="pri p2">Plan</span><div class="body"><h3>Discounts cost 6.5% of gross revenue</h3><p class="ev">88,665.55 on 39% of lines; discounted lines are +25% larger. Discounts coincide with bigger lines, which may justify them.</p><p class="todo"><b>Next step:</b> Test discount levels with a controlled experiment before changing the policy.</p><div class="tags"><span class="tag">Pricing</span><span class="tag">indicative</span><span class="tag mono">discounts</span></div><p class="more"><button type="button" class="evbtn" hidden data-cards="" data-charts="chart:discount-bands chart:discount-units" data-sql="discounts" aria-haspopup="dialog">Show the charts, figures and SQL behind this</button></p><template class="figs"><div class="tile"><span class="label">Given away</span><span class="value">88,665.55</span></div><div class="tile"><span class="label">Share of gross revenue</span><span class="value">6.5%</span></div><div class="tile"><span class="label">Lines discounted</span><span class="value">39%</span></div><div class="tile"><span class="label">Units per line, discounted vs full price</span><span class="value">27.1 vs 21.7</span></div></template></div></article><article class="action" data-priority="Monitor" data-area="Operations"><span class="pri p3">Monitor</span><div class="body"><h3>ship days did not explain the change</h3><p class="ev">-6.5% vs revenue +64.3%. The cause lies elsewhere (volume, mix, segments).</p><p class="todo"><b>Next step:</b> Keep monitoring it; look at the driver tree instead.</p><div class="tags"><span class="tag">Operations</span><span class="tag">measured</span><span class="tag mono">drilldown</span></div><p class="more"><button type="button" class="evbtn" hidden data-cards="tile:avg_ship_days" data-charts="chart:driver chart:trend" data-sql="drilldown" aria-haspopup="dialog">Show the charts, figures and SQL behind this</button></p><template class="figs"><div class="tile"><span class="label">Driver change</span><span class="value">-6.5%</span></div><div class="tile"><span class="label">Revenue change</span><span class="value">+64.3%</span></div><div class="tile"><span class="label">Correlation over the periods</span><span class="value long">r = +0.02 (95% CI -0.74 to +0.76)</span></div></template></div></article></div></section><section class="section" id="trend" aria-labelledby="trend-h"><header><p class="eyebrow">Trend</p><h2 id="trend-h">What happened</h2></header><div class="grid2"><div class="card" data-ev="chart:trend"><h3>Revenue per quarter</h3><p class="sub">Grey: 1998-Q2 is partial, shown but never compared.</p><div class="chart"><svg viewBox="0 0 400 220" role="img" aria-label="revenue per quarter" preserveAspectRatio="xMinYMin meet"><line class="grid" x1="44" x2="392" y1="184.0" y2="184.0"/><text class="tick" x="38" y="188.0" text-anchor="end">0</text><line class="grid" x1="44" x2="392" y1="142.5" y2="142.5"/><text class="tick" x="38" y="146.5" text-anchor="end">100K</text><line class="grid" x1="44" x2="392" y1="101.0" y2="101.0"/><text class="tick" x="38" y="105.0" text-anchor="end">200K</text><line class="grid" x1="44" x2="392" y1="59.5" y2="59.5"/><text class="tick" x="38" y="63.5" text-anchor="end">300K</text><line class="grid" x1="44" x2="392" y1="18.0" y2="18.0"/><text class="tick" x="38" y="22.0" text-anchor="end">400K</text><path class="m-series" d="M53.8,184.0V154.9Q53.8,150.9 57.8,150.9H73.8Q77.8,150.9 77.8,154.9V184.0Z" tabindex="0" data-tip="1996-Q3: 79,728.57"/><path class="m-series" d="M97.2,184.0V134.7Q97.2,130.7 101.2,130.7H117.2Q121.2,130.7 121.2,134.7V184.0Z" tabindex="0" data-tip="1996-Q4: 128,355.40"/><path class="m-series" d="M140.8,184.0V130.6Q140.8,126.6 144.8,126.6H160.8Q164.8,126.6 164.8,130.6V184.0Z" tabindex="0" data-tip="1997-Q1: 138,288.93"/><path class="m-series" d="M184.2,184.0V128.6Q184.2,124.6 188.2,124.6H204.2Q208.2,124.6 208.2,128.6V184.0Z" tabindex="0" data-tip="1997-Q2: 143,177.04"/><path class="m-series" d="M227.8,184.0V124.1Q227.8,120.1 231.8,120.1H247.8Q251.8,120.1 251.8,124.1V184.0Z" tabindex="0" data-tip="1997-Q3: 153,937.77"/><path class="m-series" d="M271.2,184.0V112.6Q271.2,108.6 275.2,108.6H291.2Q295.2,108.6 295.2,112.6V184.0Z" tabindex="0" data-tip="1997-Q4: 181,681.46"/><path class="m-series" d="M314.8,184.0V64.1Q314.8,60.1 318.8,60.1H334.8Q338.8,60.1 338.8,64.1V184.0Z" tabindex="0" data-tip="1998-Q1: 298,491.55"/><text class="val" x="326.8" y="54.1" text-anchor="middle">298K</text><path class="m-muted" d="M358.2,184.0V129.0Q358.2,125.0 362.2,125.0H378.2Q382.2,125.0 382.2,129.0V184.0Z" tabindex="0" data-tip="1998-Q2: 142,132.31 (partial period: excluded from comparisons)"/><text class="note" x="370.2" y="119.0" text-anchor="middle">partial</text><line class="axis" x1="44" x2="392" y1="184.0" y2="184.0"/><text class="tick" x="65.8" y="199.0" text-anchor="middle"><tspan x="65.8" dy="0">Q3</tspan><tspan x="65.8" dy="13">1996</tspan></text><text class="tick" x="109.2" y="199.0" text-anchor="middle"><tspan x="109.2" dy="0">Q4</tspan></text><text class="tick" x="152.8" y="199.0" text-anchor="middle"><tspan x="152.8" dy="0">Q1</tspan><tspan x="152.8" dy="13">1997</tspan></text><text class="tick" x="196.2" y="199.0" text-anchor="middle"><tspan x="196.2" dy="0">Q2</tspan></text><text class="tick" x="239.8" y="199.0" text-anchor="middle"><tspan x="239.8" dy="0">Q3</tspan></text><text class="tick" x="283.2" y="199.0" text-anchor="middle"><tspan x="283.2" dy="0">Q4</tspan></text><text class="tick" x="326.8" y="199.0" text-anchor="middle"><tspan x="326.8" dy="0">Q1</tspan><tspan x="326.8" dy="13">1998</tspan></text><text class="tick" x="370.2" y="199.0" text-anchor="middle"><tspan x="370.2" dy="0">Q2</tspan></text></svg></div><div class="views"><details class="tv"><summary>Table view</summary><div class="scroll"><table><thead><tr><th>Period</th><th>Revenue</th><th>Status</th></tr></thead><tbody><tr><td>1996-Q3</td><td>79,728.57</td><td>complete</td></tr><tr><td>1996-Q4</td><td>128,355.40</td><td>complete</td></tr><tr><td>1997-Q1</td><td>138,288.93</td><td>complete</td></tr><tr><td>1997-Q2</td><td>143,177.04</td><td>complete</td></tr><tr><td>1997-Q3</td><td>153,937.77</td><td>complete</td></tr><tr><td>1997-Q4</td><td>181,681.46</td><td>complete</td></tr><tr><td>1998-Q1</td><td>298,491.55</td><td>complete</td></tr><tr><td>1998-Q2</td><td>142,132.31</td><td>partial</td></tr></tbody></table></div></details><details class="sqlv"><summary>SQL</summary><div class="sqlcode"><div class="sqlpane sql-mysql"><div class="sqlbar"><span class="lbl">MySQL 8</span><div class="dialect" role="group" aria-label="SQL dialect" hidden><button type="button" data-dialect="mysql" aria-pressed="false">MySQL 8</button><button type="button" data-dialect="postgres" aria-pressed="false">PostgreSQL</button></div><button type="button" class="copy" hidden>Copy</button></div><pre tabindex="0"><code><span class="c">-- KPIs per quarter with LAG()</span>
 <span class="c">-- The data spans several years, so periods are grouped and ordered by order_year, quarter_number.</span>
 <span class="c">-- 1998-Q2 is partial (data from 1998-04-01 to 1998-05-06): its change is missing days, not a trend.</span>
 <span class="c">-- period_index = order_year * 4 + quarter_number: LAG() takes the previous *row*, so prev_revenue is kept only when that row is the calendar neighbour (index - 1) and complete (is_partial = 0); otherwise it is NULL, not a wrong comparison.</span>
@@ -933,7 +963,7 @@ SELECT discount_band,
        ROUND((1.0 * SUM(quantity) / NULLIF(COUNT(*), 0))::numeric, 2) AS avg_quantity_per_line
 FROM   banded
 GROUP  BY discount_band, band_order
-ORDER  BY band_order;</code></pre></div></div></details></div></div></div></section><section class="section" id="trust" aria-labelledby="trust-h"><header><p class="eyebrow">Data quality</p><h2 id="trust-h">Can we trust these numbers?</h2><p>Five checks run in SQL before any KPI is computed. The score is their weighted average: 90+ is high, 75–90 usable with the caveats listed, below 75 use with care. A failed reconciliation, or any check below 60, caps the grade whatever the average.</p></header><div class="card meters" data-ev="trust"><div class="meter"><span class="name"><span class="st good" aria-hidden="true">✓</span>Completeness<span class="w">weight 25%</span><a class="sqllink" href="#sql-nulls" data-sql="nulls">SQL</a></span><div class="track" role="img" aria-label="Completeness: 99 of 100, Good"><div class="fill good" style="width:99.8%"></div></div><span class="num">99</span><span class="detail">11 columns the analysis uses are 99.8% filled; most gaps in orders.shipped_date (2.5% empty).</span></div><div class="meter"><span class="name"><span class="st good" aria-hidden="true">✓</span>Uniqueness<span class="w">weight 20%</span><a class="sqllink" href="#sql-duplicates" data-sql="duplicates grain">SQL</a></span><div class="track" role="img" aria-label="Uniqueness: 100 of 100, Good"><div class="fill good" style="width:100.0%"></div></div><span class="num">100</span><span class="detail">8 of 8 tables have a unique key and no copied rows.</span></div><div class="meter"><span class="name"><span class="st good" aria-hidden="true">✓</span>Integrity<span class="w">weight 20%</span><a class="sqllink" href="#sql-orphans" data-sql="orphans cardinality">SQL</a></span><div class="track" role="img" aria-label="Integrity: 100 of 100, Good"><div class="fill good" style="width:100.0%"></div></div><span class="num">100</span><span class="detail">all 7 relationships resolve, no orphan rows; 1 link(s) left for you to confirm.</span></div><div class="meter"><span class="name"><span class="st good" aria-hidden="true">✓</span>Validity<span class="w">weight 15%</span><a class="sqllink" href="#sql-date_range" data-sql="date_range nulls">SQL</a></span><div class="track" role="img" aria-label="Validity: 100 of 100, Good"><div class="fill good" style="width:100.0%"></div></div><span class="num">100</span><span class="detail">dates parse, and no impossible values (e.g. shipped before ordered).</span></div><div class="meter"><span class="name"><span class="st good" aria-hidden="true">✓</span>Consistency<span class="w">weight 20%</span><a class="sqllink" href="#sql-reconcile" data-sql="reconcile">SQL</a></span><div class="track" role="img" aria-label="Consistency: 100 of 100, Good"><div class="fill good" style="width:100.0%"></div></div><span class="num">100</span><span class="detail">totals agree between the raw table, the views and the uploaded file; 1998-Q2 is partial (labelled, not penalised).</span></div></div></section><section class="section" id="method" aria-labelledby="method-h"><header><p class="eyebrow">Method</p><h2 id="method-h">How the numbers were made</h2></header><div class="grid2"><div class="card"><h3>Assumptions</h3><ul class="plain"><li>Fact table: order_details (one row per order_id × product_id).</li><li>Revenue = unit_price × quantity × (1 − discount) (net of discount; gross is shown in the reconciliation).</li><li>order_facts has one row per order (order_id); line_facts one row per line. AOV = revenue ÷ distinct orders.</li><li>Periods are quarters of orders.order_date.</li><li>1998-Q2 is partial (40% of its days have data) and is excluded from period-over-period verdicts.</li><li>ship_days = shipped_date − order_date, in days; orders without shipped_date are left out of its averages.</li><li>Recency is measured to the last date in the data, not to today.</li><li>Dimensions are joined with LEFT JOIN; a missing match is labelled &#x27;Unknown&#x27;.</li></ul></div><div class="card"><h3>KPI definitions</h3><p class="sub">What each figure means and the SQL behind it.</p><details class="tv"><summary>Show the definitions</summary><div class="scroll"><table><thead><tr><th>KPI</th><th>Definition</th><th>SQL</th></tr></thead><tbody><tr><td>Revenue</td><td>Money from sales in the period, net of discounts.</td><td>SUM(price * quantity * (1 - discount))</td></tr><tr><td>Orders</td><td>Distinct orders placed in the period.</td><td>COUNT(DISTINCT order_id)</td></tr><tr><td>Average order value (AOV)</td><td>Revenue per order.</td><td>SUM(revenue) / COUNT(DISTINCT order_id)</td></tr><tr><td>Median order value</td><td>The order in the middle: half of the orders are smaller, half are larger.</td><td>AVG(revenue) WHERE rn IN (FLOOR((cnt + 1) / 2.0), FLOOR((cnt + 2) / 2.0))</td></tr><tr><td>Active customers</td><td>Distinct customers who ordered in the period.</td><td>COUNT(DISTINCT customer_id)</td></tr><tr><td>Orders per customer</td><td>Orders ÷ active customers.</td><td>COUNT(*) / COUNT(DISTINCT customer_id)</td></tr><tr><td>Repeat-customer rate</td><td>Share of customers with two or more orders.</td><td>100.0 * COUNT(customers with &gt;= 2 orders) / COUNT(DISTINCT customer_id)</td></tr><tr><td>Discount rate</td><td>Discounts given as a share of gross revenue.</td><td>100.0 * SUM(gross - net) / SUM(gross)</td></tr><tr><td>Average days to ship</td><td>Days from order to shipment, averaged over shipped orders.</td><td>AVG(shipped_date - order_date)</td></tr><tr><td>Late shipments</td><td>Share of orders shipped after the promised date, or not shipped and already past it.</td><td>100.0 * SUM(shipped_late) / COUNT(shipped_late)</td></tr><tr><td>Revenue concentration</td><td>Share of revenue from the top 20% of customers.</td><td>SUM(revenue) OVER (ORDER BY revenue DESC ...) / SUM(revenue) OVER ()</td></tr><tr><td>Days between orders</td><td>Average gap between a customer&#x27;s consecutive orders.</td><td>AVG(order_date - LAG(order_date) OVER (PARTITION BY customer_id ORDER BY order_date))</td></tr><tr><td>Overdue customers</td><td>Repeat customers silent for more than twice their own usual gap.</td><td>days_since_last_order &gt; 2 * AVG(gap)</td></tr><tr><td>Period-over-period change</td><td>Change from the previous complete period.</td><td>100.0 * (x - LAG(x) OVER (ORDER BY period_index)) / NULLIF(LAG(x) ..., 0)</td></tr><tr><td>Year-over-year change</td><td>Change from the same period a year earlier.</td><td>join on period_index - 4</td></tr></tbody></table></div></details></div></div></section><section class="section" id="sql" aria-labelledby="sql-h"><header><p class="eyebrow">SQL</p><h2 id="sql-h">The SQL behind every figure</h2><p>Each step below is the full code the analysis ran, in MySQL 8 and PostgreSQL. Every chart shows its own statements under it; the project ZIP from the app holds all of them as scripts you can run on your database.</p></header><div class="steps"><details class="step" id="sql-schema" data-step="schema"><summary><b>Write down the schema</b> <span class="sec">1 · Schema &amp; grain</span></summary><div class="sqlbody"><p class="q">How are the tables connected? <span class="by">Asked by Data / BI.</span></p><div class="sqlcode"><div class="sqlpane sql-mysql"><div class="sqlbar"><span class="lbl">MySQL 8</span><div class="dialect" role="group" aria-label="SQL dialect" hidden><button type="button" data-dialect="mysql" aria-pressed="false">MySQL 8</button><button type="button" data-dialect="postgres" aria-pressed="false">PostgreSQL</button></div><button type="button" class="copy" hidden>Copy</button></div><pre tabindex="0"><code><span class="c">-- 1) `categories`: one row per `category_id`</span>
+ORDER  BY band_order;</code></pre></div></div></details></div></div></div></section><section class="section" id="trust" aria-labelledby="trust-h"><header><p class="eyebrow">Data quality</p><h2 id="trust-h">Can we trust these numbers?</h2><p>Five checks run in SQL before any KPI is computed. The score is their weighted average: 90+ is high, 75–90 usable with the caveats listed, below 75 use with care. A failed reconciliation, or any check below 60, caps the grade whatever the average.</p></header><div class="card meters" data-ev="trust"><div class="meter"><span class="name"><span class="st good" aria-hidden="true">✓</span>Completeness<span class="w">weight 25%</span><a class="sqllink" href="#sql-nulls" data-sql="nulls" data-title="Completeness" aria-label="SQL behind Completeness">SQL</a></span><div class="track" role="img" aria-label="Completeness: 99 of 100, Good"><div class="fill good" style="width:99.8%"></div></div><span class="num">99</span><span class="detail">11 columns the analysis uses are 99.8% filled; most gaps in orders.shipped_date (2.5% empty).</span></div><div class="meter"><span class="name"><span class="st good" aria-hidden="true">✓</span>Uniqueness<span class="w">weight 20%</span><a class="sqllink" href="#sql-duplicates" data-sql="duplicates grain" data-title="Uniqueness" aria-label="SQL behind Uniqueness">SQL</a></span><div class="track" role="img" aria-label="Uniqueness: 100 of 100, Good"><div class="fill good" style="width:100.0%"></div></div><span class="num">100</span><span class="detail">8 of 8 tables have a unique key and no copied rows.</span></div><div class="meter"><span class="name"><span class="st good" aria-hidden="true">✓</span>Integrity<span class="w">weight 20%</span><a class="sqllink" href="#sql-orphans" data-sql="orphans cardinality" data-title="Integrity" aria-label="SQL behind Integrity">SQL</a></span><div class="track" role="img" aria-label="Integrity: 100 of 100, Good"><div class="fill good" style="width:100.0%"></div></div><span class="num">100</span><span class="detail">all 7 relationships resolve, no orphan rows; 1 link(s) left for you to confirm.</span></div><div class="meter"><span class="name"><span class="st good" aria-hidden="true">✓</span>Validity<span class="w">weight 15%</span><a class="sqllink" href="#sql-date_range" data-sql="date_range nulls" data-title="Validity" aria-label="SQL behind Validity">SQL</a></span><div class="track" role="img" aria-label="Validity: 100 of 100, Good"><div class="fill good" style="width:100.0%"></div></div><span class="num">100</span><span class="detail">dates parse, and no impossible values (e.g. shipped before ordered).</span></div><div class="meter"><span class="name"><span class="st good" aria-hidden="true">✓</span>Consistency<span class="w">weight 20%</span><a class="sqllink" href="#sql-reconcile" data-sql="reconcile" data-title="Consistency" aria-label="SQL behind Consistency">SQL</a></span><div class="track" role="img" aria-label="Consistency: 100 of 100, Good"><div class="fill good" style="width:100.0%"></div></div><span class="num">100</span><span class="detail">totals agree between the raw table, the views and the uploaded file; 1998-Q2 is partial (labelled, not penalised).</span></div></div></section><section class="section" id="method" aria-labelledby="method-h"><header><p class="eyebrow">Method</p><h2 id="method-h">How the numbers were made</h2></header><div class="grid2"><div class="card"><h3>Assumptions</h3><ul class="plain"><li>Fact table: order_details (one row per order_id × product_id).</li><li>Revenue = unit_price × quantity × (1 − discount) (net of discount; gross is shown in the reconciliation).</li><li>order_facts has one row per order (order_id); line_facts one row per line. AOV = revenue ÷ distinct orders.</li><li>Periods are quarters of orders.order_date.</li><li>1998-Q2 is partial (40% of its days have data) and is excluded from period-over-period verdicts.</li><li>ship_days = shipped_date − order_date, in days; orders without shipped_date are left out of its averages.</li><li>Recency is measured to the last date in the data, not to today.</li><li>Dimensions are joined with LEFT JOIN; a missing match is labelled &#x27;Unknown&#x27;.</li></ul></div><div class="card"><h3>KPI definitions</h3><p class="sub">What each figure means and the SQL behind it.</p><details class="tv"><summary>Show the definitions</summary><div class="scroll"><table><thead><tr><th>KPI</th><th>Definition</th><th>SQL</th></tr></thead><tbody><tr><td>Revenue</td><td>Money from sales in the period, net of discounts.</td><td>SUM(price * quantity * (1 - discount))</td></tr><tr><td>Orders</td><td>Distinct orders placed in the period.</td><td>COUNT(DISTINCT order_id)</td></tr><tr><td>Average order value (AOV)</td><td>Revenue per order.</td><td>SUM(revenue) / COUNT(DISTINCT order_id)</td></tr><tr><td>Median order value</td><td>The order in the middle: half of the orders are smaller, half are larger.</td><td>AVG(revenue) WHERE rn IN (FLOOR((cnt + 1) / 2.0), FLOOR((cnt + 2) / 2.0))</td></tr><tr><td>Active customers</td><td>Distinct customers who ordered in the period.</td><td>COUNT(DISTINCT customer_id)</td></tr><tr><td>Orders per customer</td><td>Orders ÷ active customers.</td><td>COUNT(*) / COUNT(DISTINCT customer_id)</td></tr><tr><td>Repeat-customer rate</td><td>Share of customers with two or more orders.</td><td>100.0 * COUNT(customers with &gt;= 2 orders) / COUNT(DISTINCT customer_id)</td></tr><tr><td>Discount rate</td><td>Discounts given as a share of gross revenue.</td><td>100.0 * SUM(gross - net) / SUM(gross)</td></tr><tr><td>Average days to ship</td><td>Days from order to shipment, averaged over shipped orders.</td><td>AVG(shipped_date - order_date)</td></tr><tr><td>Late shipments</td><td>Share of orders shipped after the promised date, or not shipped and already past it.</td><td>100.0 * SUM(shipped_late) / COUNT(shipped_late)</td></tr><tr><td>Revenue concentration</td><td>Share of revenue from the top 20% of customers.</td><td>SUM(revenue) OVER (ORDER BY revenue DESC ...) / SUM(revenue) OVER ()</td></tr><tr><td>Days between orders</td><td>Average gap between a customer&#x27;s consecutive orders.</td><td>AVG(order_date - LAG(order_date) OVER (PARTITION BY customer_id ORDER BY order_date))</td></tr><tr><td>Overdue customers</td><td>Repeat customers silent for more than twice their own usual gap.</td><td>days_since_last_order &gt; 2 * AVG(gap)</td></tr><tr><td>Period-over-period change</td><td>Change from the previous complete period.</td><td>100.0 * (x - LAG(x) OVER (ORDER BY period_index)) / NULLIF(LAG(x) ..., 0)</td></tr><tr><td>Year-over-year change</td><td>Change from the same period a year earlier.</td><td>join on period_index - 4</td></tr></tbody></table></div></details></div></div></section><section class="section" id="sql" aria-labelledby="sql-h"><header><p class="eyebrow">SQL</p><h2 id="sql-h">The SQL behind every figure</h2><p>Each step below is the full code the analysis ran, in MySQL 8 and PostgreSQL. Every chart shows its own statements under it; the project ZIP from the app holds all of them as scripts you can run on your database.</p></header><div class="steps"><details class="step" id="sql-schema" data-step="schema"><summary><b>Write down the schema</b> <span class="sec">1 · Schema &amp; grain</span></summary><div class="sqlbody"><p class="q">How are the tables connected? <span class="by">Asked by Data / BI.</span></p><div class="sqlcode"><div class="sqlpane sql-mysql"><div class="sqlbar"><span class="lbl">MySQL 8</span><div class="dialect" role="group" aria-label="SQL dialect" hidden><button type="button" data-dialect="mysql" aria-pressed="false">MySQL 8</button><button type="button" data-dialect="postgres" aria-pressed="false">PostgreSQL</button></div><button type="button" class="copy" hidden>Copy</button></div><pre tabindex="0"><code><span class="c">-- 1) `categories`: one row per `category_id`</span>
 CREATE TABLE categories (
     category_id    INT NOT NULL,
     category_name  VARCHAR(20) NOT NULL,
@@ -2519,7 +2549,69 @@ SELECT order_year,
        ROUND((100.0 * (revenue - prev_revenue) / NULLIF(prev_revenue, 0))::numeric, 1) AS revenue_qoq_pct,
        ROUND((100.0 * (revenue - revenue_year_ago) / NULLIF(revenue_year_ago, 0))::numeric, 1) AS revenue_yoy_pct
 FROM   with_prev
-ORDER  BY order_year, quarter_number;</code></pre></div></div></div></details><details class="step" id="sql-pareto" data-step="pareto"><summary><b>Revenue concentration (Pareto / ABC)</b> <span class="sec">5 · Window functions</span></summary><div class="sqlbody"><p class="q">How dependent are we on a few customers or products? <span class="by">Asked by Sales, Risk.</span></p><div class="sqlcode"><div class="sqlpane sql-mysql"><div class="sqlbar"><span class="lbl">MySQL 8</span><div class="dialect" role="group" aria-label="SQL dialect" hidden><button type="button" data-dialect="mysql" aria-pressed="false">MySQL 8</button><button type="button" data-dialect="postgres" aria-pressed="false">PostgreSQL</button></div><button type="button" class="copy" hidden>Copy</button></div><pre tabindex="0"><code><span class="c">-- 1) Cumulative revenue share of customers (`customer_id`), largest first</span>
+ORDER  BY order_year, quarter_number;</code></pre></div></div></div></details><details class="step" id="sql-trend_signals" data-step="trend_signals"><summary><b>Moving average and unusual periods</b> <span class="sec">5 · Window functions</span></summary><div class="sqlbody"><p class="q">Was the last period normal, or a break? <span class="by">Asked by Finance, Analytics.</span></p><div class="sqlcode"><div class="sqlpane sql-mysql"><div class="sqlbar"><span class="lbl">MySQL 8</span><div class="dialect" role="group" aria-label="SQL dialect" hidden><button type="button" data-dialect="mysql" aria-pressed="false">MySQL 8</button><button type="button" data-dialect="postgres" aria-pressed="false">PostgreSQL</button></div><button type="button" class="copy" hidden>Copy</button></div><pre tabindex="0"><code><span class="c">-- Moving average and z-score per quarter (RANGE frames)</span>
+<span class="c">-- RANGE frames count period_index values, not rows, so a missing period is skipped instead of pulling an older one in.</span>
+<span class="c">-- Partial periods are shown but never enter a baseline: baseline_value is NULL for them, and AVG / STDDEV / COUNT skip NULLs.</span>
+WITH per_period AS (
+    SELECT order_year,
+           quarter_number,
+           order_year * 4 + quarter_number AS period_index,
+           SUM(revenue) AS revenue
+    FROM   order_facts
+    WHERE  order_year IS NOT NULL
+    GROUP  BY order_year, quarter_number
+),
+marked AS (
+    SELECT p.*, CASE WHEN (p.order_year = 1998 AND p.quarter_number = 2) THEN NULL ELSE p.revenue END AS baseline_value
+    FROM   per_period p
+),
+framed AS (
+    SELECT m.*,
+           AVG(revenue) OVER (ORDER BY period_index RANGE BETWEEN 2 PRECEDING AND CURRENT ROW) AS moving_avg_3,
+           AVG(baseline_value) OVER (ORDER BY period_index RANGE BETWEEN 8 PRECEDING AND 1 PRECEDING) AS trailing_avg,
+           STDDEV_SAMP(baseline_value) OVER (ORDER BY period_index RANGE BETWEEN 8 PRECEDING AND 1 PRECEDING) AS trailing_sd,
+           COUNT(baseline_value) OVER (ORDER BY period_index RANGE BETWEEN 8 PRECEDING AND 1 PRECEDING) AS baseline_periods
+    FROM   marked m
+)
+SELECT p.order_year, p.quarter_number,
+       ROUND(p.revenue, 2) AS revenue,
+       ROUND(p.moving_avg_3, 2) AS moving_avg_3,
+       ROUND(p.trailing_avg, 2) AS trailing_avg,
+       p.baseline_periods,
+       CASE WHEN p.baseline_periods &gt;= 4 THEN ROUND((p.revenue - p.trailing_avg) / NULLIF(p.trailing_sd, 0), 2) END AS z_score
+FROM   framed p
+ORDER  BY p.order_year, p.quarter_number;</code></pre></div><div class="sqlpane sql-postgres"><div class="sqlbar"><span class="lbl">PostgreSQL</span><div class="dialect" role="group" aria-label="SQL dialect" hidden><button type="button" data-dialect="mysql" aria-pressed="false">MySQL 8</button><button type="button" data-dialect="postgres" aria-pressed="false">PostgreSQL</button></div><button type="button" class="copy" hidden>Copy</button></div><pre tabindex="0"><code><span class="c">-- Moving average and z-score per quarter (RANGE frames)</span>
+<span class="c">-- RANGE frames count period_index values, not rows, so a missing period is skipped instead of pulling an older one in.</span>
+<span class="c">-- Partial periods are shown but never enter a baseline: baseline_value is NULL for them, and AVG / STDDEV / COUNT skip NULLs.</span>
+WITH per_period AS (
+    SELECT order_year,
+           quarter_number,
+           order_year * 4 + quarter_number AS period_index,
+           SUM(revenue) AS revenue
+    FROM   order_facts
+    WHERE  order_year IS NOT NULL
+    GROUP  BY order_year, quarter_number
+),
+marked AS (
+    SELECT p.*, CASE WHEN (p.order_year = 1998 AND p.quarter_number = 2) THEN NULL ELSE p.revenue END AS baseline_value
+    FROM   per_period p
+),
+framed AS (
+    SELECT m.*,
+           AVG(revenue) OVER (ORDER BY period_index RANGE BETWEEN 2 PRECEDING AND CURRENT ROW) AS moving_avg_3,
+           AVG(baseline_value) OVER (ORDER BY period_index RANGE BETWEEN 8 PRECEDING AND 1 PRECEDING) AS trailing_avg,
+           STDDEV_SAMP(baseline_value) OVER (ORDER BY period_index RANGE BETWEEN 8 PRECEDING AND 1 PRECEDING) AS trailing_sd,
+           COUNT(baseline_value) OVER (ORDER BY period_index RANGE BETWEEN 8 PRECEDING AND 1 PRECEDING) AS baseline_periods
+    FROM   marked m
+)
+SELECT p.order_year, p.quarter_number,
+       ROUND((p.revenue)::numeric, 2) AS revenue,
+       ROUND((p.moving_avg_3)::numeric, 2) AS moving_avg_3,
+       ROUND((p.trailing_avg)::numeric, 2) AS trailing_avg,
+       p.baseline_periods,
+       CASE WHEN p.baseline_periods &gt;= 4 THEN ROUND(((p.revenue - p.trailing_avg) / NULLIF(p.trailing_sd, 0))::numeric, 2) END AS z_score
+FROM   framed p
+ORDER  BY p.order_year, p.quarter_number;</code></pre></div></div></div></details><details class="step" id="sql-pareto" data-step="pareto"><summary><b>Revenue concentration (Pareto / ABC)</b> <span class="sec">5 · Window functions</span></summary><div class="sqlbody"><p class="q">How dependent are we on a few customers or products? <span class="by">Asked by Sales, Risk.</span></p><div class="sqlcode"><div class="sqlpane sql-mysql"><div class="sqlbar"><span class="lbl">MySQL 8</span><div class="dialect" role="group" aria-label="SQL dialect" hidden><button type="button" data-dialect="mysql" aria-pressed="false">MySQL 8</button><button type="button" data-dialect="postgres" aria-pressed="false">PostgreSQL</button></div><button type="button" class="copy" hidden>Copy</button></div><pre tabindex="0"><code><span class="c">-- 1) Cumulative revenue share of customers (`customer_id`), largest first</span>
 <span class="c">-- ABC: an entity is A while the revenue before it is under 80% of the total, B under 95%, C after that.</span>
 WITH entity_revenue AS (
     SELECT customer_id, SUM(revenue) AS revenue
@@ -2775,7 +2867,115 @@ SELECT abc_class,
        ROUND((100.0 * SUM(revenue) / NULLIF(SUM(SUM(revenue)) OVER (), 0))::numeric, 1) AS revenue_pct
 FROM   classed
 GROUP  BY abc_class
-ORDER  BY abc_class;</code></pre></div></div></div></details><details class="step" id="sql-rfm" data-step="rfm"><summary><b>RFM segments with CUME_DIST</b> <span class="sec">5 · Window functions</span></summary><div class="sqlbody"><p class="q">Who are the best customers, and who is slipping? <span class="by">Asked by Marketing.</span></p><div class="sqlcode"><div class="sqlpane sql-mysql"><div class="sqlbar"><span class="lbl">MySQL 8</span><div class="dialect" role="group" aria-label="SQL dialect" hidden><button type="button" data-dialect="mysql" aria-pressed="false">MySQL 8</button><button type="button" data-dialect="postgres" aria-pressed="false">PostgreSQL</button></div><button type="button" class="copy" hidden>Copy</button></div><pre tabindex="0"><code><span class="c">-- 1) View `customer_rfm`: tie-safe 1-5 scores per customer</span>
+ORDER  BY abc_class;</code></pre></div></div></div></details><details class="step" id="sql-purchase_gaps" data-step="purchase_gaps"><summary><b>Time between orders, and overdue customers</b> <span class="sec">5 · Window functions</span></summary><div class="sqlbody"><p class="q">Who is about to churn? <span class="by">Asked by Customer success, CRM.</span></p><div class="sqlcode"><div class="sqlpane sql-mysql"><div class="sqlbar"><span class="lbl">MySQL 8</span><div class="dialect" role="group" aria-label="SQL dialect" hidden><button type="button" data-dialect="mysql" aria-pressed="false">MySQL 8</button><button type="button" data-dialect="postgres" aria-pressed="false">PostgreSQL</button></div><button type="button" class="copy" hidden>Copy</button></div><pre tabindex="0"><code><span class="c">-- 1) Days between consecutive orders (LAG / LEAD)</span>
+WITH customer_orders AS (
+    SELECT customer_id, order_id, order_date, revenue,
+           LAG(order_date) OVER (PARTITION BY customer_id ORDER BY order_date, order_id) AS previous_order_date,
+           LEAD(order_date) OVER (PARTITION BY customer_id ORDER BY order_date, order_id) AS next_order_date
+    FROM   order_facts
+    WHERE  customer_id IS NOT NULL
+      AND  order_date IS NOT NULL
+),
+gaps AS (
+    SELECT DATEDIFF(order_date, previous_order_date) AS days_since_previous
+    FROM   customer_orders
+    WHERE  previous_order_date IS NOT NULL      <span class="c">-- a customer&#x27;s first order has no previous one</span>
+)
+SELECT COUNT(*) AS repeat_orders,
+       ROUND(AVG(days_since_previous), 1) AS avg_days_between_orders,
+       MIN(days_since_previous) AS min_days,
+       MAX(days_since_previous) AS max_days,
+       ROUND(100.0 * SUM(CASE WHEN days_since_previous &lt;= 30 THEN 1 ELSE 0 END) / NULLIF(COUNT(*), 0), 1) AS within_30_days_pct,
+       ROUND(100.0 * SUM(CASE WHEN days_since_previous &lt;= 90 THEN 1 ELSE 0 END) / NULLIF(COUNT(*), 0), 1) AS within_90_days_pct
+FROM   gaps;
+
+<span class="c">-- 2) Customers silent for more than twice their usual gap</span>
+WITH customer_orders AS (
+    SELECT customer_id, order_id, order_date, revenue,
+           LAG(order_date) OVER (PARTITION BY customer_id ORDER BY order_date, order_id) AS previous_order_date,
+           LEAD(order_date) OVER (PARTITION BY customer_id ORDER BY order_date, order_id) AS next_order_date
+    FROM   order_facts
+    WHERE  customer_id IS NOT NULL
+      AND  order_date IS NOT NULL
+),
+per_customer AS (
+    SELECT customer_id,
+           COUNT(*) AS orders,
+           MAX(order_date) AS last_order_date,
+           AVG(DATEDIFF(order_date, previous_order_date)) AS typical_gap_days,
+           SUM(revenue) AS revenue    <span class="c">-- AVG skips the first order&#x27;s NULL gap</span>
+    FROM   customer_orders
+    GROUP  BY customer_id
+),
+scored AS (
+    SELECT p.*,
+           DATEDIFF((SELECT MAX(order_date) FROM order_facts), last_order_date) AS days_since_last_order
+    FROM   per_customer p
+    WHERE  orders &gt;= 3                       <span class="c">-- at least two gaps, so &#x27;typical&#x27; means something</span>
+)
+SELECT customer_id,
+       orders,
+       last_order_date,
+       ROUND(typical_gap_days, 0) AS typical_gap_days,
+       days_since_last_order,
+       CASE WHEN days_since_last_order &gt; 2 * typical_gap_days THEN &#x27;overdue&#x27; ELSE &#x27;on track&#x27; END AS status,
+       ROUND(revenue, 2) AS revenue
+FROM   scored
+ORDER  BY CASE WHEN days_since_last_order &gt; 2 * typical_gap_days THEN 0 ELSE 1 END, revenue DESC, customer_id;</code></pre></div><div class="sqlpane sql-postgres"><div class="sqlbar"><span class="lbl">PostgreSQL</span><div class="dialect" role="group" aria-label="SQL dialect" hidden><button type="button" data-dialect="mysql" aria-pressed="false">MySQL 8</button><button type="button" data-dialect="postgres" aria-pressed="false">PostgreSQL</button></div><button type="button" class="copy" hidden>Copy</button></div><pre tabindex="0"><code><span class="c">-- 1) Days between consecutive orders (LAG / LEAD)</span>
+WITH customer_orders AS (
+    SELECT customer_id, order_id, order_date, revenue,
+           LAG(order_date) OVER (PARTITION BY customer_id ORDER BY order_date, order_id) AS previous_order_date,
+           LEAD(order_date) OVER (PARTITION BY customer_id ORDER BY order_date, order_id) AS next_order_date
+    FROM   order_facts
+    WHERE  customer_id IS NOT NULL
+      AND  order_date IS NOT NULL
+),
+gaps AS (
+    SELECT order_date - previous_order_date AS days_since_previous
+    FROM   customer_orders
+    WHERE  previous_order_date IS NOT NULL      <span class="c">-- a customer&#x27;s first order has no previous one</span>
+)
+SELECT COUNT(*) AS repeat_orders,
+       ROUND((AVG(days_since_previous))::numeric, 1) AS avg_days_between_orders,
+       MIN(days_since_previous) AS min_days,
+       MAX(days_since_previous) AS max_days,
+       ROUND((100.0 * SUM(CASE WHEN days_since_previous &lt;= 30 THEN 1 ELSE 0 END) / NULLIF(COUNT(*), 0))::numeric, 1) AS within_30_days_pct,
+       ROUND((100.0 * SUM(CASE WHEN days_since_previous &lt;= 90 THEN 1 ELSE 0 END) / NULLIF(COUNT(*), 0))::numeric, 1) AS within_90_days_pct
+FROM   gaps;
+
+<span class="c">-- 2) Customers silent for more than twice their usual gap</span>
+WITH customer_orders AS (
+    SELECT customer_id, order_id, order_date, revenue,
+           LAG(order_date) OVER (PARTITION BY customer_id ORDER BY order_date, order_id) AS previous_order_date,
+           LEAD(order_date) OVER (PARTITION BY customer_id ORDER BY order_date, order_id) AS next_order_date
+    FROM   order_facts
+    WHERE  customer_id IS NOT NULL
+      AND  order_date IS NOT NULL
+),
+per_customer AS (
+    SELECT customer_id,
+           COUNT(*) AS orders,
+           MAX(order_date) AS last_order_date,
+           AVG(order_date - previous_order_date) AS typical_gap_days,
+           SUM(revenue) AS revenue    <span class="c">-- AVG skips the first order&#x27;s NULL gap</span>
+    FROM   customer_orders
+    GROUP  BY customer_id
+),
+scored AS (
+    SELECT p.*,
+           (SELECT MAX(order_date) FROM order_facts) - last_order_date AS days_since_last_order
+    FROM   per_customer p
+    WHERE  orders &gt;= 3                       <span class="c">-- at least two gaps, so &#x27;typical&#x27; means something</span>
+)
+SELECT customer_id,
+       orders,
+       last_order_date,
+       ROUND((typical_gap_days)::numeric, 0) AS typical_gap_days,
+       days_since_last_order,
+       CASE WHEN days_since_last_order &gt; 2 * typical_gap_days THEN &#x27;overdue&#x27; ELSE &#x27;on track&#x27; END AS status,
+       ROUND((revenue)::numeric, 2) AS revenue
+FROM   scored
+ORDER  BY CASE WHEN days_since_last_order &gt; 2 * typical_gap_days THEN 0 ELSE 1 END, revenue DESC, customer_id;</code></pre></div></div></div></details><details class="step" id="sql-rfm" data-step="rfm"><summary><b>RFM segments with CUME_DIST</b> <span class="sec">5 · Window functions</span></summary><div class="sqlbody"><p class="q">Who are the best customers, and who is slipping? <span class="by">Asked by Marketing.</span></p><div class="sqlcode"><div class="sqlpane sql-mysql"><div class="sqlbar"><span class="lbl">MySQL 8</span><div class="dialect" role="group" aria-label="SQL dialect" hidden><button type="button" data-dialect="mysql" aria-pressed="false">MySQL 8</button><button type="button" data-dialect="postgres" aria-pressed="false">PostgreSQL</button></div><button type="button" class="copy" hidden>Copy</button></div><pre tabindex="0"><code><span class="c">-- 1) View `customer_rfm`: tie-safe 1-5 scores per customer</span>
 CREATE OR REPLACE VIEW customer_rfm AS
 WITH customer_totals AS (
     SELECT customer_id,
@@ -2993,7 +3193,61 @@ SELECT employee_last_name,
        ROUND((revenue_after - revenue_before)::numeric, 2) AS revenue_change,
        ROUND((100.0 * (revenue_after - revenue_before) / NULLIF(SUM(revenue_after - revenue_before) OVER (), 0))::numeric, 1) AS share_of_change_pct
 FROM   by_segment
-ORDER  BY ABS(revenue_after - revenue_before) DESC, employee_last_name;</code></pre></div></div></div></details></div></section><footer class="end">Generated by AutoSQL Explorer from the Northwind sample (8 CSV files). Every figure is printed by a SQL step that reruns on MySQL 8 or PostgreSQL (download the project ZIP from the app). Hover or focus a mark to read its value; every chart has a table view and the SQL it was computed from.</footer></main><div id="tip" role="tooltip" hidden></div><script>
+ORDER  BY ABS(revenue_after - revenue_before) DESC, employee_last_name;</code></pre></div></div></div></details><details class="step" id="sql-drilldown" data-step="drilldown"><summary><b>Drill down: symptom next to driver</b> <span class="sec">6 · Root cause</span></summary><div class="sqlbody"><p class="q">Is operations (shipping, service) the cause? <span class="by">Asked by Operations.</span></p><div class="sqlcode"><div class="sqlpane sql-mysql"><div class="sqlbar"><span class="lbl">MySQL 8</span><div class="dialect" role="group" aria-label="SQL dialect" hidden><button type="button" data-dialect="mysql" aria-pressed="false">MySQL 8</button><button type="button" data-dialect="postgres" aria-pressed="false">PostgreSQL</button></div><button type="button" class="copy" hidden>Copy</button></div><pre tabindex="0"><code><span class="c">-- 1) Symptom and driver per complete quarter</span>
+<span class="c">-- Complete periods only: a partial period would show a fake drop in the symptom.</span>
+SELECT order_year,
+       quarter_number,
+       ROUND(SUM(revenue), 2) AS revenue,
+       ROUND(AVG(ship_days), 1) AS avg_ship_days,
+       ROUND(100.0 * SUM(shipped_late) / NULLIF(COUNT(shipped_late), 0), 1) AS late_pct
+FROM   order_facts
+WHERE  order_year IS NOT NULL
+  AND  NOT (order_year = 1998 AND quarter_number = 2)
+GROUP  BY order_year, quarter_number
+ORDER  BY order_year, quarter_number;
+
+<span class="c">-- 2) Symptom and driver per `customer_country`, 1997-Q4 vs 1998-Q1</span>
+<span class="c">-- AVG(CASE WHEN … THEN x END) averages only the rows of that period: CASE without ELSE gives NULL, and AVG skips NULLs.</span>
+SELECT customer_country,
+       ROUND(SUM(CASE WHEN (order_year = 1997 AND quarter_number = 4) THEN revenue ELSE 0 END), 2) AS revenue_before,
+       ROUND(SUM(CASE WHEN (order_year = 1998 AND quarter_number = 1) THEN revenue ELSE 0 END), 2) AS revenue_after,
+       ROUND(100.0 * (SUM(CASE WHEN (order_year = 1998 AND quarter_number = 1) THEN revenue ELSE 0 END) - SUM(CASE WHEN (order_year = 1997 AND quarter_number = 4) THEN revenue ELSE 0 END)) / NULLIF(SUM(CASE WHEN (order_year = 1997 AND quarter_number = 4) THEN revenue ELSE 0 END), 0), 1) AS revenue_change_pct,
+       ROUND(AVG(CASE WHEN (order_year = 1997 AND quarter_number = 4) THEN ship_days END), 1) AS avg_ship_days_before,
+       ROUND(100.0 * SUM(CASE WHEN (order_year = 1997 AND quarter_number = 4) THEN shipped_late END) / NULLIF(COUNT(CASE WHEN (order_year = 1997 AND quarter_number = 4) THEN shipped_late END), 0), 1) AS late_pct_before,
+       ROUND(AVG(CASE WHEN (order_year = 1998 AND quarter_number = 1) THEN ship_days END), 1) AS avg_ship_days_after,
+       ROUND(100.0 * SUM(CASE WHEN (order_year = 1998 AND quarter_number = 1) THEN shipped_late END) / NULLIF(COUNT(CASE WHEN (order_year = 1998 AND quarter_number = 1) THEN shipped_late END), 0), 1) AS late_pct_after
+FROM   order_facts
+WHERE  (order_year = 1997 AND quarter_number = 4)
+   OR  (order_year = 1998 AND quarter_number = 1)
+GROUP  BY customer_country
+ORDER  BY ABS(SUM(CASE WHEN (order_year = 1998 AND quarter_number = 1) THEN revenue ELSE 0 END) - SUM(CASE WHEN (order_year = 1997 AND quarter_number = 4) THEN revenue ELSE 0 END)) DESC, customer_country;</code></pre></div><div class="sqlpane sql-postgres"><div class="sqlbar"><span class="lbl">PostgreSQL</span><div class="dialect" role="group" aria-label="SQL dialect" hidden><button type="button" data-dialect="mysql" aria-pressed="false">MySQL 8</button><button type="button" data-dialect="postgres" aria-pressed="false">PostgreSQL</button></div><button type="button" class="copy" hidden>Copy</button></div><pre tabindex="0"><code><span class="c">-- 1) Symptom and driver per complete quarter</span>
+<span class="c">-- Complete periods only: a partial period would show a fake drop in the symptom.</span>
+SELECT order_year,
+       quarter_number,
+       ROUND((SUM(revenue))::numeric, 2) AS revenue,
+       ROUND((AVG(ship_days))::numeric, 1) AS avg_ship_days,
+       ROUND((100.0 * SUM(shipped_late) / NULLIF(COUNT(shipped_late), 0))::numeric, 1) AS late_pct
+FROM   order_facts
+WHERE  order_year IS NOT NULL
+  AND  NOT (order_year = 1998 AND quarter_number = 2)
+GROUP  BY order_year, quarter_number
+ORDER  BY order_year, quarter_number;
+
+<span class="c">-- 2) Symptom and driver per `customer_country`, 1997-Q4 vs 1998-Q1</span>
+<span class="c">-- AVG(CASE WHEN … THEN x END) averages only the rows of that period: CASE without ELSE gives NULL, and AVG skips NULLs.</span>
+SELECT customer_country,
+       ROUND((SUM(CASE WHEN (order_year = 1997 AND quarter_number = 4) THEN revenue ELSE 0 END))::numeric, 2) AS revenue_before,
+       ROUND((SUM(CASE WHEN (order_year = 1998 AND quarter_number = 1) THEN revenue ELSE 0 END))::numeric, 2) AS revenue_after,
+       ROUND((100.0 * (SUM(CASE WHEN (order_year = 1998 AND quarter_number = 1) THEN revenue ELSE 0 END) - SUM(CASE WHEN (order_year = 1997 AND quarter_number = 4) THEN revenue ELSE 0 END)) / NULLIF(SUM(CASE WHEN (order_year = 1997 AND quarter_number = 4) THEN revenue ELSE 0 END), 0))::numeric, 1) AS revenue_change_pct,
+       ROUND((AVG(CASE WHEN (order_year = 1997 AND quarter_number = 4) THEN ship_days END))::numeric, 1) AS avg_ship_days_before,
+       ROUND((100.0 * SUM(CASE WHEN (order_year = 1997 AND quarter_number = 4) THEN shipped_late END) / NULLIF(COUNT(CASE WHEN (order_year = 1997 AND quarter_number = 4) THEN shipped_late END), 0))::numeric, 1) AS late_pct_before,
+       ROUND((AVG(CASE WHEN (order_year = 1998 AND quarter_number = 1) THEN ship_days END))::numeric, 1) AS avg_ship_days_after,
+       ROUND((100.0 * SUM(CASE WHEN (order_year = 1998 AND quarter_number = 1) THEN shipped_late END) / NULLIF(COUNT(CASE WHEN (order_year = 1998 AND quarter_number = 1) THEN shipped_late END), 0))::numeric, 1) AS late_pct_after
+FROM   order_facts
+WHERE  (order_year = 1997 AND quarter_number = 4)
+   OR  (order_year = 1998 AND quarter_number = 1)
+GROUP  BY customer_country
+ORDER  BY ABS(SUM(CASE WHEN (order_year = 1998 AND quarter_number = 1) THEN revenue ELSE 0 END) - SUM(CASE WHEN (order_year = 1997 AND quarter_number = 4) THEN revenue ELSE 0 END)) DESC, customer_country;</code></pre></div></div></div></details></div></section><footer class="end">Generated by AutoSQL Explorer from the Northwind sample (8 CSV files). Every figure is printed by a SQL step that reruns on MySQL 8 or PostgreSQL (download the project ZIP from the app). Hover or focus a mark to read its value; every chart has a table view and the SQL it was computed from.</footer><dialog id="evidence" class="ev" aria-labelledby="ev-title"><div class="evhead"><div><p class="eyebrow" id="ev-eyebrow"></p><h2 id="ev-title"></h2></div><button type="button" class="evclose" aria-label="Close">✕</button></div><div class="evbody"></div><div class="tip" role="tooltip" hidden></div></dialog></main><div id="tip" role="tooltip" hidden></div><script>
 (function () {
   var page = document.querySelector("main.page");
   var tip = document.getElementById("tip");
@@ -3054,17 +3308,95 @@ ORDER  BY ABS(revenue_after - revenue_before) DESC, employee_last_name;</code></
     if (b) { copyText(b.closest(".sqlpane").querySelector("code").textContent, b); }
   });
 
-  // A "SQL" link on a card goes to the full code of the steps it comes from
-  document.addEventListener("click", function (e) {
-    var a = e.target.closest ? e.target.closest("a.sqllink") : null;
-    if (!a) { return; }
-    var first = null;
-    a.getAttribute("data-sql").split(" ").forEach(function (step) {
-      var d = document.getElementById("sql-" + step);
-      if (d) { d.open = true; first = first || d; }
+  // One popup for the whole page, filled from the page's own cards, charts and SQL (copied, so nothing is drawn twice). It opens from a
+  // recommendation, and from the "SQL" link on a card. Without a script, or a browser that has no <dialog>, a "SQL" link jumps to the
+  // appendix instead and a recommendation is simply read as text.
+  var dlg = document.getElementById("evidence");
+  var canPopUp = !!dlg && typeof dlg.showModal === "function";
+  function words(value) { return (value || "").split(" ").filter(Boolean); }
+  if (canPopUp) {
+    var body = dlg.querySelector(".evbody"), title = document.getElementById("ev-title"), eyebrow = document.getElementById("ev-eyebrow");
+    var make = function (tag, cls, text) { var n = document.createElement(tag); if (cls) { n.className = cls; } if (text) { n.textContent = text; } return n; };
+    var section = function (heading, content) { var s = make("section", "evsec"); s.appendChild(make("h3", "", heading)); s.appendChild(content); return s; };
+    var original = function (key) { return page.querySelector('[data-ev="' + key + '"]'); };
+    var copyOf = function (node) { var c = node.cloneNode(true); c.removeAttribute("data-ev"); return c; };
+    var clear = function () { while (body.firstChild) { body.removeChild(body.firstChild); } };
+    var sqlSection = function (steps) {
+      var box = make("div", "steps");
+      steps.forEach(function (step, n) {
+        var src = document.getElementById("sql-" + step);
+        if (!src) { return; }
+        var c = src.cloneNode(true);
+        c.removeAttribute("id"); c.open = n === 0;
+        box.appendChild(c);
+      });
+      return box.firstChild ? section("The SQL behind it", box) : null;
+    };
+    var popUp = function () { if (!dlg.open) { dlg.showModal(); } body.scrollTop = 0; };
+
+    var openEvidence = function (button) {
+      var card = button.closest("article");
+      clear();
+      eyebrow.textContent = card.getAttribute("data-priority") + " · " + card.getAttribute("data-area");
+      title.textContent = card.querySelector("h3").textContent;
+      var why = make("div", "evwhy");
+      why.appendChild(card.querySelector(".ev").cloneNode(true));
+      why.appendChild(card.querySelector(".todo").cloneNode(true));
+      body.appendChild(section("What the data says", why));
+      var figures = make("div", "evgrid");
+      words(button.getAttribute("data-cards")).forEach(function (key) {
+        var n = original(key);
+        if (!n) { return; }
+        var c = copyOf(n);
+        if (key.indexOf("fact:") === 0) { var list = make("dl", "facts"); list.appendChild(c); c = list; }
+        figures.appendChild(c);
+      });
+      var extra = card.querySelector("template.figs");
+      if (extra) { figures.appendChild(extra.content.cloneNode(true)); }
+      if (figures.firstChild) { body.appendChild(section("Key figures", figures)); }
+      var charts = make("div", "grid2");
+      words(button.getAttribute("data-charts")).forEach(function (key) { var n = original(key); if (n) { charts.appendChild(copyOf(n)); } });
+      if (charts.firstChild) { body.appendChild(section("Charts", charts)); }
+      var code = sqlSection(words(button.getAttribute("data-sql")));
+      if (code) { body.appendChild(code); }
+      popUp();
+    };
+    var openSql = function (link) {
+      clear();
+      var label = link.getAttribute("data-title");
+      eyebrow.textContent = "SQL";
+      title.textContent = label ? "The SQL behind “" + label + "”" : "The SQL behind this card";
+      var code = sqlSection(words(link.getAttribute("data-sql")));
+      if (code) { body.appendChild(code); }
+      popUp();
+    };
+
+    document.querySelectorAll(".evbtn").forEach(function (b) { b.hidden = false; b.closest("article").classList.add("openable"); });
+    dlg.querySelector(".evclose").addEventListener("click", function () { dlg.close(); });
+    dlg.addEventListener("click", function (e) { if (e.target === dlg) { dlg.close(); } });     // a click on the backdrop
+    dlg.addEventListener("close", function () { hide(); clear(); });
+    document.addEventListener("click", function (e) {
+      var from = e.target.closest ? e.target : null;
+      if (!from) { return; }
+      var link = from.closest("a.sqllink");
+      if (link) { e.preventDefault(); openSql(link); return; }
+      var opener = from.closest(".evbtn");
+      if (opener) { openEvidence(opener); return; }
+      var card = from.closest("article.openable");      // the whole recommendation is a target, except where it has its own controls
+      if (card && !from.closest("a, button, summary, details, pre, dialog") && !String(window.getSelection())) { openEvidence(card.querySelector(".evbtn")); }
     });
-    if (first) { e.preventDefault(); first.scrollIntoView({ block: "start" }); }
-  });
+  } else {
+    document.addEventListener("click", function (e) {
+      var a = e.target.closest ? e.target.closest("a.sqllink") : null;
+      if (!a) { return; }
+      var first = null;
+      words(a.getAttribute("data-sql")).forEach(function (step) {
+        var d = document.getElementById("sql-" + step);
+        if (d) { d.open = true; first = first || d; }
+      });
+      if (first) { e.preventDefault(); first.scrollIntoView({ block: "start" }); }
+    });
+  }
 })();
 </script>
 </body>

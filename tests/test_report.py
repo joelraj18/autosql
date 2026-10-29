@@ -145,6 +145,61 @@ def test_the_sql_views_need_no_script_to_be_complete(nw):
     assert tree.find("main", cls="page").attrs["data-dialect"] == "mysql"                    # MySQL first, as in the app
 
 
+def _recommendation(tree, headline: str):
+    article = next(a for a in tree.find_all("article", cls="action") if a.find("h3").text().startswith(headline))
+    button = article.find("button", cls="evbtn")
+    template = article.find("template", cls="figs")
+    figures = {t.find("span", cls="label").text(): t.find("span", cls="value").text() for t in template.find_all("div", cls="tile")} if template else {}
+    return button.attrs["data-cards"].split(), button.attrs["data-charts"].split(), button.attrs["data-sql"].split(), figures
+
+
+def test_each_recommendation_opens_the_cards_charts_and_sql_it_was_made_from(nw):
+    d, m = nw
+    tree = parse_tree(to_business_brief(d, m, title="Northwind Traders"))
+    assert len(tree.find_all("article", cls="action")) == 10                          # the brief shows every recommendation
+    tiles = ["tile:revenue", "tile:orders", "tile:avg_order_value"]
+    assert _recommendation(tree, "1998-Q2 is incomplete") == (
+        ["fact:periods"], ["chart:trend"], ["date_range"],
+        {"Days with data": "36 of 91", "Share of the period": "40%", "Compared naively": "-52.4%"})
+    assert _recommendation(tree, "Revenue grew 64.3%") == (
+        tiles, ["chart:trend"], ["kpi_by_period"],
+        {"Change": "+64.3%", "95% interval": "+15.0% to +134.7%", "Year over year": "+115.8%"})
+    assert _recommendation(tree, "Order volume accounts for 84%") == (
+        tiles, ["chart:waterfall"], ["driver_tree"],
+        {"Total change": "+116,810.09", "From the number of orders": "+97,776.34", "From order value": "+19,033.75",
+         "Orders change": "+51.7% (real)", "Order value change": "+8.3% (within noise)"})
+    assert _recommendation(tree, "Beverages drove 57%") == (
+        [], ["chart:segment:category_name"], ["driver_tree"],
+        {"Segment": "Beverages", "Its change": "+66,503.58", "Share of the total change": "57%", "Sliced by": "category name"})
+    assert _recommendation(tree, "The top 20% of customers") == (
+        [], ["chart:pareto"], ["pareto"],
+        {"Top 20% of customers": "60% of revenue", "Class A customers": "34 (38% of them)", "Their share of revenue": "80%"})
+    assert _recommendation(tree, "5 repeat customers are overdue") == (          # no chart exists for purchase gaps: key figures and SQL
+        [], [], ["purchase_gaps"], {"Typical gap between orders": "59 days", "Overdue customers": "5 of 86",       # 86 have 3+ orders
+                                    "Their share of repeat-customer revenue": "4%"})
+    assert _recommendation(tree, "7 once-frequent customers") == (
+        [], ["chart:rfm"], ["rfm"], {"At-risk customers": "7", "Their share of revenue": "4.6%"})
+    assert _recommendation(tree, "Discounts cost 6.5%") == (
+        [], ["chart:discount-bands", "chart:discount-units"], ["discounts"],
+        {"Given away": "88,665.55", "Share of gross revenue": "6.5%", "Lines discounted": "39%",
+         "Units per line, discounted vs full price": "27.1 vs 21.7"})
+    assert _recommendation(tree, "ship days did not explain") == (
+        ["tile:avg_ship_days"], ["chart:driver", "chart:trend"], ["drilldown"],
+        {"Driver change": "-6.5%", "Revenue change": "+64.3%", "Correlation over the periods": "r = +0.02 (95% CI -0.74 to +0.76)"})
+
+
+def test_the_popup_is_one_dialog_filled_without_html_injection(nw):
+    d, m = nw
+    page = to_business_brief(d, m, title="Northwind Traders")
+    tree = parse_tree(page)
+    dialog = tree.find("dialog", id="evidence")
+    assert dialog is not None and dialog.attrs["aria-labelledby"] == "ev-title"
+    assert dialog.find("button", cls="evclose").attrs["aria-label"] == "Close" and dialog.find("div", cls="tip") is not None   # a tooltip of its own
+    assert "showModal" in page and "cloneNode" in page and "innerHTML" not in page and "outerHTML" not in page
+    assert all("hidden" in b.attrs for b in tree.find_all("button", cls="evbtn"))      # shown by the script, not before
+    assert len(tree.find_all("dialog")) == 1
+
+
 def test_markdown_backticks_never_reach_the_page(nw):
     # the business layer writes `table.column` for the app and the notebook; on a page the backticks would show as characters
     d, m = nw

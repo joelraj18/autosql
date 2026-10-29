@@ -483,6 +483,32 @@ details.step summary { cursor: pointer; display: flex; flex-wrap: wrap; gap: 4px
 details.step .sec { color: var(--muted); font-size: 0.8rem; }
 .sqlbody .q { color: var(--ink-2); font-size: 0.9rem; margin: 8px 0 0; }
 .sqlbody .by { color: var(--muted); }
+/* Recommendations open a popup with the charts, key cards and SQL they were made from */
+.action .more { margin: 2px 0 0; }
+.evbtn { font: 600 0.84rem/1 var(--sans); padding: 8px 14px; border: 1px solid var(--axis); border-radius: 999px; background: var(--bg); color: var(--ink); cursor: pointer; }
+.evbtn:hover { border-color: var(--ink); }
+.evbtn:focus-visible { outline: 2px solid var(--series); outline-offset: 2px; }
+.action.openable { cursor: pointer; }
+.action.openable:hover { border-color: var(--axis); }
+html:has(dialog[open]) { overflow: hidden; }
+dialog.ev { width: min(1040px, calc(100vw - 24px)); max-width: none; max-height: calc(100dvh - 24px); padding: 0; border: 1px solid var(--rule); border-radius: 14px;
+            background: var(--bg); color: var(--ink); overflow: hidden; cursor: auto; }
+dialog.ev[open] { display: flex; flex-direction: column; }
+dialog.ev::backdrop { background: rgba(11, 11, 11, 0.55); }
+.evhead { display: flex; justify-content: space-between; align-items: flex-start; gap: 12px; padding: 14px 18px; background: var(--surface); border-bottom: 1px solid var(--rule); }
+.evhead h2 { font-size: 1.12rem; }
+.evclose { flex: none; width: 2.2rem; height: 2.2rem; border-radius: 50%; border: 1px solid var(--rule); background: var(--bg); color: var(--ink); font-size: 0.95rem; cursor: pointer; }
+.evclose:hover { border-color: var(--ink); }
+.evclose:focus-visible { outline: 2px solid var(--series); outline-offset: 2px; }
+.evbody { overflow: auto; padding: 16px 18px 24px; display: grid; gap: 22px; min-height: 0; align-content: start; }
+.evsec { display: grid; gap: 10px; min-width: 0; }
+.evsec > h3 { font: 600 0.72rem/1.2 var(--sans); letter-spacing: 0.08em; text-transform: uppercase; color: var(--muted); }
+.evwhy { display: grid; gap: 6px; }
+.evgrid { display: grid; grid-template-columns: repeat(auto-fit, minmax(11rem, 1fr)); gap: 10px; }
+.evgrid > .facts { display: contents; }
+.evgrid .hero-figure .value { font-size: 2.1rem; }
+.evgrid .tile .value.long, .tile .value.long { font-size: 1.02rem; line-height: 1.3; }
+.evsec .grid2 > .meters { grid-column: 1 / -1; }
 .scroll { overflow-x: auto; }
 table { border-collapse: collapse; width: 100%; font-size: 0.86rem; margin-top: 8px; }
 th, td { text-align: left; padding: 6px 10px; border-bottom: 1px solid var(--rule); vertical-align: top; }
@@ -497,6 +523,10 @@ footer.end { color: var(--muted); font-size: 0.85rem; border-top: 1px solid var(
   .meter { grid-template-columns: minmax(0, 1fr) 2.6rem; } .meter .track { grid-column: 1 / 3; } .meter .detail { grid-column: 1 / 3; }
   .action { grid-template-columns: minmax(0, 1fr); }
   .card { padding: 14px 12px; }
+}
+@media (max-width: 600px) {   /* on a phone the popup is the whole screen */
+  dialog.ev { inset: 0; margin: 0; width: 100vw; height: 100dvh; max-height: none; border: 0; border-radius: 0; }
+  .evhead, .evbody { padding-left: max(14px, env(safe-area-inset-left, 0px)); padding-right: max(14px, env(safe-area-inset-right, 0px)); }
 }
 @media (max-width: 520px) {   /* the charts scale down to the phone width: enlarge their text to keep it legible */
   svg .tick, svg .cat, svg .note { font-size: 13px; } svg .val { font-size: 13.5px; }
@@ -565,17 +595,95 @@ SCRIPT = """
     if (b) { copyText(b.closest(".sqlpane").querySelector("code").textContent, b); }
   });
 
-  // A "SQL" link on a card goes to the full code of the steps it comes from
-  document.addEventListener("click", function (e) {
-    var a = e.target.closest ? e.target.closest("a.sqllink") : null;
-    if (!a) { return; }
-    var first = null;
-    a.getAttribute("data-sql").split(" ").forEach(function (step) {
-      var d = document.getElementById("sql-" + step);
-      if (d) { d.open = true; first = first || d; }
+  // One popup for the whole page, filled from the page's own cards, charts and SQL (copied, so nothing is drawn twice). It opens from a
+  // recommendation, and from the "SQL" link on a card. Without a script, or a browser that has no <dialog>, a "SQL" link jumps to the
+  // appendix instead and a recommendation is simply read as text.
+  var dlg = document.getElementById("evidence");
+  var canPopUp = !!dlg && typeof dlg.showModal === "function";
+  function words(value) { return (value || "").split(" ").filter(Boolean); }
+  if (canPopUp) {
+    var body = dlg.querySelector(".evbody"), title = document.getElementById("ev-title"), eyebrow = document.getElementById("ev-eyebrow");
+    var make = function (tag, cls, text) { var n = document.createElement(tag); if (cls) { n.className = cls; } if (text) { n.textContent = text; } return n; };
+    var section = function (heading, content) { var s = make("section", "evsec"); s.appendChild(make("h3", "", heading)); s.appendChild(content); return s; };
+    var original = function (key) { return page.querySelector('[data-ev="' + key + '"]'); };
+    var copyOf = function (node) { var c = node.cloneNode(true); c.removeAttribute("data-ev"); return c; };
+    var clear = function () { while (body.firstChild) { body.removeChild(body.firstChild); } };
+    var sqlSection = function (steps) {
+      var box = make("div", "steps");
+      steps.forEach(function (step, n) {
+        var src = document.getElementById("sql-" + step);
+        if (!src) { return; }
+        var c = src.cloneNode(true);
+        c.removeAttribute("id"); c.open = n === 0;
+        box.appendChild(c);
+      });
+      return box.firstChild ? section("The SQL behind it", box) : null;
+    };
+    var popUp = function () { if (!dlg.open) { dlg.showModal(); } body.scrollTop = 0; };
+
+    var openEvidence = function (button) {
+      var card = button.closest("article");
+      clear();
+      eyebrow.textContent = card.getAttribute("data-priority") + " · " + card.getAttribute("data-area");
+      title.textContent = card.querySelector("h3").textContent;
+      var why = make("div", "evwhy");
+      why.appendChild(card.querySelector(".ev").cloneNode(true));
+      why.appendChild(card.querySelector(".todo").cloneNode(true));
+      body.appendChild(section("What the data says", why));
+      var figures = make("div", "evgrid");
+      words(button.getAttribute("data-cards")).forEach(function (key) {
+        var n = original(key);
+        if (!n) { return; }
+        var c = copyOf(n);
+        if (key.indexOf("fact:") === 0) { var list = make("dl", "facts"); list.appendChild(c); c = list; }
+        figures.appendChild(c);
+      });
+      var extra = card.querySelector("template.figs");
+      if (extra) { figures.appendChild(extra.content.cloneNode(true)); }
+      if (figures.firstChild) { body.appendChild(section("Key figures", figures)); }
+      var charts = make("div", "grid2");
+      words(button.getAttribute("data-charts")).forEach(function (key) { var n = original(key); if (n) { charts.appendChild(copyOf(n)); } });
+      if (charts.firstChild) { body.appendChild(section("Charts", charts)); }
+      var code = sqlSection(words(button.getAttribute("data-sql")));
+      if (code) { body.appendChild(code); }
+      popUp();
+    };
+    var openSql = function (link) {
+      clear();
+      var label = link.getAttribute("data-title");
+      eyebrow.textContent = "SQL";
+      title.textContent = label ? "The SQL behind “" + label + "”" : "The SQL behind this card";
+      var code = sqlSection(words(link.getAttribute("data-sql")));
+      if (code) { body.appendChild(code); }
+      popUp();
+    };
+
+    document.querySelectorAll(".evbtn").forEach(function (b) { b.hidden = false; b.closest("article").classList.add("openable"); });
+    dlg.querySelector(".evclose").addEventListener("click", function () { dlg.close(); });
+    dlg.addEventListener("click", function (e) { if (e.target === dlg) { dlg.close(); } });     // a click on the backdrop
+    dlg.addEventListener("close", function () { hide(); clear(); });
+    document.addEventListener("click", function (e) {
+      var from = e.target.closest ? e.target : null;
+      if (!from) { return; }
+      var link = from.closest("a.sqllink");
+      if (link) { e.preventDefault(); openSql(link); return; }
+      var opener = from.closest(".evbtn");
+      if (opener) { openEvidence(opener); return; }
+      var card = from.closest("article.openable");      // the whole recommendation is a target, except where it has its own controls
+      if (card && !from.closest("a, button, summary, details, pre, dialog") && !String(window.getSelection())) { openEvidence(card.querySelector(".evbtn")); }
     });
-    if (first) { e.preventDefault(); first.scrollIntoView({ block: "start" }); }
-  });
+  } else {
+    document.addEventListener("click", function (e) {
+      var a = e.target.closest ? e.target.closest("a.sqllink") : null;
+      if (!a) { return; }
+      var first = null;
+      words(a.getAttribute("data-sql")).forEach(function (step) {
+        var d = document.getElementById("sql-" + step);
+        if (d) { d.open = true; first = first || d; }
+      });
+      if (first) { e.preventDefault(); first.scrollIntoView({ block: "start" }); }
+    });
+  }
 })();
 """
 
@@ -619,6 +727,44 @@ def _card(title: str, sub: str, chart: str, tv: str, wide: bool = False, ev: str
     views = f'<div class="views">{tv}{sql}</div>' if tv or sql else ""
     return (f'<div class="card{" wide" if wide else ""}"' + (f' data-ev="{esc(ev)}"' if ev else "") + f'><h3>{esc(title)}</h3>'
             + (f'<p class="sub">{sub}</p>' if sub else "") + f'<div class="chart">{chart}</div>{views}</div>')
+
+
+def _figure(label: str, value: str) -> str:
+    """A key figure that appears nowhere else on the page, as a card like the tiles (it is shown in the popup of its recommendation)."""
+    return (f'<div class="tile"><span class="label">{prose(label)}</span>'
+            f'<span class="value{" long" if len(value) > 14 else ""}">{prose(value)}</span></div>')
+
+
+def _recommendations(insights, present: set[str], lib: SqlLibrary) -> str:
+    """The recommendation cards. Each one can open the charts, key cards and SQL it was made from: the page's own nodes (named by
+    their data-ev keys) are copied into a popup by the script, so nothing is drawn twice."""
+    names = {1: "Act now", 2: "Plan", 3: "Monitor"}
+    out = []
+    for i in insights:
+        keys = [k for k in i.shows if k in present]
+        cards = [k for k in keys if k.startswith(("tile:", "fact:"))]
+        charts = [k for k in keys if k.startswith(("chart:", "trust"))]
+        steps = [i.source] if lib.has(i.source) else []
+        lib.used.update(steps)
+        figures = "".join(_figure(label, value) for label, value in i.figures)
+        opener = (f'<p class="more"><button type="button" class="evbtn" hidden data-cards="{esc(" ".join(cards))}" '
+                  f'data-charts="{esc(" ".join(charts))}" data-sql="{esc(" ".join(steps))}" aria-haspopup="dialog">'
+                  "Show the charts, figures and SQL behind this</button></p>") if (cards or charts or figures or steps) else ""
+        out.append(
+            f'<article class="action" data-priority="{names[i.priority]}" data-area="{esc(i.area)}">'
+            f'<span class="pri p{i.priority}">{names[i.priority]}</span>'
+            f'<div class="body"><h3>{prose(i.headline)}</h3><p class="ev">{prose(i.evidence)}. {prose(i.implication)}</p>'
+            f'<p class="todo"><b>Next step:</b> {prose(i.action)}</p>'
+            f'<div class="tags"><span class="tag">{esc(i.area)}</span><span class="tag">{esc(i.confidence)}</span>'
+            f'<span class="tag mono">{esc(i.source)}</span></div>{opener}'
+            + (f'<template class="figs">{figures}</template>' if figures else "") + "</div></article>")
+    return "".join(out)
+
+
+# The popup: one dialog for the whole page; the script fills it from the page's own cards, charts and SQL
+DIALOG = ('<dialog id="evidence" class="ev" aria-labelledby="ev-title"><div class="evhead"><div><p class="eyebrow" id="ev-eyebrow"></p>'
+          '<h2 id="ev-title"></h2></div><button type="button" class="evclose" aria-label="Close">✕</button></div>'
+          '<div class="evbody"></div><div class="tip" role="tooltip" hidden></div></dialog>')
 
 
 def _section(anchor: str, eyebrow: str, heading: str, intro: str, body: str) -> str:
@@ -705,23 +851,17 @@ def to_business_brief(d: Decision, metrics: dict, *, title: str = "Business brie
                         + "</section>")
 
     # ── Context: what the data is ────────────────────────────────────────
-    facts = "".join(f'<div data-ev="fact:{slug(a)}"><dt>{esc(a)}{lib.link(FACT_STEPS.get(a, []))}</dt><dd>{prose(b)}</dd></div>'
+    facts = "".join(f'<div data-ev="fact:{slug(a)}"><dt>{esc(a)}{lib.link(FACT_STEPS.get(a, []), title=a)}</dt><dd>{prose(b)}</dd></div>'
                     for a, b in _context(d, m))
     sections.append(_section("data", "Context", "What this data is", "", f'<dl class="facts">{facts}</dl>'))
     nav.append(("data", "Data"))
 
     # ── What to do ───────────────────────────────────────────────────────
+    # Built after the rest of the page: a recommendation opens the charts and cards it was made from, so it can only name the ones
+    # the page has. Its place in the page and in the navigation is kept here.
+    actions_at = len(sections)
     if s.insights:
-        names = {1: "Act now", 2: "Plan", 3: "Monitor"}
-        cards = "".join(
-            f'<article class="action"><span class="pri p{i.priority}">{names[i.priority]}</span>'
-            f'<div class="body"><h3>{prose(i.headline)}</h3><p class="ev">{prose(i.evidence)}. {prose(i.implication)}</p>'
-            f'<p class="todo"><b>Next step:</b> {prose(i.action)}</p>'
-            f'<div class="tags"><span class="tag">{esc(i.area)}</span><span class="tag">{esc(i.confidence)}</span>'
-            f'<span class="tag mono">{esc(i.source)}</span></div></div></article>' for i in s.insights[:8])
-        sections.append(_section("actions", "Recommendations", "What to do",
-                                 "Ordered by urgency. Each one cites its numbers and the SQL step that produced them. “Needs a test” marks a "
-                                 "pattern in the data, not a proven cause.", f'<div class="actions">{cards}</div>'))
+        sections.append("")
         nav.append(("actions", "What to do"))
 
     # ── What happened ────────────────────────────────────────────────────
@@ -831,7 +971,7 @@ def to_business_brief(d: Decision, metrics: dict, *, title: str = "Business brie
     for x in t.dimensions:
         cls, icon, word = _status(x.score)
         meters.append(f'<div class="meter"><span class="name"><span class="st {cls}" aria-hidden="true">{icon}</span>{esc(x.name)}'
-                      f'<span class="w">weight {TRUST_WEIGHTS[x.name]:.0%}</span>{lib.link(TRUST_STEPS.get(x.name, []))}</span>'
+                      f'<span class="w">weight {TRUST_WEIGHTS[x.name]:.0%}</span>{lib.link(TRUST_STEPS.get(x.name, []), title=x.name)}</span>'
                       f'<div class="track" role="img" aria-label="{esc(x.name)}: {_score(x.score)} of 100, {word}">'
                       f'<div class="fill {cls}" style="width:{max(2.0, x.score):.1f}%"></div></div>'
                       f'<span class="num">{_score(x.score)}</span><span class="detail">{prose(x.detail)}</span></div>')
@@ -856,6 +996,14 @@ def to_business_brief(d: Decision, metrics: dict, *, title: str = "Business brie
                              + "</div></div>"))
     nav.append(("method", "Method"))
 
+    if s.insights:
+        present = set(re.findall(r'data-ev="([^"]+)"', "".join(sections)))
+        sections[actions_at] = _section(
+            "actions", "Recommendations", "What to do",
+            "Ordered by urgency. Each one cites its numbers and the SQL step that produced them; open one to see the charts, figures and "
+            "SQL it was made from. “Needs a test” marks a pattern in the data, not a proven cause.",
+            f'<div class="actions">{_recommendations(s.insights, present, lib)}</div>')
+
     # ── SQL: the full code of every step this page pointed at (built last, once every card has said which steps it uses) ──
     steps = lib.appendix()
     if steps:
@@ -870,8 +1018,8 @@ def to_business_brief(d: Decision, metrics: dict, *, title: str = "Business brie
 
     links = "".join(f'<a href="#{a}">{esc(b)}</a>' for a, b in nav)
     sections[0] = sections[0].replace("NAV", f'<nav class="toc" aria-label="Sections">{links}</nav>')
-    body = (f'<main class="page" data-dialect="mysql">{"".join(sections)}</main><div id="tip" role="tooltip" hidden></div>'
-            f"<script>{SCRIPT}</script>")
+    body = (f'<main class="page" data-dialect="mysql">{"".join(sections)}{DIALOG if lib.used else ""}</main>'
+            f'<div id="tip" role="tooltip" hidden></div><script>{SCRIPT}</script>')
     head = (f"<title>{esc(title)}</title>\n" + ('<meta name="claude:viewport-fit-sides" content="cover">\n' if not standalone else "")
             + f"<style>{CSS}</style>\n<noscript><style>.sql-postgres {{ display: block !important; }}</style></noscript>\n")
     if not standalone:
