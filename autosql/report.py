@@ -26,6 +26,12 @@ def esc(text) -> str:
     return html.escape(str(text), quote=True)
 
 
+def prose(text) -> str:
+    """Escaped text for a sentence. The business layer marks `table.column` for the app and the notebook, which a page would show as
+    literal backticks."""
+    return esc(str(text).replace("`", ""))
+
+
 def compact(v: float, money: bool = False) -> str:
     a = abs(v)
     if a >= 1e9:
@@ -570,7 +576,7 @@ def to_business_brief(d: Decision, metrics: dict, *, title: str = "Business brie
                                   f"source: {source}") if x)
     stamp_cls, stamp_icon = GRADE_STATUS[s.trust.grade]          # the grade, after its caps, not the bare score
     sections.append(f'<header class="top"><p class="eyebrow">Business brief · AutoSQL Explorer</p><h1>{esc(title)}</h1>'
-                    f'<p class="meta">{esc(meta)}</p><p class="lede">{esc(s.headline)}</p>'
+                    f'<p class="meta">{esc(meta)}</p><p class="lede">{prose(s.headline)}</p>'
                     f'<p class="stamp"><span class="st {stamp_cls}" aria-hidden="true">{stamp_icon}</span>Data trust {_score(s.trust.score)}/100: '
                     f'{esc(s.trust.grade)}</p>NAV</header>')
 
@@ -593,7 +599,7 @@ def to_business_brief(d: Decision, metrics: dict, *, title: str = "Business brie
                         + "</section>")
 
     # ── Context: what the data is ────────────────────────────────────────
-    facts = "".join(f"<div><dt>{esc(a)}</dt><dd>{esc(b)}</dd></div>" for a, b in _context(d, m))
+    facts = "".join(f"<div><dt>{esc(a)}</dt><dd>{prose(b)}</dd></div>" for a, b in _context(d, m))
     sections.append(_section("data", "Context", "What this data is", "", f'<dl class="facts">{facts}</dl>'))
     nav.append(("data", "Data"))
 
@@ -602,8 +608,8 @@ def to_business_brief(d: Decision, metrics: dict, *, title: str = "Business brie
         names = {1: "Act now", 2: "Plan", 3: "Monitor"}
         cards = "".join(
             f'<article class="action"><span class="pri p{i.priority}">{names[i.priority]}</span>'
-            f'<div class="body"><h3>{esc(i.headline)}</h3><p class="ev">{esc(i.evidence)}. {esc(i.implication)}</p>'
-            f'<p class="todo"><b>Next step:</b> {esc(i.action)}</p>'
+            f'<div class="body"><h3>{prose(i.headline)}</h3><p class="ev">{prose(i.evidence)}. {prose(i.implication)}</p>'
+            f'<p class="todo"><b>Next step:</b> {prose(i.action)}</p>'
             f'<div class="tags"><span class="tag">{esc(i.area)}</span><span class="tag">{esc(i.confidence)}</span>'
             f'<span class="tag mono">{esc(i.source)}</span></div></div></article>' for i in s.insights[:8])
         sections.append(_section("actions", "Recommendations", "What to do",
@@ -711,8 +717,8 @@ def to_business_brief(d: Decision, metrics: dict, *, title: str = "Business brie
                       f'<span class="w">weight {TRUST_WEIGHTS[x.name]:.0%}</span></span>'
                       f'<div class="track" role="img" aria-label="{esc(x.name)}: {_score(x.score)} of 100, {word}">'
                       f'<div class="fill {cls}" style="width:{max(2.0, x.score):.1f}%"></div></div>'
-                      f'<span class="num">{_score(x.score)}</span><span class="detail">{esc(x.detail)}</span></div>')
-    capped = "".join(f'<p class="cap"><span class="st crit" aria-hidden="true">✕</span>{esc(c[0].upper() + c[1:])}.</p>' for c in t.caps)
+                      f'<span class="num">{_score(x.score)}</span><span class="detail">{prose(x.detail)}</span></div>')
+    capped = "".join(f'<p class="cap"><span class="st crit" aria-hidden="true">✕</span>{prose(c[0].upper() + c[1:])}.</p>' for c in t.caps)
     sections.append(_section("trust", "Data quality", "Can we trust these numbers?",
                              "Five checks run in SQL before any KPI is computed. The score is their weighted average: 90+ is high, 75–90 usable "
                              "with the caveats listed, below 75 use with care. A failed reconciliation, or any check below 60, caps the grade "
@@ -727,7 +733,7 @@ def to_business_brief(d: Decision, metrics: dict, *, title: str = "Business brie
     used = [x for x in KPI_BY_KEY.values() if x.key in have]
     sections.append(_section("method", "Method", "How the numbers were made", "",
                              '<div class="grid2"><div class="card"><h3>Assumptions</h3><ul class="plain">'
-                             + "".join(f"<li>{esc(a.replace('`', ''))}</li>" for a in assumptions(d))
+                             + "".join(f"<li>{prose(a)}</li>" for a in assumptions(d))
                              + '</ul></div><div class="card"><h3>KPI definitions</h3><p class="sub">What each figure means and the SQL behind it.</p>'
                              + table(["KPI", "Definition", "SQL"], [[x.name, x.definition, x.formula] for x in used], "Show the definitions")
                              + "</div></div>"))

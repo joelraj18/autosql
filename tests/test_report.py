@@ -6,8 +6,9 @@ import pytest
 
 from autosql import build_cells, run_cells
 from autosql.report import compact, nice_ticks, period_parts, to_business_brief
-from conftest import analyse
-from test_codegen_runs import build
+from conftest import analyse, catalog_from
+from datasets import sweep_cases
+from test_codegen_runs import build, business_rules_frames
 
 
 class Checker(HTMLParser):
@@ -72,6 +73,21 @@ def test_tooltips_never_inject_html(nw):
     page = to_business_brief(d, m, title="<script>alert(1)</script>")
     assert "<script>alert(1)</script>" not in page and "&lt;script&gt;" in page
     assert "tip.textContent" in page and "innerHTML" not in page
+
+
+def test_markdown_backticks_never_reach_the_page(nw):
+    # the business layer writes `table.column` for the app and the notebook; on a page the backticks would show as characters
+    d, m = nw
+    pages = {"northwind": to_business_brief(d, m, title="Northwind Traders")}
+    for name, frames in (("business rules", business_rules_frames()), ("returns", sweep_cases()["returns_negative"]),
+                         ("gaps in a column", sweep_cases()["shop"])):
+        catalog = catalog_from(frames)
+        brief_d = analyse(catalog)
+        _, brief_m = run_cells(build_cells(brief_d), catalog)
+        pages[name] = to_business_brief(brief_d, brief_m, title=name)
+    for name, page in pages.items():
+        text = re.sub(r"\s+", " ", re.sub(r"<(style|script|code|pre)\b.*?</\1>", " ", page, flags=re.S))   # what a reader meets
+        assert not re.findall(r".{0,50}`.{0,30}", text), f"{name}: {re.findall(r'.{0,50}`.{0,30}', text)[:2]}"
 
 
 def test_new_wheels_shape_brief(new_wheels_catalog):
