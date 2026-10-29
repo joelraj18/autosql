@@ -43,6 +43,9 @@ import matplotlib.pyplot as plt
 sys.path.insert(0, str(Path.cwd().resolve().parents[1]))  # the repository root, so that `autosql` can be imported
 from autosql import build_database, read_folder
 
+# importing autosql selects matplotlib's Agg backend (it never opens windows), which would hide every chart below
+%matplotlib inline
+
 metrics = {}  # every cell stores its key numbers here
 
 
