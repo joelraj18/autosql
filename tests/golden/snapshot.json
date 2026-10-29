@@ -1,0 +1,10455 @@
+{
+ "case:awkward_names": {
+  "fanouts": [],
+  "relationships": [],
+  "skipped": [],
+  "tables": {
+   "order": {
+    "ambiguous_dates": [],
+    "cleaned": {},
+    "column_map": {
+     "amount": "Amount",
+     "date": "Date",
+     "group": "Group",
+     "order_id": "Order ID",
+     "select": "select",
+     "user": "user"
+    },
+    "columns": {
+     "amount": [
+      "measure",
+      "amount",
+      0,
+      114,
+      "",
+      [],
+      0.0,
+      0,
+      "np.float64(1.1)",
+      "np.float64(8.89)",
+      "a money amount"
+     ],
+     "date": [
+      "datetime",
+      "",
+      0,
+      120,
+      "",
+      [],
+      0.0,
+      0,
+      "2022-01-05T00:00:00",
+      "2023-08-23T00:00:00",
+      "dates"
+     ],
+     "group": [
+      "dimension",
+      "",
+      0,
+      2,
+      "",
+      [],
+      1.0,
+      1,
+      "",
+      "",
+      "2 labels to group by"
+     ],
+     "order_id": [
+      "identifier",
+      "",
+      0,
+      120,
+      "",
+      [],
+      0.0,
+      0,
+      "1",
+      "120",
+      "named like an ID or code"
+     ],
+     "select": [
+      "dimension",
+      "",
+      0,
+      4,
+      "",
+      [],
+      6.075,
+      10,
+      "",
+      "",
+      "4 labels to group by"
+     ],
+     "user": [
+      "measure",
+      "other",
+      0,
+      19,
+      "",
+      [],
+      0.0,
+      0,
+      "1",
+      "19",
+      "numbers"
+     ]
+    },
+    "date_formats": {
+     "date": "%Y-%m-%d"
+    },
+    "duplicate_keys": 0,
+    "exact_duplicates": 0,
+    "extra_rows": 0,
+    "grain": "one row per `order_id`",
+    "hashes": {
+     "amount": "c26ce9fcb331dd1a",
+     "date": "36b4d1cf02eb43ea",
+     "group": "dc6873053e002144",
+     "order_id": "41a5bc975383c5d0",
+     "select": "ddbd1a56e4c7de8f",
+     "user": "3ce5bc6e0448d5c1"
+    },
+    "key_status": "single",
+    "placeholders": {},
+    "primary_key": [
+     "order_id"
+    ],
+    "rows": 120,
+    "source": "Order.csv",
+    "types": {
+     "amount": "decimal",
+     "date": "date",
+     "group": "text",
+     "order_id": "integer",
+     "select": "text",
+     "user": "integer"
+    },
+    "units": {},
+    "unparsed_dates": {},
+    "unparsed_numbers": {}
+   }
+  }
+ },
+ "case:business_rules": {
+  "fanouts": [
+   [
+    "orders",
+    "freight",
+    "order_items",
+    11167.61,
+    25434.58
+   ]
+  ],
+  "relationships": [
+   [
+    "orders.customer_id → customers.customer_id",
+    "name",
+    true,
+    1.0,
+    0,
+    0,
+    10,
+    4.02,
+    2,
+    false
+   ],
+   [
+    "order_items.order_id → orders.order_id",
+    "name",
+    true,
+    0.994609,
+    3,
+    0,
+    8,
+    2.335,
+    31,
+    false
+   ],
+   [
+    "order_items.product_id → products.product_id",
+    "name",
+    true,
+    1.0,
+    0,
+    0,
+    63,
+    46.85,
+    0,
+    false
+   ]
+  ],
+  "skipped": [],
+  "tables": {
+   "customers": {
+    "ambiguous_dates": [],
+    "cleaned": {},
+    "column_map": {
+     "customer_id": "CustomerID",
+     "customer_name": "Customer Name",
+     "group": "group",
+     "region": "Region",
+     "zip": "Zip"
+    },
+    "columns": {
+     "customer_id": [
+      "identifier",
+      "",
+      0,
+      100,
+      "",
+      [],
+      0.0,
+      0,
+      "1",
+      "100",
+      "named like an ID or code"
+     ],
+     "customer_name": [
+      "attribute",
+      "",
+      0,
+      100,
+      "",
+      [],
+      10.901961,
+      12,
+      "",
+      "",
+      "100 different values: describes rows rather than grouping them"
+     ],
+     "group": [
+      "dimension",
+      "",
+      0,
+      2,
+      "",
+      [],
+      5.568627,
+      6,
+      "",
+      "",
+      "2 labels to group by"
+     ],
+     "region": [
+      "dimension",
+      "",
+      0,
+      4,
+      "",
+      [],
+      4.45098,
+      5,
+      "",
+      "",
+      "4 labels to group by"
+     ],
+     "zip": [
+      "attribute",
+      "",
+      0,
+      98,
+      "",
+      [],
+      5.0,
+      5,
+      "",
+      "",
+      "contact, address or descriptive details"
+     ]
+    },
+    "date_formats": {},
+    "duplicate_keys": 2,
+    "exact_duplicates": 2,
+    "extra_rows": 2,
+    "grain": "meant to be one row per `customer_id`, but 2 value(s) appear more than once",
+    "hashes": {
+     "customer_id": "b5e97cd3c227d8c7",
+     "customer_name": "04ab98062c845193",
+     "group": "f223e665ab743987",
+     "region": "db53940a383fd7c0",
+     "zip": "f1f0bfb95170ebc6"
+    },
+    "key_status": "intended",
+    "placeholders": {},
+    "primary_key": [
+     "customer_id"
+    ],
+    "rows": 102,
+    "source": "customers.csv",
+    "types": {
+     "customer_id": "integer",
+     "customer_name": "text",
+     "group": "text",
+     "region": "text",
+     "zip": "text"
+    },
+    "units": {},
+    "unparsed_dates": {},
+    "unparsed_numbers": {}
+   },
+   "order_items": {
+    "ambiguous_dates": [],
+    "cleaned": {},
+    "column_map": {
+     "line_status": "line_status",
+     "order_id": "OrderID",
+     "price": "Price",
+     "product_id": "ProductID",
+     "qty": "Qty"
+    },
+    "columns": {
+     "line_status": [
+      "dimension",
+      "",
+      0,
+      2,
+      "",
+      [],
+      2.307364,
+      8,
+      "",
+      "",
+      "2 labels to group by"
+     ],
+     "order_id": [
+      "identifier",
+      "",
+      0,
+      371,
+      "",
+      [],
+      0.0,
+      0,
+      "5001",
+      "9999",
+      "named like an ID or code"
+     ],
+     "price": [
+      "measure",
+      "price",
+      0,
+      727,
+      "",
+      [],
+      0.0,
+      0,
+      "np.float64(2.0)",
+      "np.float64(20.0)",
+      "a price"
+     ],
+     "product_id": [
+      "identifier",
+      "",
+      0,
+      20,
+      "",
+      [],
+      0.0,
+      0,
+      "1",
+      "20",
+      "named like an ID or code"
+     ],
+     "qty": [
+      "measure",
+      "quantity",
+      0,
+      5,
+      "",
+      [],
+      0.0,
+      0,
+      "1",
+      "5",
+      "a quantity"
+     ]
+    },
+    "date_formats": {},
+    "duplicate_keys": 0,
+    "exact_duplicates": 0,
+    "extra_rows": 0,
+    "grain": "one row per `order_id` × `product_id`",
+    "hashes": {
+     "line_status": "60bfc67a7c743ae7",
+     "order_id": "66c1f103a0639282",
+     "price": "7d277f2892f78872",
+     "product_id": "1fbc675257011ec2",
+     "qty": "b5363e3a441d2fc6"
+    },
+    "key_status": "composite",
+    "placeholders": {},
+    "primary_key": [
+     "order_id",
+     "product_id"
+    ],
+    "rows": 937,
+    "source": "order_items.csv",
+    "types": {
+     "line_status": "text",
+     "order_id": "integer",
+     "price": "decimal",
+     "product_id": "integer",
+     "qty": "integer"
+    },
+    "units": {},
+    "unparsed_dates": {},
+    "unparsed_numbers": {}
+   },
+   "orders": {
+    "ambiguous_dates": [],
+    "cleaned": {},
+    "column_map": {
+     "currency": "Currency",
+     "customer_id": "CustomerID",
+     "freight": "Freight",
+     "is_test": "is_test",
+     "order": "order",
+     "order_date": "OrderDate",
+     "order_id": "OrderID",
+     "ship_date": "ShipDate",
+     "status": "Status"
+    },
+    "columns": {
+     "currency": [
+      "dimension",
+      "",
+      0,
+      2,
+      "",
+      [],
+      3.0,
+      3,
+      "",
+      "",
+      "2 labels to group by"
+     ],
+     "customer_id": [
+      "identifier",
+      "",
+      0,
+      98,
+      "",
+      [],
+      0.0,
+      0,
+      "1",
+      "100",
+      "named like an ID or code"
+     ],
+     "freight": [
+      "measure",
+      "charge",
+      0,
+      385,
+      "",
+      [],
+      0.0,
+      0,
+      "np.float64(5.24)",
+      "np.float64(49.93)",
+      "a charge such as freight or tax"
+     ],
+     "is_test": [
+      "dimension",
+      "",
+      0,
+      2,
+      "",
+      [],
+      1.0,
+      1,
+      "",
+      "",
+      "2 labels to group by"
+     ],
+     "order": [
+      "dimension",
+      "",
+      0,
+      2,
+      "",
+      [],
+      4.0199,
+      5,
+      "",
+      "",
+      "2 labels to group by"
+     ],
+     "order_date": [
+      "datetime",
+      "",
+      0,
+      288,
+      "",
+      [],
+      0.0,
+      0,
+      "2022-01-01T00:00:00",
+      "2023-06-24T00:00:00",
+      "dates"
+     ],
+     "order_id": [
+      "identifier",
+      "",
+      0,
+      400,
+      "",
+      [],
+      0.0,
+      0,
+      "5001",
+      "5400",
+      "named like an ID or code"
+     ],
+     "ship_date": [
+      "datetime",
+      "",
+      22,
+      272,
+      "",
+      [],
+      0.0,
+      0,
+      "2022-01-08T00:00:00",
+      "2023-07-07T00:00:00",
+      "dates"
+     ],
+     "status": [
+      "dimension",
+      "",
+      11,
+      5,
+      "",
+      [],
+      8.805627,
+      18,
+      "",
+      "",
+      "5 labels to group by"
+     ]
+    },
+    "date_formats": {
+     "order_date": "%m/%d/%Y",
+     "ship_date": "%m/%d/%Y"
+    },
+    "duplicate_keys": 2,
+    "exact_duplicates": 2,
+    "extra_rows": 2,
+    "grain": "meant to be one row per `order_id`, but 2 value(s) appear more than once",
+    "hashes": {
+     "currency": "0627694931e64137",
+     "customer_id": "05c86cad36bdfa2f",
+     "freight": "cc1ac5d75da8f286",
+     "is_test": "b3a08b3563f48129",
+     "order": "73a0f2b28cd7d5cd",
+     "order_date": "8db9989acf5af35c",
+     "order_id": "db515f10515e56d0",
+     "ship_date": "01ad61a960d8ae3b",
+     "status": "de0bbae8f3bf2bbb"
+    },
+    "key_status": "intended",
+    "placeholders": {},
+    "primary_key": [
+     "order_id"
+    ],
+    "rows": 402,
+    "source": "orders.csv",
+    "types": {
+     "currency": "text",
+     "customer_id": "integer",
+     "freight": "decimal",
+     "is_test": "text",
+     "order": "text",
+     "order_date": "date",
+     "order_id": "integer",
+     "ship_date": "date",
+     "status": "text"
+    },
+    "units": {},
+    "unparsed_dates": {},
+    "unparsed_numbers": {}
+   },
+   "products": {
+    "ambiguous_dates": [],
+    "cleaned": {},
+    "column_map": {
+     "category": "Category",
+     "product": "Product",
+     "product_id": "ProductID",
+     "unit_cost": "UnitCost"
+    },
+    "columns": {
+     "category": [
+      "dimension",
+      "",
+      0,
+      3,
+      "",
+      [],
+      4.85,
+      6,
+      "",
+      "",
+      "3 labels to group by"
+     ],
+     "product": [
+      "dimension",
+      "",
+      0,
+      20,
+      "",
+      [],
+      2.55,
+      3,
+      "",
+      "",
+      "20 labels to group by"
+     ],
+     "product_id": [
+      "identifier",
+      "",
+      0,
+      20,
+      "",
+      [],
+      0.0,
+      0,
+      "1",
+      "20",
+      "named like an ID or code"
+     ],
+     "unit_cost": [
+      "measure",
+      "price",
+      0,
+      20,
+      "",
+      [],
+      0.0,
+      0,
+      "np.float64(1.02)",
+      "np.float64(8.89)",
+      "a price"
+     ]
+    },
+    "date_formats": {},
+    "duplicate_keys": 0,
+    "exact_duplicates": 0,
+    "extra_rows": 0,
+    "grain": "one row per `product_id`",
+    "hashes": {
+     "category": "1dacad0cc1c71523",
+     "product": "5ad19d99f3e86aeb",
+     "product_id": "7747a514fec0c8bb",
+     "unit_cost": "45bdc8f4e57a1b2e"
+    },
+    "key_status": "single",
+    "placeholders": {},
+    "primary_key": [
+     "product_id"
+    ],
+    "rows": 20,
+    "source": "products.csv",
+    "types": {
+     "category": "text",
+     "product": "text",
+     "product_id": "integer",
+     "unit_cost": "decimal"
+    },
+    "units": {},
+    "unparsed_dates": {},
+    "unparsed_numbers": {}
+   }
+  }
+ },
+ "case:composite_fk": {
+  "fanouts": [
+   [
+    "stores",
+    "monthly_rent",
+    "sales",
+    224005.6,
+    3265994.83
+   ]
+  ],
+  "relationships": [
+   [
+    "sales.(region, store_no) → stores.(region, store_no)",
+    "name",
+    true,
+    1.0,
+    0,
+    0,
+    33,
+    15.0,
+    1,
+    false
+   ]
+  ],
+  "skipped": [],
+  "tables": {
+   "sales": {
+    "ambiguous_dates": [],
+    "cleaned": {},
+    "column_map": {
+     "amount": "amount",
+     "customer_id": "customer_id",
+     "region": "region",
+     "sale_date": "sale_date",
+     "sale_id": "sale_id",
+     "store_no": "store_no"
+    },
+    "columns": {
+     "amount": [
+      "measure",
+      "amount",
+      0,
+      580,
+      "",
+      [],
+      0.0,
+      0,
+      "np.float64(0.44)",
+      "np.float64(235.91)",
+      "a money amount"
+     ],
+     "customer_id": [
+      "identifier",
+      "",
+      0,
+      89,
+      "",
+      [],
+      0.0,
+      0,
+      "1",
+      "89",
+      "named like an ID or code"
+     ],
+     "region": [
+      "dimension",
+      "",
+      0,
+      4,
+      "",
+      [],
+      1.0,
+      1,
+      "",
+      "",
+      "4 labels to group by"
+     ],
+     "sale_date": [
+      "datetime",
+      "",
+      0,
+      355,
+      "",
+      [],
+      0.0,
+      0,
+      "2022-01-02T00:00:00",
+      "2023-06-24T00:00:00",
+      "dates"
+     ],
+     "sale_id": [
+      "identifier",
+      "",
+      0,
+      600,
+      "",
+      [],
+      0.0,
+      0,
+      "1",
+      "600",
+      "named like an ID or code"
+     ],
+     "store_no": [
+      "identifier",
+      "",
+      0,
+      10,
+      "",
+      [],
+      0.0,
+      0,
+      "1",
+      "10",
+      "named like an ID or code"
+     ]
+    },
+    "date_formats": {
+     "sale_date": "%Y-%m-%d"
+    },
+    "duplicate_keys": 0,
+    "exact_duplicates": 0,
+    "extra_rows": 0,
+    "grain": "one row per `sale_id`",
+    "hashes": {
+     "amount": "22d40b41cf83c133",
+     "customer_id": "255ed60685dbd699",
+     "region": "2113b1d01662e69a",
+     "sale_date": "aedcbc7ef12104c5",
+     "sale_id": "1c5f11cf6922070f",
+     "store_no": "16ae7644252e8810"
+    },
+    "key_status": "single",
+    "placeholders": {},
+    "primary_key": [
+     "sale_id"
+    ],
+    "rows": 600,
+    "source": "sales.csv",
+    "types": {
+     "amount": "decimal",
+     "customer_id": "integer",
+     "region": "text",
+     "sale_date": "date",
+     "sale_id": "integer",
+     "store_no": "integer"
+    },
+    "units": {},
+    "unparsed_dates": {},
+    "unparsed_numbers": {}
+   },
+   "stores": {
+    "ambiguous_dates": [],
+    "cleaned": {},
+    "column_map": {
+     "monthly_rent": "monthly_rent",
+     "region": "region",
+     "store_no": "store_no",
+     "store_tier": "store_tier"
+    },
+    "columns": {
+     "monthly_rent": [
+      "measure",
+      "other",
+      0,
+      40,
+      "",
+      [],
+      0.0,
+      0,
+      "np.float64(2181.77)",
+      "np.float64(8833.42)",
+      "numbers"
+     ],
+     "region": [
+      "dimension",
+      "",
+      0,
+      4,
+      "",
+      [],
+      1.0,
+      1,
+      "",
+      "",
+      "4 labels to group by"
+     ],
+     "store_no": [
+      "identifier",
+      "",
+      0,
+      10,
+      "",
+      [],
+      0.0,
+      0,
+      "1",
+      "10",
+      "named like an ID or code"
+     ],
+     "store_tier": [
+      "dimension",
+      "",
+      0,
+      3,
+      "",
+      [],
+      7.2,
+      8,
+      "",
+      "",
+      "3 labels to group by"
+     ]
+    },
+    "date_formats": {},
+    "duplicate_keys": 0,
+    "exact_duplicates": 0,
+    "extra_rows": 0,
+    "grain": "one row per `region` × `store_no`",
+    "hashes": {
+     "monthly_rent": "2b8282299039dbd2",
+     "region": "b09243630490ddde",
+     "store_no": "c3ff86eaac9865f8",
+     "store_tier": "96e1d7e5f8bffb45"
+    },
+    "key_status": "composite",
+    "placeholders": {},
+    "primary_key": [
+     "region",
+     "store_no"
+    ],
+    "rows": 40,
+    "source": "stores.csv",
+    "types": {
+     "monthly_rent": "decimal",
+     "region": "text",
+     "store_no": "integer",
+     "store_tier": "text"
+    },
+    "units": {},
+    "unparsed_dates": {},
+    "unparsed_numbers": {}
+   }
+  }
+ },
+ "case:composite_fk_ticked": {
+  "fanouts": [],
+  "relationships": [
+   [
+    "sales.(region, store_no) → stores.(region, store_no)",
+    "name",
+    false,
+    0.75,
+    12,
+    0,
+    19,
+    16.0,
+    0,
+    false
+   ]
+  ],
+  "skipped": [],
+  "tables": {
+   "sales": {
+    "ambiguous_dates": [],
+    "cleaned": {},
+    "column_map": {
+     "amount": "amount",
+     "region": "region",
+     "sale_date": "sale_date",
+     "sale_id": "sale_id",
+     "store_no": "store_no"
+    },
+    "columns": {
+     "amount": [
+      "measure",
+      "amount",
+      0,
+      60,
+      "",
+      [],
+      0.0,
+      0,
+      "np.float64(1.0415955756180164)",
+      "np.float64(4.9644758665903685)",
+      "a money amount"
+     ],
+     "region": [
+      "dimension",
+      "",
+      0,
+      2,
+      "",
+      [],
+      1.0,
+      1,
+      "",
+      "",
+      "2 labels to group by"
+     ],
+     "sale_date": [
+      "datetime",
+      "",
+      0,
+      60,
+      "",
+      [],
+      0.0,
+      0,
+      "2021-01-01T00:00:00",
+      "2021-03-01T00:00:00",
+      "dates"
+     ],
+     "sale_id": [
+      "identifier",
+      "",
+      0,
+      60,
+      "",
+      [],
+      0.0,
+      0,
+      "0",
+      "59",
+      "named like an ID or code"
+     ],
+     "store_no": [
+      "identifier",
+      "",
+      0,
+      2,
+      "",
+      [],
+      0.0,
+      0,
+      "1",
+      "2",
+      "named like an ID or code"
+     ]
+    },
+    "date_formats": {
+     "sale_date": "%Y-%m-%d"
+    },
+    "duplicate_keys": 0,
+    "exact_duplicates": 0,
+    "extra_rows": 0,
+    "grain": "one row per `sale_id`",
+    "hashes": {
+     "amount": "daad21a18f30fd76",
+     "region": "deb9bac9cc604fe3",
+     "sale_date": "6f905b06a41a1000",
+     "sale_id": "850ec36bad248d23",
+     "store_no": "914de58dafdd7d8f"
+    },
+    "key_status": "single",
+    "placeholders": {},
+    "primary_key": [
+     "sale_id"
+    ],
+    "rows": 60,
+    "source": "sales.csv",
+    "types": {
+     "amount": "float",
+     "region": "text",
+     "sale_date": "date",
+     "sale_id": "integer",
+     "store_no": "integer"
+    },
+    "units": {},
+    "unparsed_dates": {},
+    "unparsed_numbers": {}
+   },
+   "stores": {
+    "ambiguous_dates": [],
+    "cleaned": {},
+    "column_map": {
+     "manager": "manager",
+     "region": "region",
+     "store_no": "store_no"
+    },
+    "columns": {
+     "manager": [
+      "dimension",
+      "",
+      0,
+      3,
+      "",
+      [],
+      1.0,
+      1,
+      "",
+      "",
+      "3 labels to group by"
+     ],
+     "region": [
+      "dimension",
+      "",
+      0,
+      2,
+      "",
+      [],
+      1.0,
+      1,
+      "",
+      "",
+      "2 labels to group by"
+     ],
+     "store_no": [
+      "identifier",
+      "",
+      0,
+      2,
+      "",
+      [],
+      0.0,
+      0,
+      "1",
+      "2",
+      "named like an ID or code"
+     ]
+    },
+    "date_formats": {},
+    "duplicate_keys": 0,
+    "exact_duplicates": 0,
+    "extra_rows": 0,
+    "grain": "one row per `region` × `store_no`",
+    "hashes": {
+     "manager": "ea7fb08b7a2dc461",
+     "region": "5487fd10bedb0b30",
+     "store_no": "8500f9d95894dcdb"
+    },
+    "key_status": "composite",
+    "placeholders": {},
+    "primary_key": [
+     "region",
+     "store_no"
+    ],
+    "rows": 3,
+    "source": "stores.csv",
+    "types": {
+     "manager": "text",
+     "region": "text",
+     "store_no": "integer"
+    },
+    "units": {},
+    "unparsed_dates": {},
+    "unparsed_numbers": {}
+   }
+  }
+ },
+ "case:denormalised_lines": {
+  "fanouts": [],
+  "relationships": [],
+  "skipped": [],
+  "tables": {
+   "online_retail": {
+    "ambiguous_dates": [],
+    "cleaned": {},
+    "column_map": {
+     "country": "country",
+     "customer_id": "customer_id",
+     "invoice_date": "invoice_date",
+     "invoice_no": "invoice_no",
+     "quantity": "quantity",
+     "stock_code": "stock_code",
+     "unit_price": "unit_price"
+    },
+    "columns": {
+     "country": [
+      "dimension",
+      "",
+      0,
+      3,
+      "",
+      [],
+      4.358921,
+      6,
+      "",
+      "",
+      "3 labels to group by"
+     ],
+     "customer_id": [
+      "identifier",
+      "",
+      0,
+      49,
+      "",
+      [],
+      0.0,
+      0,
+      "1",
+      "49",
+      "named like an ID or code"
+     ],
+     "invoice_date": [
+      "datetime",
+      "",
+      0,
+      156,
+      "",
+      [],
+      0.0,
+      0,
+      "2010-12-02T00:00:00",
+      "2011-11-29T00:00:00",
+      "dates"
+     ],
+     "invoice_no": [
+      "identifier",
+      "",
+      0,
+      200,
+      "",
+      [],
+      0.0,
+      0,
+      "1000",
+      "1199",
+      "named like an ID or code"
+     ],
+     "quantity": [
+      "measure",
+      "quantity",
+      0,
+      9,
+      "",
+      [],
+      0.0,
+      0,
+      "1",
+      "9",
+      "a quantity"
+     ],
+     "stock_code": [
+      "identifier",
+      "",
+      0,
+      40,
+      "",
+      [],
+      0.0,
+      0,
+      "100",
+      "139",
+      "named like an ID or code"
+     ],
+     "unit_price": [
+      "measure",
+      "price",
+      0,
+      369,
+      "",
+      [],
+      0.0,
+      0,
+      "np.float64(0.54)",
+      "np.float64(8.99)",
+      "a price"
+     ]
+    },
+    "date_formats": {
+     "invoice_date": "%Y-%m-%d"
+    },
+    "duplicate_keys": 0,
+    "exact_duplicates": 0,
+    "extra_rows": 0,
+    "grain": "one row per `invoice_no` × `stock_code`",
+    "hashes": {
+     "country": "1bde4628c37e7a37",
+     "customer_id": "af0f5d90e0dcb775",
+     "invoice_date": "4a5abe5a054b2290",
+     "invoice_no": "02c26d5a59b851e7",
+     "quantity": "9378e2abdcbe44b0",
+     "stock_code": "40289f3c1d4b7767",
+     "unit_price": "c4e91c9db7debdd9"
+    },
+    "key_status": "composite",
+    "placeholders": {},
+    "primary_key": [
+     "invoice_no",
+     "stock_code"
+    ],
+    "rows": 482,
+    "source": "online_retail.csv",
+    "types": {
+     "country": "text",
+     "customer_id": "integer",
+     "invoice_date": "date",
+     "invoice_no": "integer",
+     "quantity": "integer",
+     "stock_code": "integer",
+     "unit_price": "decimal"
+    },
+    "units": {},
+    "unparsed_dates": {},
+    "unparsed_numbers": {}
+   }
+  }
+ },
+ "case:double_loaded": {
+  "fanouts": [
+   [
+    "orders",
+    "freight",
+    "order_items",
+    10703.2,
+    25379.11
+   ]
+  ],
+  "relationships": [
+   [
+    "orders.customer_id → customers.customer_id",
+    "name",
+    true,
+    1.0,
+    0,
+    0,
+    9,
+    4.0,
+    5,
+    false
+   ],
+   [
+    "order_items.order_id → orders.order_id",
+    "name",
+    true,
+    0.994444,
+    3,
+    0,
+    8,
+    2.375,
+    42,
+    false
+   ],
+   [
+    "order_items.product_id → products.product_id",
+    "name",
+    true,
+    1.0,
+    0,
+    0,
+    58,
+    47.65,
+    0,
+    false
+   ]
+  ],
+  "skipped": [],
+  "tables": {
+   "customers": {
+    "ambiguous_dates": [],
+    "cleaned": {},
+    "column_map": {
+     "customer_id": "CustomerID",
+     "customer_name": "Customer Name",
+     "group": "group",
+     "region": "Region",
+     "zip": "Zip"
+    },
+    "columns": {
+     "customer_id": [
+      "identifier",
+      "",
+      0,
+      100,
+      "",
+      [],
+      0.0,
+      0,
+      "1",
+      "100",
+      "named like an ID or code"
+     ],
+     "customer_name": [
+      "attribute",
+      "",
+      0,
+      100,
+      "",
+      [],
+      10.901961,
+      12,
+      "",
+      "",
+      "100 different values: describes rows rather than grouping them"
+     ],
+     "group": [
+      "dimension",
+      "",
+      0,
+      2,
+      "",
+      [],
+      5.5,
+      6,
+      "",
+      "",
+      "2 labels to group by"
+     ],
+     "region": [
+      "dimension",
+      "",
+      0,
+      4,
+      "",
+      [],
+      4.490196,
+      5,
+      "",
+      "",
+      "4 labels to group by"
+     ],
+     "zip": [
+      "attribute",
+      "",
+      0,
+      99,
+      "",
+      [],
+      5.0,
+      5,
+      "",
+      "",
+      "contact, address or descriptive details"
+     ]
+    },
+    "date_formats": {},
+    "duplicate_keys": 2,
+    "exact_duplicates": 2,
+    "extra_rows": 2,
+    "grain": "meant to be one row per `customer_id`, but 2 value(s) appear more than once",
+    "hashes": {
+     "customer_id": "b5e97cd3c227d8c7",
+     "customer_name": "04ab98062c845193",
+     "group": "6f827338316ee02a",
+     "region": "36426d702cee1dd9",
+     "zip": "4aaae7485ee49896"
+    },
+    "key_status": "intended",
+    "placeholders": {},
+    "primary_key": [
+     "customer_id"
+    ],
+    "rows": 102,
+    "source": "customers.csv",
+    "types": {
+     "customer_id": "integer",
+     "customer_name": "text",
+     "group": "text",
+     "region": "text",
+     "zip": "text"
+    },
+    "units": {},
+    "unparsed_dates": {},
+    "unparsed_numbers": {}
+   },
+   "order_items": {
+    "ambiguous_dates": [],
+    "cleaned": {},
+    "column_map": {
+     "order_id": "OrderID",
+     "price": "Price",
+     "product_id": "ProductID",
+     "qty": "Qty"
+    },
+    "columns": {
+     "order_id": [
+      "identifier",
+      "",
+      0,
+      360,
+      "",
+      [],
+      0.0,
+      0,
+      "5002",
+      "9999",
+      "named like an ID or code"
+     ],
+     "price": [
+      "measure",
+      "price",
+      0,
+      736,
+      "",
+      [],
+      0.0,
+      0,
+      "np.float64(2.05)",
+      "np.float64(19.99)",
+      "a price"
+     ],
+     "product_id": [
+      "identifier",
+      "",
+      0,
+      20,
+      "",
+      [],
+      0.0,
+      0,
+      "1",
+      "20",
+      "named like an ID or code"
+     ],
+     "qty": [
+      "measure",
+      "quantity",
+      0,
+      5,
+      "",
+      [],
+      0.0,
+      0,
+      "1",
+      "5",
+      "a quantity"
+     ]
+    },
+    "date_formats": {},
+    "duplicate_keys": 5,
+    "exact_duplicates": 5,
+    "extra_rows": 5,
+    "grain": "meant to be one row per `order_id` × `product_id`, but 5 value(s) appear more than once",
+    "hashes": {
+     "order_id": "b718d4f4ed941c09",
+     "price": "fa4cfdd1394bd62b",
+     "product_id": "2837e50fdf2a4f68",
+     "qty": "d770b0adca83e353"
+    },
+    "key_status": "intended",
+    "placeholders": {},
+    "primary_key": [
+     "order_id",
+     "product_id"
+    ],
+    "rows": 953,
+    "source": "order_items.csv",
+    "types": {
+     "order_id": "integer",
+     "price": "decimal",
+     "product_id": "integer",
+     "qty": "integer"
+    },
+    "units": {},
+    "unparsed_dates": {},
+    "unparsed_numbers": {}
+   },
+   "orders": {
+    "ambiguous_dates": [],
+    "cleaned": {},
+    "column_map": {
+     "customer_id": "CustomerID",
+     "freight": "Freight",
+     "order": "order",
+     "order_date": "OrderDate",
+     "order_id": "OrderID",
+     "ship_date": "ShipDate"
+    },
+    "columns": {
+     "customer_id": [
+      "identifier",
+      "",
+      0,
+      95,
+      "",
+      [],
+      0.0,
+      0,
+      "1",
+      "100",
+      "named like an ID or code"
+     ],
+     "freight": [
+      "measure",
+      "charge",
+      0,
+      384,
+      "",
+      [],
+      0.0,
+      0,
+      "np.float64(5.22)",
+      "np.float64(49.86)",
+      "a charge such as freight or tax"
+     ],
+     "order": [
+      "dimension",
+      "",
+      0,
+      2,
+      "",
+      [],
+      3.99,
+      5,
+      "",
+      "",
+      "2 labels to group by"
+     ],
+     "order_date": [
+      "datetime",
+      "",
+      0,
+      285,
+      "",
+      [],
+      0.0,
+      0,
+      "2022-01-02T00:00:00",
+      "2023-06-24T00:00:00",
+      "dates"
+     ],
+     "order_id": [
+      "identifier",
+      "",
+      0,
+      400,
+      "",
+      [],
+      0.0,
+      0,
+      "5001",
+      "5400",
+      "named like an ID or code"
+     ],
+     "ship_date": [
+      "datetime",
+      "",
+      19,
+      280,
+      "",
+      [],
+      0.0,
+      0,
+      "2022-01-13T00:00:00",
+      "2023-07-05T00:00:00",
+      "dates"
+     ]
+    },
+    "date_formats": {
+     "order_date": "%m/%d/%Y",
+     "ship_date": "%m/%d/%Y"
+    },
+    "duplicate_keys": 0,
+    "exact_duplicates": 0,
+    "extra_rows": 0,
+    "grain": "one row per `order_id`",
+    "hashes": {
+     "customer_id": "43a597d2fbe6088a",
+     "freight": "da63039bbabe8252",
+     "order": "5bd324d80a214abb",
+     "order_date": "0ab1a3ea8b7d5127",
+     "order_id": "55fee7a533ebf1a3",
+     "ship_date": "be18b29ccb398099"
+    },
+    "key_status": "single",
+    "placeholders": {},
+    "primary_key": [
+     "order_id"
+    ],
+    "rows": 400,
+    "source": "orders.csv",
+    "types": {
+     "customer_id": "integer",
+     "freight": "decimal",
+     "order": "text",
+     "order_date": "date",
+     "order_id": "integer",
+     "ship_date": "date"
+    },
+    "units": {},
+    "unparsed_dates": {},
+    "unparsed_numbers": {}
+   },
+   "products": {
+    "ambiguous_dates": [],
+    "cleaned": {},
+    "column_map": {
+     "category": "Category",
+     "product": "Product",
+     "product_id": "ProductID",
+     "unit_cost": "UnitCost"
+    },
+    "columns": {
+     "category": [
+      "dimension",
+      "",
+      0,
+      3,
+      "",
+      [],
+      5.2,
+      6,
+      "",
+      "",
+      "3 labels to group by"
+     ],
+     "product": [
+      "dimension",
+      "",
+      0,
+      20,
+      "",
+      [],
+      2.55,
+      3,
+      "",
+      "",
+      "20 labels to group by"
+     ],
+     "product_id": [
+      "identifier",
+      "",
+      0,
+      20,
+      "",
+      [],
+      0.0,
+      0,
+      "1",
+      "20",
+      "named like an ID or code"
+     ],
+     "unit_cost": [
+      "measure",
+      "price",
+      0,
+      19,
+      "",
+      [],
+      0.0,
+      0,
+      "np.float64(1.13)",
+      "np.float64(8.91)",
+      "a price"
+     ]
+    },
+    "date_formats": {},
+    "duplicate_keys": 0,
+    "exact_duplicates": 0,
+    "extra_rows": 0,
+    "grain": "one row per `product_id`",
+    "hashes": {
+     "category": "f91dc8906ffc4847",
+     "product": "5ad19d99f3e86aeb",
+     "product_id": "7747a514fec0c8bb",
+     "unit_cost": "2e2362ed3d1a1e8b"
+    },
+    "key_status": "single",
+    "placeholders": {},
+    "primary_key": [
+     "product_id"
+    ],
+    "rows": 20,
+    "source": "products.csv",
+    "types": {
+     "category": "text",
+     "product": "text",
+     "product_id": "integer",
+     "unit_cost": "decimal"
+    },
+    "units": {},
+    "unparsed_dates": {},
+    "unparsed_numbers": {}
+   }
+  }
+ },
+ "case:gap_quarter": {
+  "fanouts": [],
+  "relationships": [],
+  "skipped": [],
+  "tables": {
+   "orders": {
+    "ambiguous_dates": [],
+    "cleaned": {},
+    "column_map": {
+     "amount": "amount",
+     "customer_id": "customer_id",
+     "order_date": "order_date",
+     "order_id": "order_id"
+    },
+    "columns": {
+     "amount": [
+      "measure",
+      "amount",
+      0,
+      362,
+      "",
+      [],
+      0.0,
+      0,
+      "np.float64(1.01)",
+      "np.float64(8.98)",
+      "a money amount"
+     ],
+     "customer_id": [
+      "identifier",
+      "",
+      0,
+      79,
+      "",
+      [],
+      0.0,
+      0,
+      "1",
+      "79",
+      "named like an ID or code"
+     ],
+     "order_date": [
+      "datetime",
+      "",
+      0,
+      454,
+      "",
+      [],
+      0.0,
+      0,
+      "2022-01-01T00:00:00",
+      "2023-06-30T00:00:00",
+      "dates"
+     ],
+     "order_id": [
+      "identifier",
+      "",
+      0,
+      454,
+      "",
+      [],
+      0.0,
+      0,
+      "0",
+      "453",
+      "named like an ID or code"
+     ]
+    },
+    "date_formats": {
+     "order_date": "%Y-%m-%d"
+    },
+    "duplicate_keys": 0,
+    "exact_duplicates": 0,
+    "extra_rows": 0,
+    "grain": "one row per `order_id`",
+    "hashes": {
+     "amount": "e1a948f09e2b30d1",
+     "customer_id": "4d1e9faf82226bdf",
+     "order_date": "e3f7cb207c123ad1",
+     "order_id": "b18c7add0bd6419a"
+    },
+    "key_status": "single",
+    "placeholders": {},
+    "primary_key": [
+     "order_id"
+    ],
+    "rows": 454,
+    "source": "orders.csv",
+    "types": {
+     "amount": "decimal",
+     "customer_id": "integer",
+     "order_date": "date",
+     "order_id": "integer"
+    },
+    "units": {},
+    "unparsed_dates": {},
+    "unparsed_numbers": {}
+   }
+  }
+ },
+ "case:impossible_values": {
+  "fanouts": [],
+  "relationships": [],
+  "skipped": [],
+  "tables": {
+   "orders": {
+    "ambiguous_dates": [],
+    "cleaned": {},
+    "column_map": {
+     "customer_id": "customer_id",
+     "discount": "discount",
+     "order_date": "order_date",
+     "order_id": "order_id",
+     "quantity": "quantity",
+     "unit_price": "unit_price"
+    },
+    "columns": {
+     "customer_id": [
+      "identifier",
+      "",
+      0,
+      39,
+      "",
+      [],
+      0.0,
+      0,
+      "1",
+      "39",
+      "named like an ID or code"
+     ],
+     "discount": [
+      "measure",
+      "discount",
+      0,
+      5,
+      "",
+      [],
+      0.0,
+      0,
+      "np.float64(0.0)",
+      "np.float64(1.5)",
+      "a discount"
+     ],
+     "order_date": [
+      "datetime",
+      "",
+      0,
+      240,
+      "",
+      [],
+      0.0,
+      0,
+      "2022-01-01T00:00:00",
+      "2023-12-19T00:00:00",
+      "dates"
+     ],
+     "order_id": [
+      "identifier",
+      "",
+      0,
+      240,
+      "",
+      [],
+      0.0,
+      0,
+      "1",
+      "240",
+      "named like an ID or code"
+     ],
+     "quantity": [
+      "measure",
+      "quantity",
+      0,
+      7,
+      "",
+      [],
+      0.0,
+      0,
+      "-2",
+      "4",
+      "a quantity"
+     ],
+     "unit_price": [
+      "measure",
+      "price",
+      0,
+      234,
+      "",
+      [],
+      0.0,
+      0,
+      "np.float64(-12.5)",
+      "np.float64(49.94)",
+      "a price"
+     ]
+    },
+    "date_formats": {
+     "order_date": "%Y-%m-%d"
+    },
+    "duplicate_keys": 0,
+    "exact_duplicates": 0,
+    "extra_rows": 0,
+    "grain": "one row per `order_id`",
+    "hashes": {
+     "customer_id": "b636d605d830c57b",
+     "discount": "6c06c633a82307fc",
+     "order_date": "bf00f7ca77fea173",
+     "order_id": "33a603bce33a6cfb",
+     "quantity": "e5daf1943edb1ddd",
+     "unit_price": "f87d18a1f4ec802c"
+    },
+    "key_status": "single",
+    "placeholders": {},
+    "primary_key": [
+     "order_id"
+    ],
+    "rows": 240,
+    "source": "orders.csv",
+    "types": {
+     "customer_id": "integer",
+     "discount": "decimal",
+     "order_date": "date",
+     "order_id": "integer",
+     "quantity": "integer",
+     "unit_price": "decimal"
+    },
+    "units": {},
+    "unparsed_dates": {},
+    "unparsed_numbers": {}
+   }
+  }
+ },
+ "case:list_price": {
+  "fanouts": [],
+  "relationships": [
+   [
+    "sales.product_id → products.product_id",
+    "name",
+    true,
+    1.0,
+    0,
+    0,
+    59,
+    50.0,
+    0,
+    false
+   ]
+  ],
+  "skipped": [],
+  "tables": {
+   "products": {
+    "ambiguous_dates": [],
+    "cleaned": {},
+    "column_map": {
+     "category": "category",
+     "list_price": "list_price",
+     "product_id": "product_id",
+     "product_name": "product_name"
+    },
+    "columns": {
+     "category": [
+      "dimension",
+      "",
+      0,
+      2,
+      "",
+      [],
+      1.0,
+      1,
+      "",
+      "",
+      "2 labels to group by"
+     ],
+     "list_price": [
+      "measure",
+      "price",
+      0,
+      10,
+      "",
+      [],
+      0.0,
+      0,
+      "np.float64(9.55)",
+      "np.float64(49.22)",
+      "a price"
+     ],
+     "product_id": [
+      "identifier",
+      "",
+      0,
+      10,
+      "",
+      [],
+      0.0,
+      0,
+      "1",
+      "10",
+      "named like an ID or code"
+     ],
+     "product_name": [
+      "dimension",
+      "",
+      0,
+      10,
+      "",
+      [],
+      6.1,
+      7,
+      "",
+      "",
+      "10 labels to group by"
+     ]
+    },
+    "date_formats": {},
+    "duplicate_keys": 0,
+    "exact_duplicates": 0,
+    "extra_rows": 0,
+    "grain": "one row per `product_id`",
+    "hashes": {
+     "category": "26bb1800f55ebe3c",
+     "list_price": "a7e9096ea78f4e0a",
+     "product_id": "d68dbfb354c79395",
+     "product_name": "6b22c560430df573"
+    },
+    "key_status": "single",
+    "placeholders": {},
+    "primary_key": [
+     "product_id"
+    ],
+    "rows": 10,
+    "source": "products.csv",
+    "types": {
+     "category": "text",
+     "list_price": "decimal",
+     "product_id": "integer",
+     "product_name": "text"
+    },
+    "units": {},
+    "unparsed_dates": {},
+    "unparsed_numbers": {}
+   },
+   "sales": {
+    "ambiguous_dates": [],
+    "cleaned": {},
+    "column_map": {
+     "product_id": "product_id",
+     "quantity": "quantity",
+     "sale_date": "sale_date",
+     "sale_id": "sale_id",
+     "store": "store"
+    },
+    "columns": {
+     "product_id": [
+      "identifier",
+      "",
+      0,
+      10,
+      "",
+      [],
+      0.0,
+      0,
+      "1",
+      "10",
+      "named like an ID or code"
+     ],
+     "quantity": [
+      "measure",
+      "quantity",
+      0,
+      3,
+      "",
+      [],
+      0.0,
+      0,
+      "1",
+      "3",
+      "a quantity"
+     ],
+     "sale_date": [
+      "datetime",
+      "",
+      0,
+      284,
+      "",
+      [],
+      0.0,
+      0,
+      "2022-01-01T00:00:00",
+      "2023-02-04T00:00:00",
+      "dates"
+     ],
+     "sale_id": [
+      "identifier",
+      "",
+      0,
+      500,
+      "",
+      [],
+      0.0,
+      0,
+      "0",
+      "499",
+      "named like an ID or code"
+     ],
+     "store": [
+      "dimension",
+      "",
+      0,
+      2,
+      "",
+      [],
+      5.0,
+      5,
+      "",
+      "",
+      "2 labels to group by"
+     ]
+    },
+    "date_formats": {
+     "sale_date": "%Y-%m-%d"
+    },
+    "duplicate_keys": 0,
+    "exact_duplicates": 0,
+    "extra_rows": 0,
+    "grain": "one row per `sale_id`",
+    "hashes": {
+     "product_id": "86a81dd64c7aadb7",
+     "quantity": "4375c18f39d70d00",
+     "sale_date": "cd2ff925d27f81ca",
+     "sale_id": "eeb568cad42bf5ff",
+     "store": "323292fbddf413f7"
+    },
+    "key_status": "single",
+    "placeholders": {},
+    "primary_key": [
+     "sale_id"
+    ],
+    "rows": 500,
+    "source": "sales.csv",
+    "types": {
+     "product_id": "integer",
+     "quantity": "integer",
+     "sale_date": "date",
+     "sale_id": "integer",
+     "store": "text"
+    },
+    "units": {},
+    "unparsed_dates": {},
+    "unparsed_numbers": {}
+   }
+  }
+ },
+ "case:new_wheels": {
+  "fanouts": [],
+  "relationships": [],
+  "skipped": [],
+  "tables": {
+   "orders": {
+    "ambiguous_dates": [],
+    "cleaned": {},
+    "column_map": {
+     "customer_feedback": "customer_feedback",
+     "customer_id": "customer_id",
+     "customer_state": "customer_state",
+     "discount": "discount",
+     "order_date": "order_date",
+     "order_id": "order_id",
+     "quantity": "quantity",
+     "quarter_number": "quarter_number",
+     "ship_date": "ship_date",
+     "shipper_id": "shipper_id",
+     "vehicle_maker": "vehicle_maker",
+     "vehicle_price": "vehicle_price"
+    },
+    "columns": {
+     "customer_feedback": [
+      "rating",
+      "scale",
+      0,
+      5,
+      "",
+      [
+       [
+        "Very Bad",
+        1
+       ],
+       [
+        "Bad",
+        2
+       ],
+       [
+        "Okay",
+        3
+       ],
+       [
+        "Good",
+        4
+       ],
+       [
+        "Very Good",
+        5
+       ]
+      ],
+      5.457433,
+      9,
+      "",
+      "",
+      "an ordered scale: Very Bad < Bad < Okay < Good < Very Good"
+     ],
+     "customer_id": [
+      "identifier",
+      "",
+      0,
+      535,
+      "",
+      [],
+      0.0,
+      0,
+      "1",
+      "982",
+      "named like an ID or code"
+     ],
+     "customer_state": [
+      "dimension",
+      "",
+      0,
+      49,
+      "",
+      [],
+      3.0,
+      3,
+      "",
+      "",
+      "49 labels to group by"
+     ],
+     "discount": [
+      "measure",
+      "discount",
+      0,
+      4,
+      "",
+      [],
+      0.0,
+      0,
+      "np.float64(0.0)",
+      "np.float64(0.15)",
+      "a discount"
+     ],
+     "order_date": [
+      "datetime",
+      "",
+      0,
+      321,
+      "",
+      [],
+      0.0,
+      0,
+      "2018-01-01T00:00:00",
+      "2018-12-29T00:00:00",
+      "dates"
+     ],
+     "order_id": [
+      "identifier",
+      "",
+      0,
+      787,
+      "",
+      [],
+      6.0,
+      6,
+      "",
+      "",
+      "named like an ID or code"
+     ],
+     "quantity": [
+      "measure",
+      "quantity",
+      0,
+      2,
+      "",
+      [],
+      0.0,
+      0,
+      "1",
+      "2",
+      "a quantity"
+     ],
+     "quarter_number": [
+      "date_part",
+      "",
+      0,
+      4,
+      "",
+      [],
+      0.0,
+      0,
+      "1",
+      "4",
+      "a year / quarter / month number"
+     ],
+     "ship_date": [
+      "datetime",
+      "",
+      0,
+      336,
+      "",
+      [],
+      0.0,
+      0,
+      "2018-01-25T00:00:00",
+      "2019-02-16T00:00:00",
+      "dates"
+     ],
+     "shipper_id": [
+      "identifier",
+      "",
+      0,
+      5,
+      "",
+      [],
+      0.0,
+      0,
+      "1",
+      "5",
+      "named like an ID or code"
+     ],
+     "vehicle_maker": [
+      "dimension",
+      "",
+      0,
+      5,
+      "",
+      [],
+      5.762389,
+      9,
+      "",
+      "",
+      "5 labels to group by"
+     ],
+     "vehicle_price": [
+      "measure",
+      "price",
+      0,
+      787,
+      "",
+      [],
+      0.0,
+      0,
+      "np.float64(15011.18)",
+      "np.float64(59980.47)",
+      "a price"
+     ]
+    },
+    "date_formats": {
+     "order_date": "%Y-%m-%d",
+     "ship_date": "%Y-%m-%d"
+    },
+    "duplicate_keys": 0,
+    "exact_duplicates": 0,
+    "extra_rows": 0,
+    "grain": "one row per `order_id`",
+    "hashes": {
+     "customer_feedback": "306ec5929f12deca",
+     "customer_id": "5d43bb596deedfdd",
+     "customer_state": "ed0662696d92def5",
+     "discount": "815a633fb6e81a59",
+     "order_date": "711bbbac57e56d8b",
+     "order_id": "1a5744d5139f9e6b",
+     "quantity": "d0ec53f8512b3308",
+     "quarter_number": "89c9968ee0e2a44c",
+     "ship_date": "5a5a4394a634d128",
+     "shipper_id": "2288fe1226aa7f4e",
+     "vehicle_maker": "9b32898e328ab34c",
+     "vehicle_price": "1d14b028f4fcddbb"
+    },
+    "key_status": "single",
+    "placeholders": {},
+    "primary_key": [
+     "order_id"
+    ],
+    "rows": 787,
+    "source": "orders.csv",
+    "types": {
+     "customer_feedback": "text",
+     "customer_id": "integer",
+     "customer_state": "text",
+     "discount": "decimal",
+     "order_date": "date",
+     "order_id": "text",
+     "quantity": "integer",
+     "quarter_number": "integer",
+     "ship_date": "date",
+     "shipper_id": "integer",
+     "vehicle_maker": "text",
+     "vehicle_price": "decimal"
+    },
+    "units": {},
+    "unparsed_dates": {},
+    "unparsed_numbers": {}
+   }
+  }
+ },
+ "case:northwind_double_loaded": {
+  "fanouts": [
+   [
+    "orders",
+    "freight",
+    "order_details",
+    64942.69,
+    207414.85
+   ],
+   [
+    "products",
+    "units_in_stock",
+    "order_details",
+    3119.0,
+    85857.0
+   ],
+   [
+    "products",
+    "reorder_level",
+    "order_details",
+    960.0,
+    25675.0
+   ],
+   [
+    "products",
+    "units_on_order",
+    "order_details",
+    780.0,
+    17430.0
+   ]
+  ],
+  "relationships": [
+   [
+    "order_details.order_id → orders.order_id",
+    "name",
+    true,
+    1.0,
+    0,
+    0,
+    25,
+    2.601205,
+    0,
+    false
+   ],
+   [
+    "order_details.product_id → products.product_id",
+    "name",
+    true,
+    1.0,
+    0,
+    0,
+    54,
+    28.038961,
+    0,
+    false
+   ],
+   [
+    "orders.customer_id → customers.customer_id",
+    "name",
+    true,
+    1.0,
+    0,
+    0,
+    31,
+    9.120879,
+    2,
+    false
+   ],
+   [
+    "orders.employee_id → employees.employee_id",
+    "name",
+    true,
+    1.0,
+    0,
+    0,
+    156,
+    92.222222,
+    0,
+    false
+   ],
+   [
+    "products.supplier_id → suppliers.supplier_id",
+    "name",
+    true,
+    1.0,
+    0,
+    0,
+    5,
+    2.655172,
+    0,
+    false
+   ],
+   [
+    "products.category_id → categories.category_id",
+    "name",
+    true,
+    1.0,
+    0,
+    0,
+    13,
+    9.625,
+    0,
+    false
+   ],
+   [
+    "employees.reports_to → employees.employee_id",
+    "self",
+    true,
+    1.0,
+    0,
+    1,
+    5,
+    0.888889,
+    7,
+    false
+   ],
+   [
+    "orders.ship_via → shippers.shipper_id",
+    "value",
+    false,
+    1.0,
+    0,
+    0,
+    326,
+    276.666667,
+    0,
+    false
+   ]
+  ],
+  "skipped": [],
+  "tables": {
+   "categories": {
+    "ambiguous_dates": [],
+    "cleaned": {},
+    "column_map": {
+     "category_id": "CategoryID",
+     "category_name": "CategoryName",
+     "description": "Description"
+    },
+    "columns": {
+     "category_id": [
+      "identifier",
+      "",
+      0,
+      8,
+      "",
+      [],
+      0.0,
+      0,
+      "1",
+      "8",
+      "named like an ID or code"
+     ],
+     "category_name": [
+      "dimension",
+      "",
+      0,
+      8,
+      "",
+      [],
+      10.5,
+      14,
+      "",
+      "",
+      "8 labels to group by"
+     ],
+     "description": [
+      "attribute",
+      "",
+      0,
+      8,
+      "",
+      [],
+      29.125,
+      58,
+      "",
+      "",
+      "contact, address or descriptive details"
+     ]
+    },
+    "date_formats": {},
+    "duplicate_keys": 0,
+    "exact_duplicates": 0,
+    "extra_rows": 0,
+    "grain": "one row per `category_id`",
+    "hashes": {
+     "category_id": "e7acf2932d24aea7",
+     "category_name": "e6bae695b1fbc77a",
+     "description": "4a7f260316e222bc"
+    },
+    "key_status": "single",
+    "placeholders": {},
+    "primary_key": [
+     "category_id"
+    ],
+    "rows": 8,
+    "source": "Categories.csv",
+    "types": {
+     "category_id": "integer",
+     "category_name": "text",
+     "description": "text"
+    },
+    "units": {},
+    "unparsed_dates": {},
+    "unparsed_numbers": {}
+   },
+   "customers": {
+    "ambiguous_dates": [],
+    "cleaned": {},
+    "column_map": {
+     "address": "Address",
+     "city": "City",
+     "company_name": "CompanyName",
+     "contact_name": "ContactName",
+     "contact_title": "ContactTitle",
+     "country": "Country",
+     "customer_id": "CustomerID",
+     "fax": "Fax",
+     "phone": "Phone",
+     "postal_code": "PostalCode",
+     "region": "Region"
+    },
+    "columns": {
+     "address": [
+      "attribute",
+      "",
+      0,
+      91,
+      "",
+      [],
+      18.692308,
+      46,
+      "",
+      "",
+      "contact, address or descriptive details"
+     ],
+     "city": [
+      "attribute",
+      "",
+      0,
+      69,
+      "",
+      [],
+      8.010989,
+      15,
+      "",
+      "",
+      "69 different values: describes rows rather than grouping them"
+     ],
+     "company_name": [
+      "attribute",
+      "",
+      0,
+      91,
+      "",
+      [],
+      18.901099,
+      36,
+      "",
+      "",
+      "91 different values: describes rows rather than grouping them"
+     ],
+     "contact_name": [
+      "attribute",
+      "",
+      0,
+      91,
+      "",
+      [],
+      13.934066,
+      23,
+      "",
+      "",
+      "91 different values: describes rows rather than grouping them"
+     ],
+     "contact_title": [
+      "dimension",
+      "",
+      0,
+      12,
+      "",
+      [],
+      14.956044,
+      30,
+      "",
+      "",
+      "12 labels to group by"
+     ],
+     "country": [
+      "dimension",
+      "",
+      0,
+      21,
+      "",
+      [],
+      5.78022,
+      11,
+      "",
+      "",
+      "21 labels to group by"
+     ],
+     "customer_id": [
+      "identifier",
+      "",
+      0,
+      91,
+      "",
+      [],
+      5.0,
+      5,
+      "",
+      "",
+      "named like an ID or code"
+     ],
+     "fax": [
+      "attribute",
+      "",
+      22,
+      69,
+      "",
+      [],
+      12.318841,
+      17,
+      "",
+      "",
+      "contact, address or descriptive details"
+     ],
+     "phone": [
+      "attribute",
+      "",
+      0,
+      91,
+      "",
+      [],
+      12.395604,
+      17,
+      "",
+      "",
+      "contact, address or descriptive details"
+     ],
+     "postal_code": [
+      "attribute",
+      "",
+      1,
+      86,
+      "",
+      [],
+      5.566667,
+      9,
+      "",
+      "",
+      "contact, address or descriptive details"
+     ],
+     "region": [
+      "dimension",
+      "",
+      60,
+      18,
+      "",
+      [],
+      3.258065,
+      13,
+      "",
+      "",
+      "18 labels to group by"
+     ]
+    },
+    "date_formats": {},
+    "duplicate_keys": 0,
+    "exact_duplicates": 0,
+    "extra_rows": 0,
+    "grain": "one row per `customer_id`",
+    "hashes": {
+     "address": "a89900a4996c4e5e",
+     "city": "b4f9387788244193",
+     "company_name": "1861cbf15361e354",
+     "contact_name": "9c8bb579f2a389e1",
+     "contact_title": "f8a3aa03acb98cba",
+     "country": "ef60c1a40c898ff4",
+     "customer_id": "55ec9fce38b74a9e",
+     "fax": "b9ec3804d3d4278b",
+     "phone": "6fda72990ba8d6bb",
+     "postal_code": "a435950498675d6e",
+     "region": "413f8bba9e0fe54a"
+    },
+    "key_status": "single",
+    "placeholders": {},
+    "primary_key": [
+     "customer_id"
+    ],
+    "rows": 91,
+    "source": "Customers.csv",
+    "types": {
+     "address": "text",
+     "city": "text",
+     "company_name": "text",
+     "contact_name": "text",
+     "contact_title": "text",
+     "country": "text",
+     "customer_id": "text",
+     "fax": "text",
+     "phone": "text",
+     "postal_code": "text",
+     "region": "text"
+    },
+    "units": {},
+    "unparsed_dates": {},
+    "unparsed_numbers": {}
+   },
+   "employees": {
+    "ambiguous_dates": [],
+    "cleaned": {},
+    "column_map": {
+     "address": "Address",
+     "birth_date": "BirthDate",
+     "city": "City",
+     "country": "Country",
+     "employee_id": "EmployeeID",
+     "extension": "Extension",
+     "first_name": "FirstName",
+     "hire_date": "HireDate",
+     "home_phone": "HomePhone",
+     "last_name": "LastName",
+     "notes": "Notes",
+     "photo_path": "PhotoPath",
+     "postal_code": "PostalCode",
+     "region": "Region",
+     "reports_to": "ReportsTo",
+     "title": "Title",
+     "title_of_courtesy": "TitleOfCourtesy"
+    },
+    "columns": {
+     "address": [
+      "attribute",
+      "",
+      0,
+      9,
+      "",
+      [],
+      20.777778,
+      29,
+      "",
+      "",
+      "contact, address or descriptive details"
+     ],
+     "birth_date": [
+      "datetime",
+      "",
+      0,
+      9,
+      "",
+      [],
+      0.0,
+      0,
+      "1937-09-19T00:00:00",
+      "1966-01-27T00:00:00",
+      "dates"
+     ],
+     "city": [
+      "dimension",
+      "",
+      0,
+      5,
+      "",
+      [],
+      6.555556,
+      8,
+      "",
+      "",
+      "5 labels to group by"
+     ],
+     "country": [
+      "dimension",
+      "",
+      0,
+      2,
+      "",
+      [],
+      2.555556,
+      3,
+      "",
+      "",
+      "2 labels to group by"
+     ],
+     "employee_id": [
+      "identifier",
+      "",
+      0,
+      9,
+      "",
+      [],
+      0.0,
+      0,
+      "1",
+      "9",
+      "named like an ID or code"
+     ],
+     "extension": [
+      "attribute",
+      "",
+      0,
+      9,
+      "",
+      [],
+      0.0,
+      0,
+      "428",
+      "5467",
+      "a phone, postal or other code stored as a number"
+     ],
+     "first_name": [
+      "dimension",
+      "",
+      0,
+      9,
+      "",
+      [],
+      5.777778,
+      8,
+      "",
+      "",
+      "9 labels to group by"
+     ],
+     "hire_date": [
+      "datetime",
+      "",
+      0,
+      8,
+      "",
+      [],
+      0.0,
+      0,
+      "1992-04-01T00:00:00",
+      "1994-11-15T00:00:00",
+      "dates"
+     ],
+     "home_phone": [
+      "attribute",
+      "",
+      0,
+      9,
+      "",
+      [],
+      13.555556,
+      14,
+      "",
+      "",
+      "contact, address or descriptive details"
+     ],
+     "last_name": [
+      "dimension",
+      "",
+      0,
+      9,
+      "",
+      [],
+      7.111111,
+      9,
+      "",
+      "",
+      "9 labels to group by"
+     ],
+     "notes": [
+      "text",
+      "",
+      0,
+      9,
+      "",
+      [],
+      264.777778,
+      448,
+      "",
+      "",
+      "long free text (~265 characters)"
+     ],
+     "photo_path": [
+      "attribute",
+      "",
+      0,
+      5,
+      "",
+      [],
+      36.222222,
+      38,
+      "",
+      "",
+      "contact, address or descriptive details"
+     ],
+     "postal_code": [
+      "attribute",
+      "",
+      0,
+      9,
+      "",
+      [],
+      5.888889,
+      7,
+      "",
+      "",
+      "contact, address or descriptive details"
+     ],
+     "region": [
+      "constant",
+      "",
+      4,
+      1,
+      "",
+      [],
+      2.0,
+      2,
+      "",
+      "",
+      "only one distinct value"
+     ],
+     "reports_to": [
+      "measure",
+      "other",
+      1,
+      2,
+      "",
+      [],
+      0.0,
+      0,
+      "2",
+      "5",
+      "numbers"
+     ],
+     "title": [
+      "dimension",
+      "",
+      0,
+      4,
+      "",
+      [],
+      19.777778,
+      24,
+      "",
+      "",
+      "4 labels to group by"
+     ],
+     "title_of_courtesy": [
+      "dimension",
+      "",
+      0,
+      4,
+      "",
+      [],
+      3.111111,
+      4,
+      "",
+      "",
+      "4 labels to group by"
+     ]
+    },
+    "date_formats": {
+     "birth_date": "%Y-%m-%d",
+     "hire_date": "%Y-%m-%d"
+    },
+    "duplicate_keys": 0,
+    "exact_duplicates": 0,
+    "extra_rows": 0,
+    "grain": "one row per `employee_id`",
+    "hashes": {
+     "address": "1fd162861cfce279",
+     "birth_date": "f1caa002dd27c11d",
+     "city": "bde8d20464ce42ac",
+     "country": "e011ed0efaf968b5",
+     "employee_id": "4590e824e464c790",
+     "extension": "2f44bbaed7dbfc95",
+     "first_name": "09a231d9817491de",
+     "hire_date": "ecd3ef3483284d89",
+     "home_phone": "17bef7d7fec25299",
+     "last_name": "698806b9cccc83e0",
+     "notes": "ad0eff205f7e6126",
+     "photo_path": "b0641234aa4e7f51",
+     "postal_code": "e7939fd763ed2a6a",
+     "region": "ad9ebf9a5eb964d5",
+     "reports_to": "b7eae7140e492fc4",
+     "title": "a0f6e1330211c311",
+     "title_of_courtesy": "bb63b567eec9ab83"
+    },
+    "key_status": "single",
+    "placeholders": {},
+    "primary_key": [
+     "employee_id"
+    ],
+    "rows": 9,
+    "source": "Employees.csv",
+    "types": {
+     "address": "text",
+     "birth_date": "date",
+     "city": "text",
+     "country": "text",
+     "employee_id": "integer",
+     "extension": "integer",
+     "first_name": "text",
+     "hire_date": "date",
+     "home_phone": "text",
+     "last_name": "text",
+     "notes": "text",
+     "photo_path": "text",
+     "postal_code": "text",
+     "region": "text",
+     "reports_to": "integer",
+     "title": "text",
+     "title_of_courtesy": "text"
+    },
+    "units": {},
+    "unparsed_dates": {},
+    "unparsed_numbers": {}
+   },
+   "order_details": {
+    "ambiguous_dates": [],
+    "cleaned": {},
+    "column_map": {
+     "discount": "Discount",
+     "order_id": "OrderID",
+     "product_id": "ProductID",
+     "quantity": "Quantity",
+     "unit_price": "UnitPrice"
+    },
+    "columns": {
+     "discount": [
+      "measure",
+      "discount",
+      0,
+      11,
+      "",
+      [],
+      0.0,
+      0,
+      "np.float64(0.0)",
+      "np.float64(0.25)",
+      "a discount"
+     ],
+     "order_id": [
+      "identifier",
+      "",
+      0,
+      830,
+      "",
+      [],
+      0.0,
+      0,
+      "10248",
+      "11077",
+      "named like an ID or code"
+     ],
+     "product_id": [
+      "identifier",
+      "",
+      0,
+      77,
+      "",
+      [],
+      0.0,
+      0,
+      "1",
+      "77",
+      "named like an ID or code"
+     ],
+     "quantity": [
+      "measure",
+      "quantity",
+      0,
+      55,
+      "",
+      [],
+      0.0,
+      0,
+      "1",
+      "130",
+      "a quantity"
+     ],
+     "unit_price": [
+      "measure",
+      "price",
+      0,
+      116,
+      "",
+      [],
+      0.0,
+      0,
+      "np.float64(2.0)",
+      "np.float64(263.5)",
+      "a price"
+     ]
+    },
+    "date_formats": {},
+    "duplicate_keys": 4,
+    "exact_duplicates": 4,
+    "extra_rows": 4,
+    "grain": "meant to be one row per `order_id` × `product_id`, but 4 value(s) appear more than once",
+    "hashes": {
+     "discount": "9362d123cd227e47",
+     "order_id": "9ad3581e81f63d28",
+     "product_id": "19a9a020ccef021c",
+     "quantity": "e23dca27adc95f3f",
+     "unit_price": "71445d38c4ecabab"
+    },
+    "key_status": "intended",
+    "placeholders": {},
+    "primary_key": [
+     "order_id",
+     "product_id"
+    ],
+    "rows": 2159,
+    "source": "Order Details.csv",
+    "types": {
+     "discount": "decimal",
+     "order_id": "integer",
+     "product_id": "integer",
+     "quantity": "integer",
+     "unit_price": "decimal"
+    },
+    "units": {},
+    "unparsed_dates": {},
+    "unparsed_numbers": {}
+   },
+   "orders": {
+    "ambiguous_dates": [],
+    "cleaned": {},
+    "column_map": {
+     "customer_id": "CustomerID",
+     "employee_id": "EmployeeID",
+     "freight": "Freight",
+     "order_date": "OrderDate",
+     "order_id": "OrderID",
+     "required_date": "RequiredDate",
+     "ship_address": "ShipAddress",
+     "ship_city": "ShipCity",
+     "ship_country": "ShipCountry",
+     "ship_name": "ShipName",
+     "ship_postal_code": "ShipPostalCode",
+     "ship_region": "ShipRegion",
+     "ship_via": "ShipVia",
+     "shipped_date": "ShippedDate"
+    },
+    "columns": {
+     "customer_id": [
+      "identifier",
+      "",
+      0,
+      89,
+      "",
+      [],
+      5.0,
+      5,
+      "",
+      "",
+      "named like an ID or code"
+     ],
+     "employee_id": [
+      "identifier",
+      "",
+      0,
+      9,
+      "",
+      [],
+      0.0,
+      0,
+      "1",
+      "9",
+      "named like an ID or code"
+     ],
+     "freight": [
+      "measure",
+      "charge",
+      0,
+      799,
+      "",
+      [],
+      0.0,
+      0,
+      "np.float64(0.02)",
+      "np.float64(1007.64)",
+      "a charge such as freight or tax"
+     ],
+     "order_date": [
+      "datetime",
+      "",
+      0,
+      480,
+      "",
+      [],
+      0.0,
+      0,
+      "1996-07-04T00:00:00",
+      "1998-05-06T00:00:00",
+      "dates"
+     ],
+     "order_id": [
+      "identifier",
+      "",
+      0,
+      830,
+      "",
+      [],
+      0.0,
+      0,
+      "10248",
+      "11077",
+      "named like an ID or code"
+     ],
+     "required_date": [
+      "datetime",
+      "",
+      0,
+      454,
+      "",
+      [],
+      0.0,
+      0,
+      "1996-07-24T00:00:00",
+      "1998-06-11T00:00:00",
+      "dates"
+     ],
+     "ship_address": [
+      "attribute",
+      "",
+      0,
+      89,
+      "",
+      [],
+      18.175904,
+      46,
+      "",
+      "",
+      "contact, address or descriptive details"
+     ],
+     "ship_city": [
+      "attribute",
+      "",
+      0,
+      70,
+      "",
+      [],
+      8.092771,
+      15,
+      "",
+      "",
+      "70 different values: describes rows rather than grouping them"
+     ],
+     "ship_country": [
+      "dimension",
+      "",
+      0,
+      21,
+      "",
+      [],
+      5.880723,
+      11,
+      "",
+      "",
+      "21 labels to group by"
+     ],
+     "ship_name": [
+      "attribute",
+      "",
+      0,
+      90,
+      "",
+      [],
+      17.683133,
+      34,
+      "",
+      "",
+      "90 different values: describes rows rather than grouping them"
+     ],
+     "ship_postal_code": [
+      "attribute",
+      "",
+      19,
+      84,
+      "",
+      [],
+      5.614057,
+      9,
+      "",
+      "",
+      "contact, address or descriptive details"
+     ],
+     "ship_region": [
+      "dimension",
+      "",
+      507,
+      19,
+      "",
+      [],
+      3.749226,
+      13,
+      "",
+      "",
+      "19 labels to group by"
+     ],
+     "ship_via": [
+      "measure",
+      "other",
+      0,
+      3,
+      "",
+      [],
+      0.0,
+      0,
+      "1",
+      "3",
+      "numbers"
+     ],
+     "shipped_date": [
+      "datetime",
+      "",
+      21,
+      387,
+      "",
+      [],
+      0.0,
+      0,
+      "1996-07-10T00:00:00",
+      "1998-05-06T00:00:00",
+      "dates"
+     ]
+    },
+    "date_formats": {
+     "order_date": "%Y-%m-%d",
+     "required_date": "%Y-%m-%d",
+     "shipped_date": "%Y-%m-%d"
+    },
+    "duplicate_keys": 0,
+    "exact_duplicates": 0,
+    "extra_rows": 0,
+    "grain": "one row per `order_id`",
+    "hashes": {
+     "customer_id": "ed3d1397b542bb46",
+     "employee_id": "216e7d3e2cb31263",
+     "freight": "a4854a8f50d5ab51",
+     "order_date": "9c3d28974a50a399",
+     "order_id": "0c7a3b7ebf12e41c",
+     "required_date": "137dd0107e2476cf",
+     "ship_address": "83dadfac64dea9bc",
+     "ship_city": "172b3d684dd137f1",
+     "ship_country": "2734c8964d2a6255",
+     "ship_name": "a65386356edea7a3",
+     "ship_postal_code": "ea1b21d65e152f35",
+     "ship_region": "e61edb0828905537",
+     "ship_via": "139910c5f1126a9f",
+     "shipped_date": "4033f42ce584a0c9"
+    },
+    "key_status": "single",
+    "placeholders": {},
+    "primary_key": [
+     "order_id"
+    ],
+    "rows": 830,
+    "source": "Orders.csv",
+    "types": {
+     "customer_id": "text",
+     "employee_id": "integer",
+     "freight": "decimal",
+     "order_date": "date",
+     "order_id": "integer",
+     "required_date": "date",
+     "ship_address": "text",
+     "ship_city": "text",
+     "ship_country": "text",
+     "ship_name": "text",
+     "ship_postal_code": "text",
+     "ship_region": "text",
+     "ship_via": "integer",
+     "shipped_date": "date"
+    },
+    "units": {},
+    "unparsed_dates": {},
+    "unparsed_numbers": {}
+   },
+   "products": {
+    "ambiguous_dates": [],
+    "cleaned": {},
+    "column_map": {
+     "category_id": "CategoryID",
+     "discontinued": "Discontinued",
+     "product_id": "ProductID",
+     "product_name": "ProductName",
+     "quantity_per_unit": "QuantityPerUnit",
+     "reorder_level": "ReorderLevel",
+     "supplier_id": "SupplierID",
+     "unit_price": "UnitPrice",
+     "units_in_stock": "UnitsInStock",
+     "units_on_order": "UnitsOnOrder"
+    },
+    "columns": {
+     "category_id": [
+      "identifier",
+      "",
+      0,
+      8,
+      "",
+      [],
+      0.0,
+      0,
+      "1",
+      "8",
+      "named like an ID or code"
+     ],
+     "discontinued": [
+      "dimension",
+      "",
+      0,
+      2,
+      "",
+      [],
+      0.0,
+      0,
+      "0",
+      "1",
+      "0 / 1 flag"
+     ],
+     "product_id": [
+      "identifier",
+      "",
+      0,
+      77,
+      "",
+      [],
+      0.0,
+      0,
+      "1",
+      "77",
+      "named like an ID or code"
+     ],
+     "product_name": [
+      "attribute",
+      "",
+      0,
+      77,
+      "",
+      [],
+      16.376623,
+      32,
+      "",
+      "",
+      "77 different values: describes rows rather than grouping them"
+     ],
+     "quantity_per_unit": [
+      "attribute",
+      "",
+      0,
+      70,
+      "",
+      [],
+      14.675325,
+      20,
+      "",
+      "",
+      "70 different values: describes rows rather than grouping them"
+     ],
+     "reorder_level": [
+      "measure",
+      "other",
+      0,
+      7,
+      "",
+      [],
+      0.0,
+      0,
+      "0",
+      "30",
+      "numbers"
+     ],
+     "supplier_id": [
+      "identifier",
+      "",
+      0,
+      29,
+      "",
+      [],
+      0.0,
+      0,
+      "1",
+      "29",
+      "named like an ID or code"
+     ],
+     "unit_price": [
+      "measure",
+      "price",
+      0,
+      62,
+      "",
+      [],
+      0.0,
+      0,
+      "np.float64(2.5)",
+      "np.float64(263.5)",
+      "a price"
+     ],
+     "units_in_stock": [
+      "measure",
+      "other",
+      0,
+      51,
+      "",
+      [],
+      0.0,
+      0,
+      "0",
+      "125",
+      "numbers"
+     ],
+     "units_on_order": [
+      "measure",
+      "other",
+      0,
+      10,
+      "",
+      [],
+      0.0,
+      0,
+      "0",
+      "100",
+      "numbers"
+     ]
+    },
+    "date_formats": {},
+    "duplicate_keys": 0,
+    "exact_duplicates": 0,
+    "extra_rows": 0,
+    "grain": "one row per `product_id`",
+    "hashes": {
+     "category_id": "bee0956b4767ce55",
+     "discontinued": "db720aed814193d9",
+     "product_id": "5e08c6f38a0027a9",
+     "product_name": "70e56cc9d6510315",
+     "quantity_per_unit": "5aab8b1277efbbbc",
+     "reorder_level": "cad61ee93eed9e54",
+     "supplier_id": "68a5bcfea8b117cf",
+     "unit_price": "aecd5a3ef4817148",
+     "units_in_stock": "56230b59ed0b2498",
+     "units_on_order": "f89ae3de123941c3"
+    },
+    "key_status": "single",
+    "placeholders": {},
+    "primary_key": [
+     "product_id"
+    ],
+    "rows": 77,
+    "source": "Products.csv",
+    "types": {
+     "category_id": "integer",
+     "discontinued": "integer",
+     "product_id": "integer",
+     "product_name": "text",
+     "quantity_per_unit": "text",
+     "reorder_level": "integer",
+     "supplier_id": "integer",
+     "unit_price": "decimal",
+     "units_in_stock": "integer",
+     "units_on_order": "integer"
+    },
+    "units": {},
+    "unparsed_dates": {},
+    "unparsed_numbers": {}
+   },
+   "shippers": {
+    "ambiguous_dates": [],
+    "cleaned": {},
+    "column_map": {
+     "company_name": "CompanyName",
+     "phone": "Phone",
+     "shipper_id": "ShipperID"
+    },
+    "columns": {
+     "company_name": [
+      "dimension",
+      "",
+      0,
+      3,
+      "",
+      [],
+      14.666667,
+      16,
+      "",
+      "",
+      "3 labels to group by"
+     ],
+     "phone": [
+      "attribute",
+      "",
+      0,
+      3,
+      "",
+      [],
+      14.0,
+      14,
+      "",
+      "",
+      "contact, address or descriptive details"
+     ],
+     "shipper_id": [
+      "identifier",
+      "",
+      0,
+      3,
+      "",
+      [],
+      0.0,
+      0,
+      "1",
+      "3",
+      "named like an ID or code"
+     ]
+    },
+    "date_formats": {},
+    "duplicate_keys": 0,
+    "exact_duplicates": 0,
+    "extra_rows": 0,
+    "grain": "one row per `shipper_id`",
+    "hashes": {
+     "company_name": "41c514be10285b4f",
+     "phone": "881c7effe4ad3814",
+     "shipper_id": "ad53e8806d17c82d"
+    },
+    "key_status": "single",
+    "placeholders": {},
+    "primary_key": [
+     "shipper_id"
+    ],
+    "rows": 3,
+    "source": "Shippers.csv",
+    "types": {
+     "company_name": "text",
+     "phone": "text",
+     "shipper_id": "integer"
+    },
+    "units": {},
+    "unparsed_dates": {},
+    "unparsed_numbers": {}
+   },
+   "suppliers": {
+    "ambiguous_dates": [],
+    "cleaned": {},
+    "column_map": {
+     "address": "Address",
+     "city": "City",
+     "company_name": "CompanyName",
+     "contact_name": "ContactName",
+     "contact_title": "ContactTitle",
+     "country": "Country",
+     "fax": "Fax",
+     "home_page": "HomePage",
+     "phone": "Phone",
+     "postal_code": "PostalCode",
+     "region": "Region",
+     "supplier_id": "SupplierID"
+    },
+    "columns": {
+     "address": [
+      "attribute",
+      "",
+      0,
+      29,
+      "",
+      [],
+      20.413793,
+      45,
+      "",
+      "",
+      "contact, address or descriptive details"
+     ],
+     "city": [
+      "dimension",
+      "",
+      0,
+      29,
+      "",
+      [],
+      7.655172,
+      13,
+      "",
+      "",
+      "29 labels to group by"
+     ],
+     "company_name": [
+      "dimension",
+      "",
+      0,
+      29,
+      "",
+      [],
+      19.206897,
+      38,
+      "",
+      "",
+      "29 labels to group by"
+     ],
+     "contact_name": [
+      "dimension",
+      "",
+      0,
+      29,
+      "",
+      [],
+      13.275862,
+      26,
+      "",
+      "",
+      "29 labels to group by"
+     ],
+     "contact_title": [
+      "dimension",
+      "",
+      0,
+      15,
+      "",
+      [],
+      18.034483,
+      28,
+      "",
+      "",
+      "15 labels to group by"
+     ],
+     "country": [
+      "dimension",
+      "",
+      0,
+      16,
+      "",
+      [],
+      5.793103,
+      11,
+      "",
+      "",
+      "16 labels to group by"
+     ],
+     "fax": [
+      "attribute",
+      "",
+      16,
+      13,
+      "",
+      [],
+      12.615385,
+      15,
+      "",
+      "",
+      "contact, address or descriptive details"
+     ],
+     "home_page": [
+      "text",
+      "",
+      24,
+      5,
+      "",
+      [],
+      59.8,
+      94,
+      "",
+      "",
+      "long free text (~60 characters)"
+     ],
+     "phone": [
+      "attribute",
+      "",
+      0,
+      29,
+      "",
+      [],
+      12.62069,
+      15,
+      "",
+      "",
+      "contact, address or descriptive details"
+     ],
+     "postal_code": [
+      "attribute",
+      "",
+      0,
+      29,
+      "",
+      [],
+      5.206897,
+      8,
+      "",
+      "",
+      "contact, address or descriptive details"
+     ],
+     "region": [
+      "dimension",
+      "",
+      20,
+      8,
+      "",
+      [],
+      4.333333,
+      8,
+      "",
+      "",
+      "8 labels to group by"
+     ],
+     "supplier_id": [
+      "identifier",
+      "",
+      0,
+      29,
+      "",
+      [],
+      0.0,
+      0,
+      "1",
+      "29",
+      "named like an ID or code"
+     ]
+    },
+    "date_formats": {},
+    "duplicate_keys": 0,
+    "exact_duplicates": 0,
+    "extra_rows": 0,
+    "grain": "one row per `supplier_id`",
+    "hashes": {
+     "address": "2c3925baf82994f0",
+     "city": "fd7b69a71e041a87",
+     "company_name": "16d16fefa7f8116d",
+     "contact_name": "fa61b1487459202c",
+     "contact_title": "8841fd26f5fc79f4",
+     "country": "b317009d19e4a02d",
+     "fax": "b275da441cd647be",
+     "home_page": "a55bd8800d1df736",
+     "phone": "1bc380c37d2bec6c",
+     "postal_code": "7ec6e7aa72c705d9",
+     "region": "3d06d5b56694cc34",
+     "supplier_id": "d1e4d4bf01dc78ce"
+    },
+    "key_status": "single",
+    "placeholders": {},
+    "primary_key": [
+     "supplier_id"
+    ],
+    "rows": 29,
+    "source": "Suppliers.csv",
+    "types": {
+     "address": "text",
+     "city": "text",
+     "company_name": "text",
+     "contact_name": "text",
+     "contact_title": "text",
+     "country": "text",
+     "fax": "text",
+     "home_page": "text",
+     "phone": "text",
+     "postal_code": "text",
+     "region": "text",
+     "supplier_id": "integer"
+    },
+    "units": {},
+    "unparsed_dates": {},
+    "unparsed_numbers": {}
+   }
+  }
+ },
+ "case:shop": {
+  "fanouts": [
+   [
+    "orders",
+    "freight",
+    "order_items",
+    10703.2,
+    25214.54
+   ]
+  ],
+  "relationships": [
+   [
+    "orders.customer_id → customers.customer_id",
+    "name",
+    true,
+    1.0,
+    0,
+    0,
+    9,
+    4.0,
+    5,
+    false
+   ],
+   [
+    "order_items.order_id → orders.order_id",
+    "name",
+    true,
+    0.994444,
+    3,
+    0,
+    8,
+    2.3625,
+    42,
+    false
+   ],
+   [
+    "order_items.product_id → products.product_id",
+    "name",
+    true,
+    1.0,
+    0,
+    0,
+    58,
+    47.4,
+    0,
+    false
+   ]
+  ],
+  "skipped": [],
+  "tables": {
+   "customers": {
+    "ambiguous_dates": [],
+    "cleaned": {},
+    "column_map": {
+     "customer_id": "CustomerID",
+     "customer_name": "Customer Name",
+     "group": "group",
+     "region": "Region",
+     "zip": "Zip"
+    },
+    "columns": {
+     "customer_id": [
+      "identifier",
+      "",
+      0,
+      100,
+      "",
+      [],
+      0.0,
+      0,
+      "1",
+      "100",
+      "named like an ID or code"
+     ],
+     "customer_name": [
+      "attribute",
+      "",
+      0,
+      100,
+      "",
+      [],
+      10.901961,
+      12,
+      "",
+      "",
+      "100 different values: describes rows rather than grouping them"
+     ],
+     "group": [
+      "dimension",
+      "",
+      0,
+      2,
+      "",
+      [],
+      5.5,
+      6,
+      "",
+      "",
+      "2 labels to group by"
+     ],
+     "region": [
+      "dimension",
+      "",
+      0,
+      4,
+      "",
+      [],
+      4.490196,
+      5,
+      "",
+      "",
+      "4 labels to group by"
+     ],
+     "zip": [
+      "attribute",
+      "",
+      0,
+      99,
+      "",
+      [],
+      5.0,
+      5,
+      "",
+      "",
+      "contact, address or descriptive details"
+     ]
+    },
+    "date_formats": {},
+    "duplicate_keys": 2,
+    "exact_duplicates": 2,
+    "extra_rows": 2,
+    "grain": "meant to be one row per `customer_id`, but 2 value(s) appear more than once",
+    "hashes": {
+     "customer_id": "b5e97cd3c227d8c7",
+     "customer_name": "04ab98062c845193",
+     "group": "6f827338316ee02a",
+     "region": "36426d702cee1dd9",
+     "zip": "4aaae7485ee49896"
+    },
+    "key_status": "intended",
+    "placeholders": {},
+    "primary_key": [
+     "customer_id"
+    ],
+    "rows": 102,
+    "source": "customers.csv",
+    "types": {
+     "customer_id": "integer",
+     "customer_name": "text",
+     "group": "text",
+     "region": "text",
+     "zip": "text"
+    },
+    "units": {},
+    "unparsed_dates": {},
+    "unparsed_numbers": {}
+   },
+   "order_items": {
+    "ambiguous_dates": [],
+    "cleaned": {},
+    "column_map": {
+     "order_id": "OrderID",
+     "price": "Price",
+     "product_id": "ProductID",
+     "qty": "Qty"
+    },
+    "columns": {
+     "order_id": [
+      "identifier",
+      "",
+      0,
+      360,
+      "",
+      [],
+      0.0,
+      0,
+      "5002",
+      "9999",
+      "named like an ID or code"
+     ],
+     "price": [
+      "measure",
+      "price",
+      0,
+      736,
+      "",
+      [],
+      0.0,
+      0,
+      "np.float64(2.05)",
+      "np.float64(19.99)",
+      "a price"
+     ],
+     "product_id": [
+      "identifier",
+      "",
+      0,
+      20,
+      "",
+      [],
+      0.0,
+      0,
+      "1",
+      "20",
+      "named like an ID or code"
+     ],
+     "qty": [
+      "measure",
+      "quantity",
+      0,
+      5,
+      "",
+      [],
+      0.0,
+      0,
+      "1",
+      "5",
+      "a quantity"
+     ]
+    },
+    "date_formats": {},
+    "duplicate_keys": 0,
+    "exact_duplicates": 0,
+    "extra_rows": 0,
+    "grain": "one row per `order_id` × `product_id`",
+    "hashes": {
+     "order_id": "24b968a98a72f4e2",
+     "price": "1c5b8bc17b39c2ea",
+     "product_id": "66a410e5a40671f8",
+     "qty": "665efe104c95440d"
+    },
+    "key_status": "composite",
+    "placeholders": {},
+    "primary_key": [
+     "order_id",
+     "product_id"
+    ],
+    "rows": 948,
+    "source": "order_items.csv",
+    "types": {
+     "order_id": "integer",
+     "price": "decimal",
+     "product_id": "integer",
+     "qty": "integer"
+    },
+    "units": {},
+    "unparsed_dates": {},
+    "unparsed_numbers": {}
+   },
+   "orders": {
+    "ambiguous_dates": [],
+    "cleaned": {},
+    "column_map": {
+     "customer_id": "CustomerID",
+     "freight": "Freight",
+     "order": "order",
+     "order_date": "OrderDate",
+     "order_id": "OrderID",
+     "ship_date": "ShipDate"
+    },
+    "columns": {
+     "customer_id": [
+      "identifier",
+      "",
+      0,
+      95,
+      "",
+      [],
+      0.0,
+      0,
+      "1",
+      "100",
+      "named like an ID or code"
+     ],
+     "freight": [
+      "measure",
+      "charge",
+      0,
+      384,
+      "",
+      [],
+      0.0,
+      0,
+      "np.float64(5.22)",
+      "np.float64(49.86)",
+      "a charge such as freight or tax"
+     ],
+     "order": [
+      "dimension",
+      "",
+      0,
+      2,
+      "",
+      [],
+      3.99,
+      5,
+      "",
+      "",
+      "2 labels to group by"
+     ],
+     "order_date": [
+      "datetime",
+      "",
+      0,
+      285,
+      "",
+      [],
+      0.0,
+      0,
+      "2022-01-02T00:00:00",
+      "2023-06-24T00:00:00",
+      "dates"
+     ],
+     "order_id": [
+      "identifier",
+      "",
+      0,
+      400,
+      "",
+      [],
+      0.0,
+      0,
+      "5001",
+      "5400",
+      "named like an ID or code"
+     ],
+     "ship_date": [
+      "datetime",
+      "",
+      19,
+      280,
+      "",
+      [],
+      0.0,
+      0,
+      "2022-01-13T00:00:00",
+      "2023-07-05T00:00:00",
+      "dates"
+     ]
+    },
+    "date_formats": {
+     "order_date": "%m/%d/%Y",
+     "ship_date": "%m/%d/%Y"
+    },
+    "duplicate_keys": 0,
+    "exact_duplicates": 0,
+    "extra_rows": 0,
+    "grain": "one row per `order_id`",
+    "hashes": {
+     "customer_id": "43a597d2fbe6088a",
+     "freight": "da63039bbabe8252",
+     "order": "5bd324d80a214abb",
+     "order_date": "0ab1a3ea8b7d5127",
+     "order_id": "55fee7a533ebf1a3",
+     "ship_date": "be18b29ccb398099"
+    },
+    "key_status": "single",
+    "placeholders": {},
+    "primary_key": [
+     "order_id"
+    ],
+    "rows": 400,
+    "source": "orders.csv",
+    "types": {
+     "customer_id": "integer",
+     "freight": "decimal",
+     "order": "text",
+     "order_date": "date",
+     "order_id": "integer",
+     "ship_date": "date"
+    },
+    "units": {},
+    "unparsed_dates": {},
+    "unparsed_numbers": {}
+   },
+   "products": {
+    "ambiguous_dates": [],
+    "cleaned": {},
+    "column_map": {
+     "category": "Category",
+     "product": "Product",
+     "product_id": "ProductID",
+     "unit_cost": "UnitCost"
+    },
+    "columns": {
+     "category": [
+      "dimension",
+      "",
+      0,
+      3,
+      "",
+      [],
+      5.2,
+      6,
+      "",
+      "",
+      "3 labels to group by"
+     ],
+     "product": [
+      "dimension",
+      "",
+      0,
+      20,
+      "",
+      [],
+      2.55,
+      3,
+      "",
+      "",
+      "20 labels to group by"
+     ],
+     "product_id": [
+      "identifier",
+      "",
+      0,
+      20,
+      "",
+      [],
+      0.0,
+      0,
+      "1",
+      "20",
+      "named like an ID or code"
+     ],
+     "unit_cost": [
+      "measure",
+      "price",
+      0,
+      19,
+      "",
+      [],
+      0.0,
+      0,
+      "np.float64(1.13)",
+      "np.float64(8.91)",
+      "a price"
+     ]
+    },
+    "date_formats": {},
+    "duplicate_keys": 0,
+    "exact_duplicates": 0,
+    "extra_rows": 0,
+    "grain": "one row per `product_id`",
+    "hashes": {
+     "category": "f91dc8906ffc4847",
+     "product": "5ad19d99f3e86aeb",
+     "product_id": "7747a514fec0c8bb",
+     "unit_cost": "2e2362ed3d1a1e8b"
+    },
+    "key_status": "single",
+    "placeholders": {},
+    "primary_key": [
+     "product_id"
+    ],
+    "rows": 20,
+    "source": "products.csv",
+    "types": {
+     "category": "text",
+     "product": "text",
+     "product_id": "integer",
+     "unit_cost": "decimal"
+    },
+    "units": {},
+    "unparsed_dates": {},
+    "unparsed_numbers": {}
+   }
+  }
+ },
+ "case:signed_amounts": {
+  "fanouts": [],
+  "relationships": [],
+  "skipped": [],
+  "tables": {
+   "orders": {
+    "ambiguous_dates": [],
+    "cleaned": {
+     "amount": "'$401.51' → 401.51"
+    },
+    "column_map": {
+     "amount": "amount",
+     "amount_currency": "amount (currency)",
+     "customer_id": "customer_id",
+     "is_test": "is_test",
+     "order_date": "order_date",
+     "order_id": "order_id",
+     "order_status": "order_status"
+    },
+    "columns": {
+     "amount": [
+      "measure",
+      "amount",
+      0,
+      299,
+      "mixed",
+      [],
+      0.0,
+      0,
+      "np.float64(5.4)",
+      "np.float64(499.74)",
+      "a money amount"
+     ],
+     "amount_currency": [
+      "dimension",
+      "",
+      0,
+      2,
+      "",
+      [],
+      1.0,
+      1,
+      "",
+      "",
+      "2 labels to group by"
+     ],
+     "customer_id": [
+      "identifier",
+      "",
+      0,
+      49,
+      "",
+      [],
+      0.0,
+      0,
+      "1",
+      "49",
+      "named like an ID or code"
+     ],
+     "is_test": [
+      "dimension",
+      "",
+      0,
+      2,
+      "",
+      [],
+      0.0,
+      0,
+      "",
+      "",
+      "true / false"
+     ],
+     "order_date": [
+      "datetime",
+      "",
+      0,
+      300,
+      "",
+      [],
+      0.0,
+      0,
+      "2022-01-01T00:00:00",
+      "2023-08-22T00:00:00",
+      "dates"
+     ],
+     "order_id": [
+      "identifier",
+      "",
+      0,
+      300,
+      "",
+      [],
+      0.0,
+      0,
+      "1",
+      "300",
+      "named like an ID or code"
+     ],
+     "order_status": [
+      "dimension",
+      "",
+      0,
+      3,
+      "",
+      [],
+      8.933333,
+      10,
+      "",
+      "",
+      "3 labels to group by"
+     ]
+    },
+    "date_formats": {
+     "order_date": "%Y-%m-%d"
+    },
+    "duplicate_keys": 0,
+    "exact_duplicates": 0,
+    "extra_rows": 0,
+    "grain": "one row per `order_id`",
+    "hashes": {
+     "amount": "a44f8c1196ac1bac",
+     "amount_currency": "5542c317b8f5d34e",
+     "customer_id": "11e349f2ca8fafb1",
+     "is_test": "4509866272e44fea",
+     "order_date": "bbf7c91268cfb908",
+     "order_id": "4925363b619a1d78",
+     "order_status": "ae66caf5fe96bdb7"
+    },
+    "key_status": "single",
+    "placeholders": {},
+    "primary_key": [
+     "order_id"
+    ],
+    "rows": 300,
+    "source": "orders.csv",
+    "types": {
+     "amount": "decimal",
+     "amount_currency": "text",
+     "customer_id": "integer",
+     "is_test": "boolean",
+     "order_date": "date",
+     "order_id": "integer",
+     "order_status": "text"
+    },
+    "units": {
+     "amount": "mixed"
+    },
+    "unparsed_dates": {},
+    "unparsed_numbers": {}
+   }
+  }
+ },
+ "case:ten_weeks": {
+  "fanouts": [],
+  "relationships": [],
+  "skipped": [],
+  "tables": {
+   "orders": {
+    "ambiguous_dates": [],
+    "cleaned": {},
+    "column_map": {
+     "amount": "amount",
+     "customer_id": "customer_id",
+     "order_date": "order_date",
+     "order_id": "order_id",
+     "region": "region",
+     "ship_date": "ship_date"
+    },
+    "columns": {
+     "amount": [
+      "measure",
+      "amount",
+      0,
+      682,
+      "",
+      [],
+      0.0,
+      0,
+      "np.float64(1.99)",
+      "np.float64(420.3)",
+      "a money amount"
+     ],
+     "customer_id": [
+      "identifier",
+      "",
+      0,
+      119,
+      "",
+      [],
+      0.0,
+      0,
+      "1",
+      "119",
+      "named like an ID or code"
+     ],
+     "order_date": [
+      "datetime",
+      "",
+      0,
+      68,
+      "",
+      [],
+      0.0,
+      0,
+      "2022-01-05T00:00:00",
+      "2022-03-13T00:00:00",
+      "dates"
+     ],
+     "order_id": [
+      "identifier",
+      "",
+      0,
+      700,
+      "",
+      [],
+      0.0,
+      0,
+      "1",
+      "700",
+      "named like an ID or code"
+     ],
+     "region": [
+      "dimension",
+      "",
+      0,
+      3,
+      "",
+      [],
+      4.68,
+      5,
+      "",
+      "",
+      "3 labels to group by"
+     ],
+     "ship_date": [
+      "datetime",
+      "",
+      0,
+      72,
+      "",
+      [],
+      0.0,
+      0,
+      "2022-01-06T00:00:00",
+      "2022-03-18T00:00:00",
+      "dates"
+     ]
+    },
+    "date_formats": {
+     "order_date": "%Y-%m-%d",
+     "ship_date": "%Y-%m-%d"
+    },
+    "duplicate_keys": 0,
+    "exact_duplicates": 0,
+    "extra_rows": 0,
+    "grain": "one row per `order_id`",
+    "hashes": {
+     "amount": "d32300421344f199",
+     "customer_id": "90195f71c5dc9cca",
+     "order_date": "e9775ced88685757",
+     "order_id": "d937c8307bc68091",
+     "region": "0b760d098c5ce213",
+     "ship_date": "7d75c44cd8000d0c"
+    },
+    "key_status": "single",
+    "placeholders": {},
+    "primary_key": [
+     "order_id"
+    ],
+    "rows": 700,
+    "source": "orders.csv",
+    "types": {
+     "amount": "decimal",
+     "customer_id": "integer",
+     "order_date": "date",
+     "order_id": "integer",
+     "region": "text",
+     "ship_date": "date"
+    },
+    "units": {},
+    "unparsed_dates": {},
+    "unparsed_numbers": {}
+   }
+  }
+ },
+ "case:tickets_count_only": {
+  "fanouts": [],
+  "relationships": [],
+  "skipped": [],
+  "tables": {
+   "tickets": {
+    "ambiguous_dates": [],
+    "cleaned": {},
+    "column_map": {
+     "customer_id": "customer_id",
+     "opened_at": "opened_at",
+     "status": "status",
+     "ticket_id": "ticket_id"
+    },
+    "columns": {
+     "customer_id": [
+      "identifier",
+      "",
+      0,
+      59,
+      "",
+      [],
+      0.0,
+      0,
+      "1",
+      "59",
+      "named like an ID or code"
+     ],
+     "opened_at": [
+      "datetime",
+      "",
+      0,
+      400,
+      "",
+      [],
+      0.0,
+      0,
+      "2022-01-01T00:00:00",
+      "2023-02-04T00:00:00",
+      "dates"
+     ],
+     "status": [
+      "dimension",
+      "",
+      0,
+      2,
+      "",
+      [],
+      4.98,
+      6,
+      "",
+      "",
+      "2 labels to group by"
+     ],
+     "ticket_id": [
+      "identifier",
+      "",
+      0,
+      400,
+      "",
+      [],
+      0.0,
+      0,
+      "0",
+      "399",
+      "named like an ID or code"
+     ]
+    },
+    "date_formats": {
+     "opened_at": "%Y-%m-%d"
+    },
+    "duplicate_keys": 0,
+    "exact_duplicates": 0,
+    "extra_rows": 0,
+    "grain": "one row per `ticket_id`",
+    "hashes": {
+     "customer_id": "20b9be417b8ce3fd",
+     "opened_at": "0fbc698619831e41",
+     "status": "591df04272eb0d2a",
+     "ticket_id": "e8e2bb13995dfcf7"
+    },
+    "key_status": "single",
+    "placeholders": {},
+    "primary_key": [
+     "ticket_id"
+    ],
+    "rows": 400,
+    "source": "tickets.csv",
+    "types": {
+     "customer_id": "integer",
+     "opened_at": "date",
+     "status": "text",
+     "ticket_id": "integer"
+    },
+    "units": {},
+    "unparsed_dates": {},
+    "unparsed_numbers": {}
+   }
+  }
+ },
+ "case:timestamps": {
+  "fanouts": [],
+  "relationships": [],
+  "skipped": [],
+  "tables": {
+   "deliveries": {
+    "ambiguous_dates": [],
+    "cleaned": {},
+    "column_map": {
+     "amount": "amount",
+     "channel": "channel",
+     "created_at": "created_at",
+     "customer_id": "customer_id",
+     "delivered_at": "delivered_at",
+     "order_id": "order_id",
+     "rating": "rating"
+    },
+    "columns": {
+     "amount": [
+      "measure",
+      "amount",
+      0,
+      298,
+      "",
+      [],
+      0.0,
+      0,
+      "np.float64(5.74)",
+      "np.float64(499.56)",
+      "a money amount"
+     ],
+     "channel": [
+      "dimension",
+      "",
+      0,
+      2,
+      "",
+      [],
+      3.0,
+      3,
+      "",
+      "",
+      "2 labels to group by"
+     ],
+     "created_at": [
+      "datetime",
+      "",
+      0,
+      298,
+      "",
+      [],
+      0.0,
+      0,
+      "2021-01-01T21:00:00",
+      "2022-08-09T08:00:00",
+      "date and time"
+     ],
+     "customer_id": [
+      "identifier",
+      "",
+      0,
+      39,
+      "",
+      [],
+      0.0,
+      0,
+      "1",
+      "39",
+      "named like an ID or code"
+     ],
+     "delivered_at": [
+      "datetime",
+      "",
+      0,
+      297,
+      "",
+      [],
+      0.0,
+      0,
+      "2021-01-02T17:00:00",
+      "2022-08-14T23:00:00",
+      "date and time"
+     ],
+     "order_id": [
+      "identifier",
+      "",
+      0,
+      300,
+      "",
+      [],
+      0.0,
+      0,
+      "0",
+      "299",
+      "named like an ID or code"
+     ],
+     "rating": [
+      "rating",
+      "1-5",
+      0,
+      5,
+      "",
+      [],
+      0.0,
+      0,
+      "1",
+      "5",
+      "a score from 1 to 5"
+     ]
+    },
+    "date_formats": {
+     "created_at": "%Y-%m-%d %H:%M:%S",
+     "delivered_at": "%Y-%m-%d %H:%M:%S"
+    },
+    "duplicate_keys": 0,
+    "exact_duplicates": 0,
+    "extra_rows": 0,
+    "grain": "one row per `order_id`",
+    "hashes": {
+     "amount": "a31015671b3f0254",
+     "channel": "8e212e215094bfc4",
+     "created_at": "835dc640c9d0f048",
+     "customer_id": "507ac38e66d7546c",
+     "delivered_at": "f22b61417f1f013b",
+     "order_id": "5ee40227a3ca6da1",
+     "rating": "3703021196fb5ed6"
+    },
+    "key_status": "single",
+    "placeholders": {},
+    "primary_key": [
+     "order_id"
+    ],
+    "rows": 300,
+    "source": "deliveries.csv",
+    "types": {
+     "amount": "decimal",
+     "channel": "text",
+     "created_at": "timestamp",
+     "customer_id": "integer",
+     "delivered_at": "timestamp",
+     "order_id": "integer",
+     "rating": "integer"
+    },
+    "units": {},
+    "unparsed_dates": {},
+    "unparsed_numbers": {}
+   }
+  }
+ },
+ "northwind": {
+  "fanouts": [
+   [
+    "orders",
+    "freight",
+    "order_details",
+    64942.69,
+    207306.1
+   ],
+   [
+    "products",
+    "units_in_stock",
+    "order_details",
+    3119.0,
+    85760.0
+   ],
+   [
+    "products",
+    "reorder_level",
+    "order_details",
+    960.0,
+    25645.0
+   ],
+   [
+    "products",
+    "units_on_order",
+    "order_details",
+    780.0,
+    17400.0
+   ]
+  ],
+  "relationships": [
+   [
+    "order_details.order_id → orders.order_id",
+    "name",
+    true,
+    1.0,
+    0,
+    0,
+    25,
+    2.596386,
+    0,
+    false
+   ],
+   [
+    "order_details.product_id → products.product_id",
+    "name",
+    true,
+    1.0,
+    0,
+    0,
+    54,
+    27.987013,
+    0,
+    false
+   ],
+   [
+    "orders.customer_id → customers.customer_id",
+    "name",
+    true,
+    1.0,
+    0,
+    0,
+    31,
+    9.120879,
+    2,
+    false
+   ],
+   [
+    "orders.employee_id → employees.employee_id",
+    "name",
+    true,
+    1.0,
+    0,
+    0,
+    156,
+    92.222222,
+    0,
+    false
+   ],
+   [
+    "products.supplier_id → suppliers.supplier_id",
+    "name",
+    true,
+    1.0,
+    0,
+    0,
+    5,
+    2.655172,
+    0,
+    false
+   ],
+   [
+    "products.category_id → categories.category_id",
+    "name",
+    true,
+    1.0,
+    0,
+    0,
+    13,
+    9.625,
+    0,
+    false
+   ],
+   [
+    "employees.reports_to → employees.employee_id",
+    "self",
+    true,
+    1.0,
+    0,
+    1,
+    5,
+    0.888889,
+    7,
+    false
+   ],
+   [
+    "orders.ship_via → shippers.shipper_id",
+    "value",
+    false,
+    1.0,
+    0,
+    0,
+    326,
+    276.666667,
+    0,
+    false
+   ]
+  ],
+  "skipped": [],
+  "tables": {
+   "categories": {
+    "ambiguous_dates": [],
+    "cleaned": {},
+    "column_map": {
+     "category_id": "CategoryID",
+     "category_name": "CategoryName",
+     "description": "Description"
+    },
+    "columns": {
+     "category_id": [
+      "identifier",
+      "",
+      0,
+      8,
+      "",
+      [],
+      0.0,
+      0,
+      "1",
+      "8",
+      "named like an ID or code"
+     ],
+     "category_name": [
+      "dimension",
+      "",
+      0,
+      8,
+      "",
+      [],
+      10.5,
+      14,
+      "",
+      "",
+      "8 labels to group by"
+     ],
+     "description": [
+      "attribute",
+      "",
+      0,
+      8,
+      "",
+      [],
+      29.125,
+      58,
+      "",
+      "",
+      "contact, address or descriptive details"
+     ]
+    },
+    "date_formats": {},
+    "duplicate_keys": 0,
+    "exact_duplicates": 0,
+    "extra_rows": 0,
+    "grain": "one row per `category_id`",
+    "hashes": {
+     "category_id": "e7acf2932d24aea7",
+     "category_name": "e6bae695b1fbc77a",
+     "description": "4a7f260316e222bc"
+    },
+    "key_status": "single",
+    "placeholders": {},
+    "primary_key": [
+     "category_id"
+    ],
+    "rows": 8,
+    "source": "Categories.csv",
+    "types": {
+     "category_id": "integer",
+     "category_name": "text",
+     "description": "text"
+    },
+    "units": {},
+    "unparsed_dates": {},
+    "unparsed_numbers": {}
+   },
+   "customers": {
+    "ambiguous_dates": [],
+    "cleaned": {},
+    "column_map": {
+     "address": "Address",
+     "city": "City",
+     "company_name": "CompanyName",
+     "contact_name": "ContactName",
+     "contact_title": "ContactTitle",
+     "country": "Country",
+     "customer_id": "CustomerID",
+     "fax": "Fax",
+     "phone": "Phone",
+     "postal_code": "PostalCode",
+     "region": "Region"
+    },
+    "columns": {
+     "address": [
+      "attribute",
+      "",
+      0,
+      91,
+      "",
+      [],
+      18.692308,
+      46,
+      "",
+      "",
+      "contact, address or descriptive details"
+     ],
+     "city": [
+      "attribute",
+      "",
+      0,
+      69,
+      "",
+      [],
+      8.010989,
+      15,
+      "",
+      "",
+      "69 different values: describes rows rather than grouping them"
+     ],
+     "company_name": [
+      "attribute",
+      "",
+      0,
+      91,
+      "",
+      [],
+      18.901099,
+      36,
+      "",
+      "",
+      "91 different values: describes rows rather than grouping them"
+     ],
+     "contact_name": [
+      "attribute",
+      "",
+      0,
+      91,
+      "",
+      [],
+      13.934066,
+      23,
+      "",
+      "",
+      "91 different values: describes rows rather than grouping them"
+     ],
+     "contact_title": [
+      "dimension",
+      "",
+      0,
+      12,
+      "",
+      [],
+      14.956044,
+      30,
+      "",
+      "",
+      "12 labels to group by"
+     ],
+     "country": [
+      "dimension",
+      "",
+      0,
+      21,
+      "",
+      [],
+      5.78022,
+      11,
+      "",
+      "",
+      "21 labels to group by"
+     ],
+     "customer_id": [
+      "identifier",
+      "",
+      0,
+      91,
+      "",
+      [],
+      5.0,
+      5,
+      "",
+      "",
+      "named like an ID or code"
+     ],
+     "fax": [
+      "attribute",
+      "",
+      22,
+      69,
+      "",
+      [],
+      12.318841,
+      17,
+      "",
+      "",
+      "contact, address or descriptive details"
+     ],
+     "phone": [
+      "attribute",
+      "",
+      0,
+      91,
+      "",
+      [],
+      12.395604,
+      17,
+      "",
+      "",
+      "contact, address or descriptive details"
+     ],
+     "postal_code": [
+      "attribute",
+      "",
+      1,
+      86,
+      "",
+      [],
+      5.566667,
+      9,
+      "",
+      "",
+      "contact, address or descriptive details"
+     ],
+     "region": [
+      "dimension",
+      "",
+      60,
+      18,
+      "",
+      [],
+      3.258065,
+      13,
+      "",
+      "",
+      "18 labels to group by"
+     ]
+    },
+    "date_formats": {},
+    "duplicate_keys": 0,
+    "exact_duplicates": 0,
+    "extra_rows": 0,
+    "grain": "one row per `customer_id`",
+    "hashes": {
+     "address": "a89900a4996c4e5e",
+     "city": "b4f9387788244193",
+     "company_name": "1861cbf15361e354",
+     "contact_name": "9c8bb579f2a389e1",
+     "contact_title": "f8a3aa03acb98cba",
+     "country": "ef60c1a40c898ff4",
+     "customer_id": "55ec9fce38b74a9e",
+     "fax": "b9ec3804d3d4278b",
+     "phone": "6fda72990ba8d6bb",
+     "postal_code": "a435950498675d6e",
+     "region": "413f8bba9e0fe54a"
+    },
+    "key_status": "single",
+    "placeholders": {},
+    "primary_key": [
+     "customer_id"
+    ],
+    "rows": 91,
+    "source": "Customers.csv",
+    "types": {
+     "address": "text",
+     "city": "text",
+     "company_name": "text",
+     "contact_name": "text",
+     "contact_title": "text",
+     "country": "text",
+     "customer_id": "text",
+     "fax": "text",
+     "phone": "text",
+     "postal_code": "text",
+     "region": "text"
+    },
+    "units": {},
+    "unparsed_dates": {},
+    "unparsed_numbers": {}
+   },
+   "employees": {
+    "ambiguous_dates": [],
+    "cleaned": {},
+    "column_map": {
+     "address": "Address",
+     "birth_date": "BirthDate",
+     "city": "City",
+     "country": "Country",
+     "employee_id": "EmployeeID",
+     "extension": "Extension",
+     "first_name": "FirstName",
+     "hire_date": "HireDate",
+     "home_phone": "HomePhone",
+     "last_name": "LastName",
+     "notes": "Notes",
+     "photo_path": "PhotoPath",
+     "postal_code": "PostalCode",
+     "region": "Region",
+     "reports_to": "ReportsTo",
+     "title": "Title",
+     "title_of_courtesy": "TitleOfCourtesy"
+    },
+    "columns": {
+     "address": [
+      "attribute",
+      "",
+      0,
+      9,
+      "",
+      [],
+      20.777778,
+      29,
+      "",
+      "",
+      "contact, address or descriptive details"
+     ],
+     "birth_date": [
+      "datetime",
+      "",
+      0,
+      9,
+      "",
+      [],
+      0.0,
+      0,
+      "1937-09-19T00:00:00",
+      "1966-01-27T00:00:00",
+      "dates"
+     ],
+     "city": [
+      "dimension",
+      "",
+      0,
+      5,
+      "",
+      [],
+      6.555556,
+      8,
+      "",
+      "",
+      "5 labels to group by"
+     ],
+     "country": [
+      "dimension",
+      "",
+      0,
+      2,
+      "",
+      [],
+      2.555556,
+      3,
+      "",
+      "",
+      "2 labels to group by"
+     ],
+     "employee_id": [
+      "identifier",
+      "",
+      0,
+      9,
+      "",
+      [],
+      0.0,
+      0,
+      "1",
+      "9",
+      "named like an ID or code"
+     ],
+     "extension": [
+      "attribute",
+      "",
+      0,
+      9,
+      "",
+      [],
+      0.0,
+      0,
+      "428",
+      "5467",
+      "a phone, postal or other code stored as a number"
+     ],
+     "first_name": [
+      "dimension",
+      "",
+      0,
+      9,
+      "",
+      [],
+      5.777778,
+      8,
+      "",
+      "",
+      "9 labels to group by"
+     ],
+     "hire_date": [
+      "datetime",
+      "",
+      0,
+      8,
+      "",
+      [],
+      0.0,
+      0,
+      "1992-04-01T00:00:00",
+      "1994-11-15T00:00:00",
+      "dates"
+     ],
+     "home_phone": [
+      "attribute",
+      "",
+      0,
+      9,
+      "",
+      [],
+      13.555556,
+      14,
+      "",
+      "",
+      "contact, address or descriptive details"
+     ],
+     "last_name": [
+      "dimension",
+      "",
+      0,
+      9,
+      "",
+      [],
+      7.111111,
+      9,
+      "",
+      "",
+      "9 labels to group by"
+     ],
+     "notes": [
+      "text",
+      "",
+      0,
+      9,
+      "",
+      [],
+      264.777778,
+      448,
+      "",
+      "",
+      "long free text (~265 characters)"
+     ],
+     "photo_path": [
+      "attribute",
+      "",
+      0,
+      5,
+      "",
+      [],
+      36.222222,
+      38,
+      "",
+      "",
+      "contact, address or descriptive details"
+     ],
+     "postal_code": [
+      "attribute",
+      "",
+      0,
+      9,
+      "",
+      [],
+      5.888889,
+      7,
+      "",
+      "",
+      "contact, address or descriptive details"
+     ],
+     "region": [
+      "constant",
+      "",
+      4,
+      1,
+      "",
+      [],
+      2.0,
+      2,
+      "",
+      "",
+      "only one distinct value"
+     ],
+     "reports_to": [
+      "measure",
+      "other",
+      1,
+      2,
+      "",
+      [],
+      0.0,
+      0,
+      "2",
+      "5",
+      "numbers"
+     ],
+     "title": [
+      "dimension",
+      "",
+      0,
+      4,
+      "",
+      [],
+      19.777778,
+      24,
+      "",
+      "",
+      "4 labels to group by"
+     ],
+     "title_of_courtesy": [
+      "dimension",
+      "",
+      0,
+      4,
+      "",
+      [],
+      3.111111,
+      4,
+      "",
+      "",
+      "4 labels to group by"
+     ]
+    },
+    "date_formats": {
+     "birth_date": "%Y-%m-%d",
+     "hire_date": "%Y-%m-%d"
+    },
+    "duplicate_keys": 0,
+    "exact_duplicates": 0,
+    "extra_rows": 0,
+    "grain": "one row per `employee_id`",
+    "hashes": {
+     "address": "1fd162861cfce279",
+     "birth_date": "f1caa002dd27c11d",
+     "city": "bde8d20464ce42ac",
+     "country": "e011ed0efaf968b5",
+     "employee_id": "4590e824e464c790",
+     "extension": "2f44bbaed7dbfc95",
+     "first_name": "09a231d9817491de",
+     "hire_date": "ecd3ef3483284d89",
+     "home_phone": "17bef7d7fec25299",
+     "last_name": "698806b9cccc83e0",
+     "notes": "ad0eff205f7e6126",
+     "photo_path": "b0641234aa4e7f51",
+     "postal_code": "e7939fd763ed2a6a",
+     "region": "ad9ebf9a5eb964d5",
+     "reports_to": "b7eae7140e492fc4",
+     "title": "a0f6e1330211c311",
+     "title_of_courtesy": "bb63b567eec9ab83"
+    },
+    "key_status": "single",
+    "placeholders": {},
+    "primary_key": [
+     "employee_id"
+    ],
+    "rows": 9,
+    "source": "Employees.csv",
+    "types": {
+     "address": "text",
+     "birth_date": "date",
+     "city": "text",
+     "country": "text",
+     "employee_id": "integer",
+     "extension": "integer",
+     "first_name": "text",
+     "hire_date": "date",
+     "home_phone": "text",
+     "last_name": "text",
+     "notes": "text",
+     "photo_path": "text",
+     "postal_code": "text",
+     "region": "text",
+     "reports_to": "integer",
+     "title": "text",
+     "title_of_courtesy": "text"
+    },
+    "units": {},
+    "unparsed_dates": {},
+    "unparsed_numbers": {}
+   },
+   "order_details": {
+    "ambiguous_dates": [],
+    "cleaned": {},
+    "column_map": {
+     "discount": "Discount",
+     "order_id": "OrderID",
+     "product_id": "ProductID",
+     "quantity": "Quantity",
+     "unit_price": "UnitPrice"
+    },
+    "columns": {
+     "discount": [
+      "measure",
+      "discount",
+      0,
+      11,
+      "",
+      [],
+      0.0,
+      0,
+      "np.float64(0.0)",
+      "np.float64(0.25)",
+      "a discount"
+     ],
+     "order_id": [
+      "identifier",
+      "",
+      0,
+      830,
+      "",
+      [],
+      0.0,
+      0,
+      "10248",
+      "11077",
+      "named like an ID or code"
+     ],
+     "product_id": [
+      "identifier",
+      "",
+      0,
+      77,
+      "",
+      [],
+      0.0,
+      0,
+      "1",
+      "77",
+      "named like an ID or code"
+     ],
+     "quantity": [
+      "measure",
+      "quantity",
+      0,
+      55,
+      "",
+      [],
+      0.0,
+      0,
+      "1",
+      "130",
+      "a quantity"
+     ],
+     "unit_price": [
+      "measure",
+      "price",
+      0,
+      116,
+      "",
+      [],
+      0.0,
+      0,
+      "np.float64(2.0)",
+      "np.float64(263.5)",
+      "a price"
+     ]
+    },
+    "date_formats": {},
+    "duplicate_keys": 0,
+    "exact_duplicates": 0,
+    "extra_rows": 0,
+    "grain": "one row per `order_id` × `product_id`",
+    "hashes": {
+     "discount": "414d0dc7a11260a3",
+     "order_id": "bd0e07e72bf2be4b",
+     "product_id": "43aa929d77b0e775",
+     "quantity": "fef5e2b5f312de2a",
+     "unit_price": "db6ab20fca89775a"
+    },
+    "key_status": "composite",
+    "placeholders": {},
+    "primary_key": [
+     "order_id",
+     "product_id"
+    ],
+    "rows": 2155,
+    "source": "Order Details.csv",
+    "types": {
+     "discount": "decimal",
+     "order_id": "integer",
+     "product_id": "integer",
+     "quantity": "integer",
+     "unit_price": "decimal"
+    },
+    "units": {},
+    "unparsed_dates": {},
+    "unparsed_numbers": {}
+   },
+   "orders": {
+    "ambiguous_dates": [],
+    "cleaned": {},
+    "column_map": {
+     "customer_id": "CustomerID",
+     "employee_id": "EmployeeID",
+     "freight": "Freight",
+     "order_date": "OrderDate",
+     "order_id": "OrderID",
+     "required_date": "RequiredDate",
+     "ship_address": "ShipAddress",
+     "ship_city": "ShipCity",
+     "ship_country": "ShipCountry",
+     "ship_name": "ShipName",
+     "ship_postal_code": "ShipPostalCode",
+     "ship_region": "ShipRegion",
+     "ship_via": "ShipVia",
+     "shipped_date": "ShippedDate"
+    },
+    "columns": {
+     "customer_id": [
+      "identifier",
+      "",
+      0,
+      89,
+      "",
+      [],
+      5.0,
+      5,
+      "",
+      "",
+      "named like an ID or code"
+     ],
+     "employee_id": [
+      "identifier",
+      "",
+      0,
+      9,
+      "",
+      [],
+      0.0,
+      0,
+      "1",
+      "9",
+      "named like an ID or code"
+     ],
+     "freight": [
+      "measure",
+      "charge",
+      0,
+      799,
+      "",
+      [],
+      0.0,
+      0,
+      "np.float64(0.02)",
+      "np.float64(1007.64)",
+      "a charge such as freight or tax"
+     ],
+     "order_date": [
+      "datetime",
+      "",
+      0,
+      480,
+      "",
+      [],
+      0.0,
+      0,
+      "1996-07-04T00:00:00",
+      "1998-05-06T00:00:00",
+      "dates"
+     ],
+     "order_id": [
+      "identifier",
+      "",
+      0,
+      830,
+      "",
+      [],
+      0.0,
+      0,
+      "10248",
+      "11077",
+      "named like an ID or code"
+     ],
+     "required_date": [
+      "datetime",
+      "",
+      0,
+      454,
+      "",
+      [],
+      0.0,
+      0,
+      "1996-07-24T00:00:00",
+      "1998-06-11T00:00:00",
+      "dates"
+     ],
+     "ship_address": [
+      "attribute",
+      "",
+      0,
+      89,
+      "",
+      [],
+      18.175904,
+      46,
+      "",
+      "",
+      "contact, address or descriptive details"
+     ],
+     "ship_city": [
+      "attribute",
+      "",
+      0,
+      70,
+      "",
+      [],
+      8.092771,
+      15,
+      "",
+      "",
+      "70 different values: describes rows rather than grouping them"
+     ],
+     "ship_country": [
+      "dimension",
+      "",
+      0,
+      21,
+      "",
+      [],
+      5.880723,
+      11,
+      "",
+      "",
+      "21 labels to group by"
+     ],
+     "ship_name": [
+      "attribute",
+      "",
+      0,
+      90,
+      "",
+      [],
+      17.683133,
+      34,
+      "",
+      "",
+      "90 different values: describes rows rather than grouping them"
+     ],
+     "ship_postal_code": [
+      "attribute",
+      "",
+      19,
+      84,
+      "",
+      [],
+      5.614057,
+      9,
+      "",
+      "",
+      "contact, address or descriptive details"
+     ],
+     "ship_region": [
+      "dimension",
+      "",
+      507,
+      19,
+      "",
+      [],
+      3.749226,
+      13,
+      "",
+      "",
+      "19 labels to group by"
+     ],
+     "ship_via": [
+      "measure",
+      "other",
+      0,
+      3,
+      "",
+      [],
+      0.0,
+      0,
+      "1",
+      "3",
+      "numbers"
+     ],
+     "shipped_date": [
+      "datetime",
+      "",
+      21,
+      387,
+      "",
+      [],
+      0.0,
+      0,
+      "1996-07-10T00:00:00",
+      "1998-05-06T00:00:00",
+      "dates"
+     ]
+    },
+    "date_formats": {
+     "order_date": "%Y-%m-%d",
+     "required_date": "%Y-%m-%d",
+     "shipped_date": "%Y-%m-%d"
+    },
+    "duplicate_keys": 0,
+    "exact_duplicates": 0,
+    "extra_rows": 0,
+    "grain": "one row per `order_id`",
+    "hashes": {
+     "customer_id": "ed3d1397b542bb46",
+     "employee_id": "216e7d3e2cb31263",
+     "freight": "a4854a8f50d5ab51",
+     "order_date": "9c3d28974a50a399",
+     "order_id": "0c7a3b7ebf12e41c",
+     "required_date": "137dd0107e2476cf",
+     "ship_address": "83dadfac64dea9bc",
+     "ship_city": "172b3d684dd137f1",
+     "ship_country": "2734c8964d2a6255",
+     "ship_name": "a65386356edea7a3",
+     "ship_postal_code": "ea1b21d65e152f35",
+     "ship_region": "e61edb0828905537",
+     "ship_via": "139910c5f1126a9f",
+     "shipped_date": "4033f42ce584a0c9"
+    },
+    "key_status": "single",
+    "placeholders": {},
+    "primary_key": [
+     "order_id"
+    ],
+    "rows": 830,
+    "source": "Orders.csv",
+    "types": {
+     "customer_id": "text",
+     "employee_id": "integer",
+     "freight": "decimal",
+     "order_date": "date",
+     "order_id": "integer",
+     "required_date": "date",
+     "ship_address": "text",
+     "ship_city": "text",
+     "ship_country": "text",
+     "ship_name": "text",
+     "ship_postal_code": "text",
+     "ship_region": "text",
+     "ship_via": "integer",
+     "shipped_date": "date"
+    },
+    "units": {},
+    "unparsed_dates": {},
+    "unparsed_numbers": {}
+   },
+   "products": {
+    "ambiguous_dates": [],
+    "cleaned": {},
+    "column_map": {
+     "category_id": "CategoryID",
+     "discontinued": "Discontinued",
+     "product_id": "ProductID",
+     "product_name": "ProductName",
+     "quantity_per_unit": "QuantityPerUnit",
+     "reorder_level": "ReorderLevel",
+     "supplier_id": "SupplierID",
+     "unit_price": "UnitPrice",
+     "units_in_stock": "UnitsInStock",
+     "units_on_order": "UnitsOnOrder"
+    },
+    "columns": {
+     "category_id": [
+      "identifier",
+      "",
+      0,
+      8,
+      "",
+      [],
+      0.0,
+      0,
+      "1",
+      "8",
+      "named like an ID or code"
+     ],
+     "discontinued": [
+      "dimension",
+      "",
+      0,
+      2,
+      "",
+      [],
+      0.0,
+      0,
+      "0",
+      "1",
+      "0 / 1 flag"
+     ],
+     "product_id": [
+      "identifier",
+      "",
+      0,
+      77,
+      "",
+      [],
+      0.0,
+      0,
+      "1",
+      "77",
+      "named like an ID or code"
+     ],
+     "product_name": [
+      "attribute",
+      "",
+      0,
+      77,
+      "",
+      [],
+      16.376623,
+      32,
+      "",
+      "",
+      "77 different values: describes rows rather than grouping them"
+     ],
+     "quantity_per_unit": [
+      "attribute",
+      "",
+      0,
+      70,
+      "",
+      [],
+      14.675325,
+      20,
+      "",
+      "",
+      "70 different values: describes rows rather than grouping them"
+     ],
+     "reorder_level": [
+      "measure",
+      "other",
+      0,
+      7,
+      "",
+      [],
+      0.0,
+      0,
+      "0",
+      "30",
+      "numbers"
+     ],
+     "supplier_id": [
+      "identifier",
+      "",
+      0,
+      29,
+      "",
+      [],
+      0.0,
+      0,
+      "1",
+      "29",
+      "named like an ID or code"
+     ],
+     "unit_price": [
+      "measure",
+      "price",
+      0,
+      62,
+      "",
+      [],
+      0.0,
+      0,
+      "np.float64(2.5)",
+      "np.float64(263.5)",
+      "a price"
+     ],
+     "units_in_stock": [
+      "measure",
+      "other",
+      0,
+      51,
+      "",
+      [],
+      0.0,
+      0,
+      "0",
+      "125",
+      "numbers"
+     ],
+     "units_on_order": [
+      "measure",
+      "other",
+      0,
+      10,
+      "",
+      [],
+      0.0,
+      0,
+      "0",
+      "100",
+      "numbers"
+     ]
+    },
+    "date_formats": {},
+    "duplicate_keys": 0,
+    "exact_duplicates": 0,
+    "extra_rows": 0,
+    "grain": "one row per `product_id`",
+    "hashes": {
+     "category_id": "bee0956b4767ce55",
+     "discontinued": "db720aed814193d9",
+     "product_id": "5e08c6f38a0027a9",
+     "product_name": "70e56cc9d6510315",
+     "quantity_per_unit": "5aab8b1277efbbbc",
+     "reorder_level": "cad61ee93eed9e54",
+     "supplier_id": "68a5bcfea8b117cf",
+     "unit_price": "aecd5a3ef4817148",
+     "units_in_stock": "56230b59ed0b2498",
+     "units_on_order": "f89ae3de123941c3"
+    },
+    "key_status": "single",
+    "placeholders": {},
+    "primary_key": [
+     "product_id"
+    ],
+    "rows": 77,
+    "source": "Products.csv",
+    "types": {
+     "category_id": "integer",
+     "discontinued": "integer",
+     "product_id": "integer",
+     "product_name": "text",
+     "quantity_per_unit": "text",
+     "reorder_level": "integer",
+     "supplier_id": "integer",
+     "unit_price": "decimal",
+     "units_in_stock": "integer",
+     "units_on_order": "integer"
+    },
+    "units": {},
+    "unparsed_dates": {},
+    "unparsed_numbers": {}
+   },
+   "shippers": {
+    "ambiguous_dates": [],
+    "cleaned": {},
+    "column_map": {
+     "company_name": "CompanyName",
+     "phone": "Phone",
+     "shipper_id": "ShipperID"
+    },
+    "columns": {
+     "company_name": [
+      "dimension",
+      "",
+      0,
+      3,
+      "",
+      [],
+      14.666667,
+      16,
+      "",
+      "",
+      "3 labels to group by"
+     ],
+     "phone": [
+      "attribute",
+      "",
+      0,
+      3,
+      "",
+      [],
+      14.0,
+      14,
+      "",
+      "",
+      "contact, address or descriptive details"
+     ],
+     "shipper_id": [
+      "identifier",
+      "",
+      0,
+      3,
+      "",
+      [],
+      0.0,
+      0,
+      "1",
+      "3",
+      "named like an ID or code"
+     ]
+    },
+    "date_formats": {},
+    "duplicate_keys": 0,
+    "exact_duplicates": 0,
+    "extra_rows": 0,
+    "grain": "one row per `shipper_id`",
+    "hashes": {
+     "company_name": "41c514be10285b4f",
+     "phone": "881c7effe4ad3814",
+     "shipper_id": "ad53e8806d17c82d"
+    },
+    "key_status": "single",
+    "placeholders": {},
+    "primary_key": [
+     "shipper_id"
+    ],
+    "rows": 3,
+    "source": "Shippers.csv",
+    "types": {
+     "company_name": "text",
+     "phone": "text",
+     "shipper_id": "integer"
+    },
+    "units": {},
+    "unparsed_dates": {},
+    "unparsed_numbers": {}
+   },
+   "suppliers": {
+    "ambiguous_dates": [],
+    "cleaned": {},
+    "column_map": {
+     "address": "Address",
+     "city": "City",
+     "company_name": "CompanyName",
+     "contact_name": "ContactName",
+     "contact_title": "ContactTitle",
+     "country": "Country",
+     "fax": "Fax",
+     "home_page": "HomePage",
+     "phone": "Phone",
+     "postal_code": "PostalCode",
+     "region": "Region",
+     "supplier_id": "SupplierID"
+    },
+    "columns": {
+     "address": [
+      "attribute",
+      "",
+      0,
+      29,
+      "",
+      [],
+      20.413793,
+      45,
+      "",
+      "",
+      "contact, address or descriptive details"
+     ],
+     "city": [
+      "dimension",
+      "",
+      0,
+      29,
+      "",
+      [],
+      7.655172,
+      13,
+      "",
+      "",
+      "29 labels to group by"
+     ],
+     "company_name": [
+      "dimension",
+      "",
+      0,
+      29,
+      "",
+      [],
+      19.206897,
+      38,
+      "",
+      "",
+      "29 labels to group by"
+     ],
+     "contact_name": [
+      "dimension",
+      "",
+      0,
+      29,
+      "",
+      [],
+      13.275862,
+      26,
+      "",
+      "",
+      "29 labels to group by"
+     ],
+     "contact_title": [
+      "dimension",
+      "",
+      0,
+      15,
+      "",
+      [],
+      18.034483,
+      28,
+      "",
+      "",
+      "15 labels to group by"
+     ],
+     "country": [
+      "dimension",
+      "",
+      0,
+      16,
+      "",
+      [],
+      5.793103,
+      11,
+      "",
+      "",
+      "16 labels to group by"
+     ],
+     "fax": [
+      "attribute",
+      "",
+      16,
+      13,
+      "",
+      [],
+      12.615385,
+      15,
+      "",
+      "",
+      "contact, address or descriptive details"
+     ],
+     "home_page": [
+      "text",
+      "",
+      24,
+      5,
+      "",
+      [],
+      59.8,
+      94,
+      "",
+      "",
+      "long free text (~60 characters)"
+     ],
+     "phone": [
+      "attribute",
+      "",
+      0,
+      29,
+      "",
+      [],
+      12.62069,
+      15,
+      "",
+      "",
+      "contact, address or descriptive details"
+     ],
+     "postal_code": [
+      "attribute",
+      "",
+      0,
+      29,
+      "",
+      [],
+      5.206897,
+      8,
+      "",
+      "",
+      "contact, address or descriptive details"
+     ],
+     "region": [
+      "dimension",
+      "",
+      20,
+      8,
+      "",
+      [],
+      4.333333,
+      8,
+      "",
+      "",
+      "8 labels to group by"
+     ],
+     "supplier_id": [
+      "identifier",
+      "",
+      0,
+      29,
+      "",
+      [],
+      0.0,
+      0,
+      "1",
+      "29",
+      "named like an ID or code"
+     ]
+    },
+    "date_formats": {},
+    "duplicate_keys": 0,
+    "exact_duplicates": 0,
+    "extra_rows": 0,
+    "grain": "one row per `supplier_id`",
+    "hashes": {
+     "address": "2c3925baf82994f0",
+     "city": "fd7b69a71e041a87",
+     "company_name": "16d16fefa7f8116d",
+     "contact_name": "fa61b1487459202c",
+     "contact_title": "8841fd26f5fc79f4",
+     "country": "b317009d19e4a02d",
+     "fax": "b275da441cd647be",
+     "home_page": "a55bd8800d1df736",
+     "phone": "1bc380c37d2bec6c",
+     "postal_code": "7ec6e7aa72c705d9",
+     "region": "3d06d5b56694cc34",
+     "supplier_id": "d1e4d4bf01dc78ce"
+    },
+    "key_status": "single",
+    "placeholders": {},
+    "primary_key": [
+     "supplier_id"
+    ],
+    "rows": 29,
+    "source": "Suppliers.csv",
+    "types": {
+     "address": "text",
+     "city": "text",
+     "company_name": "text",
+     "contact_name": "text",
+     "contact_title": "text",
+     "country": "text",
+     "fax": "text",
+     "home_page": "text",
+     "phone": "text",
+     "postal_code": "text",
+     "region": "text",
+     "supplier_id": "integer"
+    },
+    "units": {},
+    "unparsed_dates": {},
+    "unparsed_numbers": {}
+   }
+  }
+ },
+ "sweep:all_null_col": {
+  "fanouts": [],
+  "relationships": [],
+  "skipped": [],
+  "tables": {
+   "t": {
+    "ambiguous_dates": [],
+    "cleaned": {},
+    "column_map": {
+     "amount": "amount",
+     "empty": "empty",
+     "id": "id",
+     "sold": "sold"
+    },
+    "columns": {
+     "amount": [
+      "measure",
+      "amount",
+      0,
+      40,
+      "",
+      [],
+      0.0,
+      0,
+      "np.float64(1.0298739364166076)",
+      "np.float64(8.829983075289773)",
+      "a money amount"
+     ],
+     "empty": [
+      "constant",
+      "",
+      40,
+      0,
+      "",
+      [],
+      0.0,
+      0,
+      "",
+      "",
+      "always empty"
+     ],
+     "id": [
+      "identifier",
+      "",
+      0,
+      40,
+      "",
+      [],
+      0.0,
+      0,
+      "0",
+      "39",
+      "named like an ID or code"
+     ],
+     "sold": [
+      "datetime",
+      "",
+      0,
+      40,
+      "",
+      [],
+      0.0,
+      0,
+      "2021-01-01T00:00:00",
+      "2021-02-09T00:00:00",
+      "dates"
+     ]
+    },
+    "date_formats": {
+     "sold": "%Y-%m-%d"
+    },
+    "duplicate_keys": 0,
+    "exact_duplicates": 0,
+    "extra_rows": 0,
+    "grain": "one row per `id`",
+    "hashes": {
+     "amount": "afbf6a5f6d1da980",
+     "empty": "fc1317476bbb5dcd",
+     "id": "a3898c5790e2d665",
+     "sold": "4015384ca7aed8b8"
+    },
+    "key_status": "single",
+    "placeholders": {},
+    "primary_key": [
+     "id"
+    ],
+    "rows": 40,
+    "source": "t.csv",
+    "types": {
+     "amount": "float",
+     "empty": "text",
+     "id": "integer",
+     "sold": "date"
+    },
+    "units": {},
+    "unparsed_dates": {},
+    "unparsed_numbers": {}
+   }
+  }
+ },
+ "sweep:business_formats": {
+  "fanouts": [],
+  "relationships": [],
+  "skipped": [],
+  "tables": {
+   "orders": {
+    "ambiguous_dates": [],
+    "cleaned": {
+     "amount": "'$4,242.63' → 4242.63",
+     "discount": "'6%' → 6",
+     "refund": "'(6.73)' → -6.73"
+    },
+    "column_map": {
+     "amount": "amount",
+     "discount": "discount",
+     "order_date": "order_date",
+     "order_id": "order_id",
+     "refund": "refund"
+    },
+    "columns": {
+     "amount": [
+      "measure",
+      "amount",
+      0,
+      40,
+      "$",
+      [],
+      0.0,
+      0,
+      "np.float64(93.51)",
+      "np.float64(4543.48)",
+      "a money amount"
+     ],
+     "discount": [
+      "measure",
+      "discount",
+      0,
+      20,
+      "%",
+      [],
+      0.0,
+      0,
+      "0",
+      "19",
+      "a discount"
+     ],
+     "order_date": [
+      "datetime",
+      "",
+      0,
+      40,
+      "",
+      [],
+      0.0,
+      0,
+      "2023-03-01T00:00:00",
+      "2023-06-26T00:00:00",
+      "dates"
+     ],
+     "order_id": [
+      "identifier",
+      "",
+      0,
+      40,
+      "",
+      [],
+      0.0,
+      0,
+      "1",
+      "40",
+      "named like an ID or code"
+     ],
+     "refund": [
+      "measure",
+      "other",
+      5,
+      35,
+      "",
+      [],
+      0.0,
+      0,
+      "np.float64(-8.69)",
+      "np.float64(-1.04)",
+      "numbers"
+     ]
+    },
+    "date_formats": {
+     "order_date": "%Y-%m-%d"
+    },
+    "duplicate_keys": 0,
+    "exact_duplicates": 0,
+    "extra_rows": 0,
+    "grain": "one row per `order_id`",
+    "hashes": {
+     "amount": "36cc25550c1ebcd6",
+     "discount": "cb207c1ff675eee4",
+     "order_date": "fdbbc9198615ba75",
+     "order_id": "ee53c58b521d74d2",
+     "refund": "d3bbf5d7c7589a65"
+    },
+    "key_status": "single",
+    "placeholders": {
+     "refund": 5
+    },
+    "primary_key": [
+     "order_id"
+    ],
+    "rows": 40,
+    "source": "orders.csv",
+    "types": {
+     "amount": "decimal",
+     "discount": "integer",
+     "order_date": "date",
+     "order_id": "integer",
+     "refund": "decimal"
+    },
+    "units": {
+     "amount": "$",
+     "discount": "%"
+    },
+    "unparsed_dates": {},
+    "unparsed_numbers": {}
+   }
+  }
+ },
+ "sweep:colliding_names": {
+  "fanouts": [],
+  "relationships": [],
+  "skipped": [],
+  "tables": {
+   "t": {
+    "ambiguous_dates": [],
+    "cleaned": {},
+    "column_map": {
+     "amount": "amount",
+     "order_date": "order_date",
+     "order_id": "Order ID",
+     "order_id_2": "order_id",
+     "order_id_3": "ORDER-ID"
+    },
+    "columns": {
+     "amount": [
+      "measure",
+      "amount",
+      0,
+      50,
+      "",
+      [],
+      0.0,
+      0,
+      "np.float64(1.0044517169004183)",
+      "np.float64(1.9838042186457236)",
+      "a money amount"
+     ],
+     "order_date": [
+      "datetime",
+      "",
+      0,
+      50,
+      "",
+      [],
+      0.0,
+      0,
+      "2021-01-01T00:00:00",
+      "2021-02-19T00:00:00",
+      "dates"
+     ],
+     "order_id": [
+      "identifier",
+      "",
+      0,
+      50,
+      "",
+      [],
+      0.0,
+      0,
+      "0",
+      "49",
+      "named like an ID or code"
+     ],
+     "order_id_2": [
+      "measure",
+      "other",
+      0,
+      50,
+      "",
+      [],
+      0.0,
+      0,
+      "50",
+      "99",
+      "numbers"
+     ],
+     "order_id_3": [
+      "measure",
+      "other",
+      0,
+      50,
+      "",
+      [],
+      0.0,
+      0,
+      "100",
+      "149",
+      "numbers"
+     ]
+    },
+    "date_formats": {
+     "order_date": "%Y-%m-%d"
+    },
+    "duplicate_keys": 0,
+    "exact_duplicates": 0,
+    "extra_rows": 0,
+    "grain": "one row per `order_id`",
+    "hashes": {
+     "amount": "bb624b1abb22b490",
+     "order_date": "59bad77ca1ea9c68",
+     "order_id": "9be607546c08e5b9",
+     "order_id_2": "e7a55c96e5f809d6",
+     "order_id_3": "1d50fd890795ddc0"
+    },
+    "key_status": "single",
+    "placeholders": {},
+    "primary_key": [
+     "order_id"
+    ],
+    "rows": 50,
+    "source": "t.csv",
+    "types": {
+     "amount": "float",
+     "order_date": "date",
+     "order_id": "integer",
+     "order_id_2": "integer",
+     "order_id_3": "integer"
+    },
+    "units": {},
+    "unparsed_dates": {},
+    "unparsed_numbers": {}
+   }
+  }
+ },
+ "sweep:composite_fk": {
+  "fanouts": [],
+  "relationships": [
+   [
+    "sales.(region, store_no) → stores.(region, store_no)",
+    "name",
+    false,
+    0.75,
+    12,
+    0,
+    19,
+    16.0,
+    0,
+    false
+   ]
+  ],
+  "skipped": [],
+  "tables": {
+   "sales": {
+    "ambiguous_dates": [],
+    "cleaned": {},
+    "column_map": {
+     "amount": "amount",
+     "region": "region",
+     "sale_date": "sale_date",
+     "sale_id": "sale_id",
+     "store_no": "store_no"
+    },
+    "columns": {
+     "amount": [
+      "measure",
+      "amount",
+      0,
+      60,
+      "",
+      [],
+      0.0,
+      0,
+      "np.float64(1.0415955756180164)",
+      "np.float64(4.9644758665903685)",
+      "a money amount"
+     ],
+     "region": [
+      "dimension",
+      "",
+      0,
+      2,
+      "",
+      [],
+      1.0,
+      1,
+      "",
+      "",
+      "2 labels to group by"
+     ],
+     "sale_date": [
+      "datetime",
+      "",
+      0,
+      60,
+      "",
+      [],
+      0.0,
+      0,
+      "2021-01-01T00:00:00",
+      "2021-03-01T00:00:00",
+      "dates"
+     ],
+     "sale_id": [
+      "identifier",
+      "",
+      0,
+      60,
+      "",
+      [],
+      0.0,
+      0,
+      "0",
+      "59",
+      "named like an ID or code"
+     ],
+     "store_no": [
+      "identifier",
+      "",
+      0,
+      2,
+      "",
+      [],
+      0.0,
+      0,
+      "1",
+      "2",
+      "named like an ID or code"
+     ]
+    },
+    "date_formats": {
+     "sale_date": "%Y-%m-%d"
+    },
+    "duplicate_keys": 0,
+    "exact_duplicates": 0,
+    "extra_rows": 0,
+    "grain": "one row per `sale_id`",
+    "hashes": {
+     "amount": "daad21a18f30fd76",
+     "region": "deb9bac9cc604fe3",
+     "sale_date": "6f905b06a41a1000",
+     "sale_id": "850ec36bad248d23",
+     "store_no": "914de58dafdd7d8f"
+    },
+    "key_status": "single",
+    "placeholders": {},
+    "primary_key": [
+     "sale_id"
+    ],
+    "rows": 60,
+    "source": "sales.csv",
+    "types": {
+     "amount": "float",
+     "region": "text",
+     "sale_date": "date",
+     "sale_id": "integer",
+     "store_no": "integer"
+    },
+    "units": {},
+    "unparsed_dates": {},
+    "unparsed_numbers": {}
+   },
+   "stores": {
+    "ambiguous_dates": [],
+    "cleaned": {},
+    "column_map": {
+     "manager": "manager",
+     "region": "region",
+     "store_no": "store_no"
+    },
+    "columns": {
+     "manager": [
+      "dimension",
+      "",
+      0,
+      3,
+      "",
+      [],
+      1.0,
+      1,
+      "",
+      "",
+      "3 labels to group by"
+     ],
+     "region": [
+      "dimension",
+      "",
+      0,
+      2,
+      "",
+      [],
+      1.0,
+      1,
+      "",
+      "",
+      "2 labels to group by"
+     ],
+     "store_no": [
+      "identifier",
+      "",
+      0,
+      2,
+      "",
+      [],
+      0.0,
+      0,
+      "1",
+      "2",
+      "named like an ID or code"
+     ]
+    },
+    "date_formats": {},
+    "duplicate_keys": 0,
+    "exact_duplicates": 0,
+    "extra_rows": 0,
+    "grain": "one row per `region` × `store_no`",
+    "hashes": {
+     "manager": "ea7fb08b7a2dc461",
+     "region": "5487fd10bedb0b30",
+     "store_no": "8500f9d95894dcdb"
+    },
+    "key_status": "composite",
+    "placeholders": {},
+    "primary_key": [
+     "region",
+     "store_no"
+    ],
+    "rows": 3,
+    "source": "stores.csv",
+    "types": {
+     "manager": "text",
+     "region": "text",
+     "store_no": "integer"
+    },
+    "units": {},
+    "unparsed_dates": {},
+    "unparsed_numbers": {}
+   }
+  }
+ },
+ "sweep:customer_no_table": {
+  "fanouts": [],
+  "relationships": [],
+  "skipped": [],
+  "tables": {
+   "orders": {
+    "ambiguous_dates": [],
+    "cleaned": {},
+    "column_map": {
+     "customer_id": "customer_id",
+     "order_date": "order_date",
+     "order_id": "order_id",
+     "total": "total"
+    },
+    "columns": {
+     "customer_id": [
+      "identifier",
+      "",
+      0,
+      29,
+      "",
+      [],
+      0.0,
+      0,
+      "1",
+      "29",
+      "named like an ID or code"
+     ],
+     "order_date": [
+      "datetime",
+      "",
+      0,
+      300,
+      "",
+      [],
+      0.0,
+      0,
+      "2021-01-01T00:00:00",
+      "2021-10-27T00:00:00",
+      "dates"
+     ],
+     "order_id": [
+      "identifier",
+      "",
+      0,
+      300,
+      "",
+      [],
+      0.0,
+      0,
+      "0",
+      "299",
+      "named like an ID or code"
+     ],
+     "total": [
+      "measure",
+      "amount",
+      0,
+      300,
+      "",
+      [],
+      0.0,
+      0,
+      "np.float64(1.2223302728456027)",
+      "np.float64(98.8988107271899)",
+      "a money amount"
+     ]
+    },
+    "date_formats": {
+     "order_date": "%Y-%m-%d"
+    },
+    "duplicate_keys": 0,
+    "exact_duplicates": 0,
+    "extra_rows": 0,
+    "grain": "one row per `order_id`",
+    "hashes": {
+     "customer_id": "93742cf1fe881e5d",
+     "order_date": "ad3c37d6bddcc75b",
+     "order_id": "5ee40227a3ca6da1",
+     "total": "b11961371c172556"
+    },
+    "key_status": "single",
+    "placeholders": {},
+    "primary_key": [
+     "order_id"
+    ],
+    "rows": 300,
+    "source": "orders.csv",
+    "types": {
+     "customer_id": "integer",
+     "order_date": "date",
+     "order_id": "integer",
+     "total": "float"
+    },
+    "units": {},
+    "unparsed_dates": {},
+    "unparsed_numbers": {}
+   }
+  }
+ },
+ "sweep:dmy_dates": {
+  "fanouts": [],
+  "relationships": [],
+  "skipped": [],
+  "tables": {
+   "t": {
+    "ambiguous_dates": [],
+    "cleaned": {},
+    "column_map": {
+     "amount": "amount",
+     "id": "id",
+     "order_date": "order_date"
+    },
+    "columns": {
+     "amount": [
+      "measure",
+      "amount",
+      0,
+      60,
+      "",
+      [],
+      0.0,
+      0,
+      "np.float64(1.086476310832131)",
+      "np.float64(8.953224677447725)",
+      "a money amount"
+     ],
+     "id": [
+      "identifier",
+      "",
+      0,
+      60,
+      "",
+      [],
+      0.0,
+      0,
+      "0",
+      "59",
+      "named like an ID or code"
+     ],
+     "order_date": [
+      "datetime",
+      "",
+      0,
+      60,
+      "",
+      [],
+      0.0,
+      0,
+      "2022-01-01T00:00:00",
+      "2023-02-18T00:00:00",
+      "dates"
+     ]
+    },
+    "date_formats": {
+     "order_date": "%d/%m/%Y"
+    },
+    "duplicate_keys": 0,
+    "exact_duplicates": 0,
+    "extra_rows": 0,
+    "grain": "one row per `id`",
+    "hashes": {
+     "amount": "74cbbded8c7d977b",
+     "id": "850ec36bad248d23",
+     "order_date": "2ff56881b42f4c30"
+    },
+    "key_status": "single",
+    "placeholders": {},
+    "primary_key": [
+     "id"
+    ],
+    "rows": 60,
+    "source": "t.csv",
+    "types": {
+     "amount": "float",
+     "id": "integer",
+     "order_date": "date"
+    },
+    "units": {},
+    "unparsed_dates": {},
+    "unparsed_numbers": {}
+   }
+  }
+ },
+ "sweep:exact_dupes_no_key": {
+  "fanouts": [],
+  "relationships": [],
+  "skipped": [],
+  "tables": {
+   "log": {
+    "ambiguous_dates": [],
+    "cleaned": {},
+    "column_map": {
+     "event": "event",
+     "value": "value"
+    },
+    "columns": {
+     "event": [
+      "dimension",
+      "",
+      0,
+      3,
+      "",
+      [],
+      1.0,
+      1,
+      "",
+      "",
+      "3 labels to group by"
+     ],
+     "value": [
+      "measure",
+      "other",
+      0,
+      3,
+      "",
+      [],
+      0.0,
+      0,
+      "1",
+      "3",
+      "numbers"
+     ]
+    },
+    "date_formats": {},
+    "duplicate_keys": 0,
+    "exact_duplicates": 77,
+    "extra_rows": 0,
+    "grain": "no column (or pair of columns) identifies a row",
+    "hashes": {
+     "event": "f1e13c6686aecf2e",
+     "value": "6c2eb2761c314d73"
+    },
+    "key_status": "none",
+    "placeholders": {},
+    "primary_key": [],
+    "rows": 80,
+    "source": "log.csv",
+    "types": {
+     "event": "text",
+     "value": "integer"
+    },
+    "units": {},
+    "unparsed_dates": {},
+    "unparsed_numbers": {}
+   }
+  }
+ },
+ "sweep:float_ids": {
+  "fanouts": [],
+  "relationships": [],
+  "skipped": [],
+  "tables": {
+   "orders": {
+    "ambiguous_dates": [],
+    "cleaned": {},
+    "column_map": {
+     "amount": "amount",
+     "order_date": "order_date",
+     "order_id": "order_id"
+    },
+    "columns": {
+     "amount": [
+      "measure",
+      "amount",
+      0,
+      100,
+      "",
+      [],
+      0.0,
+      0,
+      "np.float64(1.0579425326858027)",
+      "np.float64(8.983998094810127)",
+      "a money amount"
+     ],
+     "order_date": [
+      "datetime",
+      "",
+      0,
+      100,
+      "",
+      [],
+      0.0,
+      0,
+      "2021-01-01T00:00:00",
+      "2021-04-10T00:00:00",
+      "dates"
+     ],
+     "order_id": [
+      "identifier",
+      "",
+      0,
+      100,
+      "",
+      [],
+      0.0,
+      0,
+      "0",
+      "99",
+      "named like an ID or code"
+     ]
+    },
+    "date_formats": {
+     "order_date": "%Y-%m-%d"
+    },
+    "duplicate_keys": 0,
+    "exact_duplicates": 0,
+    "extra_rows": 0,
+    "grain": "one row per `order_id`",
+    "hashes": {
+     "amount": "5d3bc137db106d4a",
+     "order_date": "bd3d631396c3d1fd",
+     "order_id": "50703a5fac96bb84"
+    },
+    "key_status": "single",
+    "placeholders": {},
+    "primary_key": [
+     "order_id"
+    ],
+    "rows": 100,
+    "source": "orders.csv",
+    "types": {
+     "amount": "float",
+     "order_date": "date",
+     "order_id": "integer"
+    },
+    "units": {},
+    "unparsed_dates": {},
+    "unparsed_numbers": {}
+   }
+  }
+ },
+ "sweep:new_wheels": {
+  "fanouts": [],
+  "relationships": [],
+  "skipped": [],
+  "tables": {
+   "orders": {
+    "ambiguous_dates": [],
+    "cleaned": {},
+    "column_map": {
+     "customer_feedback": "customer_feedback",
+     "customer_id": "customer_id",
+     "customer_state": "customer_state",
+     "discount": "discount",
+     "order_date": "order_date",
+     "order_id": "order_id",
+     "quantity": "quantity",
+     "quarter_number": "quarter_number",
+     "ship_date": "ship_date",
+     "shipper_id": "shipper_id",
+     "vehicle_maker": "vehicle_maker",
+     "vehicle_price": "vehicle_price"
+    },
+    "columns": {
+     "customer_feedback": [
+      "rating",
+      "scale",
+      0,
+      5,
+      "",
+      [
+       [
+        "Very Bad",
+        1
+       ],
+       [
+        "Bad",
+        2
+       ],
+       [
+        "Okay",
+        3
+       ],
+       [
+        "Good",
+        4
+       ],
+       [
+        "Very Good",
+        5
+       ]
+      ],
+      5.457433,
+      9,
+      "",
+      "",
+      "an ordered scale: Very Bad < Bad < Okay < Good < Very Good"
+     ],
+     "customer_id": [
+      "identifier",
+      "",
+      0,
+      535,
+      "",
+      [],
+      0.0,
+      0,
+      "1",
+      "982",
+      "named like an ID or code"
+     ],
+     "customer_state": [
+      "dimension",
+      "",
+      0,
+      49,
+      "",
+      [],
+      3.0,
+      3,
+      "",
+      "",
+      "49 labels to group by"
+     ],
+     "discount": [
+      "measure",
+      "discount",
+      0,
+      4,
+      "",
+      [],
+      0.0,
+      0,
+      "np.float64(0.0)",
+      "np.float64(0.15)",
+      "a discount"
+     ],
+     "order_date": [
+      "datetime",
+      "",
+      0,
+      321,
+      "",
+      [],
+      0.0,
+      0,
+      "2018-01-01T00:00:00",
+      "2018-12-29T00:00:00",
+      "dates"
+     ],
+     "order_id": [
+      "identifier",
+      "",
+      0,
+      787,
+      "",
+      [],
+      6.0,
+      6,
+      "",
+      "",
+      "named like an ID or code"
+     ],
+     "quantity": [
+      "measure",
+      "quantity",
+      0,
+      2,
+      "",
+      [],
+      0.0,
+      0,
+      "1",
+      "2",
+      "a quantity"
+     ],
+     "quarter_number": [
+      "date_part",
+      "",
+      0,
+      4,
+      "",
+      [],
+      0.0,
+      0,
+      "1",
+      "4",
+      "a year / quarter / month number"
+     ],
+     "ship_date": [
+      "datetime",
+      "",
+      0,
+      336,
+      "",
+      [],
+      0.0,
+      0,
+      "2018-01-25T00:00:00",
+      "2019-02-16T00:00:00",
+      "dates"
+     ],
+     "shipper_id": [
+      "identifier",
+      "",
+      0,
+      5,
+      "",
+      [],
+      0.0,
+      0,
+      "1",
+      "5",
+      "named like an ID or code"
+     ],
+     "vehicle_maker": [
+      "dimension",
+      "",
+      0,
+      5,
+      "",
+      [],
+      5.762389,
+      9,
+      "",
+      "",
+      "5 labels to group by"
+     ],
+     "vehicle_price": [
+      "measure",
+      "price",
+      0,
+      787,
+      "",
+      [],
+      0.0,
+      0,
+      "np.float64(15011.18)",
+      "np.float64(59980.47)",
+      "a price"
+     ]
+    },
+    "date_formats": {
+     "order_date": "%Y-%m-%d",
+     "ship_date": "%Y-%m-%d"
+    },
+    "duplicate_keys": 0,
+    "exact_duplicates": 0,
+    "extra_rows": 0,
+    "grain": "one row per `order_id`",
+    "hashes": {
+     "customer_feedback": "306ec5929f12deca",
+     "customer_id": "5d43bb596deedfdd",
+     "customer_state": "ed0662696d92def5",
+     "discount": "815a633fb6e81a59",
+     "order_date": "711bbbac57e56d8b",
+     "order_id": "1a5744d5139f9e6b",
+     "quantity": "d0ec53f8512b3308",
+     "quarter_number": "89c9968ee0e2a44c",
+     "ship_date": "5a5a4394a634d128",
+     "shipper_id": "2288fe1226aa7f4e",
+     "vehicle_maker": "9b32898e328ab34c",
+     "vehicle_price": "1d14b028f4fcddbb"
+    },
+    "key_status": "single",
+    "placeholders": {},
+    "primary_key": [
+     "order_id"
+    ],
+    "rows": 787,
+    "source": "orders.csv",
+    "types": {
+     "customer_feedback": "text",
+     "customer_id": "integer",
+     "customer_state": "text",
+     "discount": "decimal",
+     "order_date": "date",
+     "order_id": "text",
+     "quantity": "integer",
+     "quarter_number": "integer",
+     "ship_date": "date",
+     "shipper_id": "integer",
+     "vehicle_maker": "text",
+     "vehicle_price": "decimal"
+    },
+    "units": {},
+    "unparsed_dates": {},
+    "unparsed_numbers": {}
+   }
+  }
+ },
+ "sweep:one_column": {
+  "fanouts": [],
+  "relationships": [],
+  "skipped": [],
+  "tables": {
+   "t": {
+    "ambiguous_dates": [],
+    "cleaned": {},
+    "column_map": {
+     "a": "a"
+    },
+    "columns": {
+     "a": [
+      "measure",
+      "other",
+      0,
+      50,
+      "",
+      [],
+      0.0,
+      0,
+      "0",
+      "49",
+      "numbers"
+     ]
+    },
+    "date_formats": {},
+    "duplicate_keys": 0,
+    "exact_duplicates": 0,
+    "extra_rows": 0,
+    "grain": "one row per `a`",
+    "hashes": {
+     "a": "9be607546c08e5b9"
+    },
+    "key_status": "single",
+    "placeholders": {},
+    "primary_key": [
+     "a"
+    ],
+    "rows": 50,
+    "source": "t.csv",
+    "types": {
+     "a": "integer"
+    },
+    "units": {},
+    "unparsed_dates": {},
+    "unparsed_numbers": {}
+   }
+  }
+ },
+ "sweep:one_date_value": {
+  "fanouts": [],
+  "relationships": [],
+  "skipped": [],
+  "tables": {
+   "t": {
+    "ambiguous_dates": [],
+    "cleaned": {},
+    "column_map": {
+     "amount": "amount",
+     "id": "id",
+     "order_date": "order_date"
+    },
+    "columns": {
+     "amount": [
+      "measure",
+      "amount",
+      0,
+      30,
+      "",
+      [],
+      0.0,
+      0,
+      "np.float64(1.1235063202456417)",
+      "np.float64(8.754345173100582)",
+      "a money amount"
+     ],
+     "id": [
+      "identifier",
+      "",
+      0,
+      30,
+      "",
+      [],
+      0.0,
+      0,
+      "0",
+      "29",
+      "named like an ID or code"
+     ],
+     "order_date": [
+      "constant",
+      "",
+      0,
+      1,
+      "",
+      [],
+      0.0,
+      0,
+      "2020-01-01T00:00:00",
+      "2020-01-01T00:00:00",
+      "only one distinct value"
+     ]
+    },
+    "date_formats": {
+     "order_date": "%Y-%m-%d"
+    },
+    "duplicate_keys": 0,
+    "exact_duplicates": 0,
+    "extra_rows": 0,
+    "grain": "one row per `id`",
+    "hashes": {
+     "amount": "33eb02559095857e",
+     "id": "6cd964dea2fc438a",
+     "order_date": "b0e4857aa8775a41"
+    },
+    "key_status": "single",
+    "placeholders": {},
+    "primary_key": [
+     "id"
+    ],
+    "rows": 30,
+    "source": "t.csv",
+    "types": {
+     "amount": "float",
+     "id": "integer",
+     "order_date": "date"
+    },
+    "units": {},
+    "unparsed_dates": {},
+    "unparsed_numbers": {}
+   }
+  }
+ },
+ "sweep:rating_1_10": {
+  "fanouts": [],
+  "relationships": [],
+  "skipped": [],
+  "tables": {
+   "t": {
+    "ambiguous_dates": [],
+    "cleaned": {},
+    "column_map": {
+     "amount": "amount",
+     "id": "id",
+     "nps_score": "nps_score",
+     "order_date": "order_date"
+    },
+    "columns": {
+     "amount": [
+      "measure",
+      "amount",
+      0,
+      200,
+      "",
+      [],
+      0.0,
+      0,
+      "np.float64(1.0210697857976658)",
+      "np.float64(8.954229064035705)",
+      "a money amount"
+     ],
+     "id": [
+      "identifier",
+      "",
+      0,
+      200,
+      "",
+      [],
+      0.0,
+      0,
+      "0",
+      "199",
+      "named like an ID or code"
+     ],
+     "nps_score": [
+      "rating",
+      "1-10",
+      0,
+      11,
+      "",
+      [],
+      0.0,
+      0,
+      "0",
+      "10",
+      "a score from 0 to 10"
+     ],
+     "order_date": [
+      "datetime",
+      "",
+      0,
+      200,
+      "",
+      [],
+      0.0,
+      0,
+      "2021-01-01T00:00:00",
+      "2021-07-19T00:00:00",
+      "dates"
+     ]
+    },
+    "date_formats": {
+     "order_date": "%Y-%m-%d"
+    },
+    "duplicate_keys": 0,
+    "exact_duplicates": 0,
+    "extra_rows": 0,
+    "grain": "one row per `id`",
+    "hashes": {
+     "amount": "d265cc328b21e021",
+     "id": "44e8e2c2181c7153",
+     "nps_score": "a0dd426aa6c0de48",
+     "order_date": "269dc1cdf1a98346"
+    },
+    "key_status": "single",
+    "placeholders": {},
+    "primary_key": [
+     "id"
+    ],
+    "rows": 200,
+    "source": "t.csv",
+    "types": {
+     "amount": "float",
+     "id": "integer",
+     "nps_score": "integer",
+     "order_date": "date"
+    },
+    "units": {},
+    "unparsed_dates": {},
+    "unparsed_numbers": {}
+   }
+  }
+ },
+ "sweep:returns_negative": {
+  "fanouts": [],
+  "relationships": [],
+  "skipped": [],
+  "tables": {
+   "sales": {
+    "ambiguous_dates": [],
+    "cleaned": {},
+    "column_map": {
+     "price": "price",
+     "qty": "qty",
+     "sale_date": "sale_date",
+     "sale_id": "sale_id"
+    },
+    "columns": {
+     "price": [
+      "measure",
+      "price",
+      0,
+      172,
+      "",
+      [],
+      0.0,
+      0,
+      "np.float64(1.03)",
+      "np.float64(8.9)",
+      "a price"
+     ],
+     "qty": [
+      "measure",
+      "quantity",
+      0,
+      9,
+      "",
+      [],
+      0.0,
+      0,
+      "-3",
+      "5",
+      "a quantity"
+     ],
+     "sale_date": [
+      "datetime",
+      "",
+      0,
+      200,
+      "",
+      [],
+      0.0,
+      0,
+      "2021-01-01T00:00:00",
+      "2021-07-19T00:00:00",
+      "dates"
+     ],
+     "sale_id": [
+      "identifier",
+      "",
+      0,
+      200,
+      "",
+      [],
+      0.0,
+      0,
+      "0",
+      "199",
+      "named like an ID or code"
+     ]
+    },
+    "date_formats": {
+     "sale_date": "%Y-%m-%d"
+    },
+    "duplicate_keys": 0,
+    "exact_duplicates": 0,
+    "extra_rows": 0,
+    "grain": "one row per `sale_id`",
+    "hashes": {
+     "price": "ca68e10cc6a33139",
+     "qty": "98e507f71ccd02ff",
+     "sale_date": "269dc1cdf1a98346",
+     "sale_id": "44e8e2c2181c7153"
+    },
+    "key_status": "single",
+    "placeholders": {},
+    "primary_key": [
+     "sale_id"
+    ],
+    "rows": 200,
+    "source": "sales.csv",
+    "types": {
+     "price": "decimal",
+     "qty": "integer",
+     "sale_date": "date",
+     "sale_id": "integer"
+    },
+    "units": {},
+    "unparsed_dates": {},
+    "unparsed_numbers": {}
+   }
+  }
+ },
+ "sweep:self_ref_only": {
+  "fanouts": [],
+  "relationships": [
+   [
+    "employees.manager_id → employees.employee_id",
+    "self",
+    true,
+    1.0,
+    0,
+    1,
+    5,
+    0.95,
+    12,
+    false
+   ]
+  ],
+  "skipped": [],
+  "tables": {
+   "employees": {
+    "ambiguous_dates": [],
+    "cleaned": {},
+    "column_map": {
+     "dept": "dept",
+     "employee_id": "employee_id",
+     "manager_id": "manager_id"
+    },
+    "columns": {
+     "dept": [
+      "dimension",
+      "",
+      0,
+      2,
+      "",
+      [],
+      1.0,
+      1,
+      "",
+      "",
+      "2 labels to group by"
+     ],
+     "employee_id": [
+      "identifier",
+      "",
+      0,
+      20,
+      "",
+      [],
+      0.0,
+      0,
+      "1",
+      "20",
+      "named like an ID or code"
+     ],
+     "manager_id": [
+      "identifier",
+      "",
+      1,
+      8,
+      "",
+      [],
+      0.0,
+      0,
+      "1",
+      "8",
+      "named like an ID or code"
+     ]
+    },
+    "date_formats": {},
+    "duplicate_keys": 0,
+    "exact_duplicates": 0,
+    "extra_rows": 0,
+    "grain": "one row per `employee_id`",
+    "hashes": {
+     "dept": "dcf751acc8492400",
+     "employee_id": "7747a514fec0c8bb",
+     "manager_id": "49bcffbcb46ee8e2"
+    },
+    "key_status": "single",
+    "placeholders": {},
+    "primary_key": [
+     "employee_id"
+    ],
+    "rows": 20,
+    "source": "employees.csv",
+    "types": {
+     "dept": "text",
+     "employee_id": "integer",
+     "manager_id": "integer"
+    },
+    "units": {},
+    "unparsed_dates": {},
+    "unparsed_numbers": {}
+   }
+  }
+ },
+ "sweep:seven_years": {
+  "fanouts": [],
+  "relationships": [],
+  "skipped": [],
+  "tables": {
+   "sales": {
+    "ambiguous_dates": [],
+    "cleaned": {},
+    "column_map": {
+     "id": "id",
+     "order_date": "order_date",
+     "revenue": "revenue"
+    },
+    "columns": {
+     "id": [
+      "identifier",
+      "",
+      0,
+      400,
+      "",
+      [],
+      0.0,
+      0,
+      "0",
+      "399",
+      "named like an ID or code"
+     ],
+     "order_date": [
+      "datetime",
+      "",
+      0,
+      400,
+      "",
+      [],
+      0.0,
+      0,
+      "2015-01-01T00:00:00",
+      "2022-08-25T00:00:00",
+      "dates"
+     ],
+     "revenue": [
+      "measure",
+      "amount",
+      0,
+      400,
+      "",
+      [],
+      0.0,
+      0,
+      "np.float64(1.0142824079986674)",
+      "np.float64(8.968636087433367)",
+      "a money amount"
+     ]
+    },
+    "date_formats": {
+     "order_date": "%Y-%m-%d"
+    },
+    "duplicate_keys": 0,
+    "exact_duplicates": 0,
+    "extra_rows": 0,
+    "grain": "one row per `id`",
+    "hashes": {
+     "id": "e8e2bb13995dfcf7",
+     "order_date": "de53e4ab2cf3aeb9",
+     "revenue": "d79c41fb65e1b757"
+    },
+    "key_status": "single",
+    "placeholders": {},
+    "primary_key": [
+     "id"
+    ],
+    "rows": 400,
+    "source": "sales.csv",
+    "types": {
+     "id": "integer",
+     "order_date": "date",
+     "revenue": "float"
+    },
+    "units": {},
+    "unparsed_dates": {},
+    "unparsed_numbers": {}
+   }
+  }
+ },
+ "sweep:shop": {
+  "fanouts": [
+   [
+    "orders",
+    "freight",
+    "order_items",
+    10703.2,
+    25214.54
+   ]
+  ],
+  "relationships": [
+   [
+    "orders.customer_id → customers.customer_id",
+    "name",
+    true,
+    1.0,
+    0,
+    0,
+    9,
+    4.0,
+    5,
+    false
+   ],
+   [
+    "order_items.order_id → orders.order_id",
+    "name",
+    true,
+    0.994444,
+    3,
+    0,
+    8,
+    2.3625,
+    42,
+    false
+   ],
+   [
+    "order_items.product_id → products.product_id",
+    "name",
+    true,
+    1.0,
+    0,
+    0,
+    58,
+    47.4,
+    0,
+    false
+   ]
+  ],
+  "skipped": [],
+  "tables": {
+   "customers": {
+    "ambiguous_dates": [],
+    "cleaned": {},
+    "column_map": {
+     "customer_id": "CustomerID",
+     "customer_name": "Customer Name",
+     "group": "group",
+     "region": "Region",
+     "zip": "Zip"
+    },
+    "columns": {
+     "customer_id": [
+      "identifier",
+      "",
+      0,
+      100,
+      "",
+      [],
+      0.0,
+      0,
+      "1",
+      "100",
+      "named like an ID or code"
+     ],
+     "customer_name": [
+      "attribute",
+      "",
+      0,
+      100,
+      "",
+      [],
+      10.901961,
+      12,
+      "",
+      "",
+      "100 different values: describes rows rather than grouping them"
+     ],
+     "group": [
+      "dimension",
+      "",
+      0,
+      2,
+      "",
+      [],
+      5.5,
+      6,
+      "",
+      "",
+      "2 labels to group by"
+     ],
+     "region": [
+      "dimension",
+      "",
+      0,
+      4,
+      "",
+      [],
+      4.490196,
+      5,
+      "",
+      "",
+      "4 labels to group by"
+     ],
+     "zip": [
+      "attribute",
+      "",
+      0,
+      99,
+      "",
+      [],
+      5.0,
+      5,
+      "",
+      "",
+      "contact, address or descriptive details"
+     ]
+    },
+    "date_formats": {},
+    "duplicate_keys": 2,
+    "exact_duplicates": 2,
+    "extra_rows": 2,
+    "grain": "meant to be one row per `customer_id`, but 2 value(s) appear more than once",
+    "hashes": {
+     "customer_id": "b5e97cd3c227d8c7",
+     "customer_name": "04ab98062c845193",
+     "group": "6f827338316ee02a",
+     "region": "36426d702cee1dd9",
+     "zip": "4aaae7485ee49896"
+    },
+    "key_status": "intended",
+    "placeholders": {},
+    "primary_key": [
+     "customer_id"
+    ],
+    "rows": 102,
+    "source": "customers.csv",
+    "types": {
+     "customer_id": "integer",
+     "customer_name": "text",
+     "group": "text",
+     "region": "text",
+     "zip": "text"
+    },
+    "units": {},
+    "unparsed_dates": {},
+    "unparsed_numbers": {}
+   },
+   "order_items": {
+    "ambiguous_dates": [],
+    "cleaned": {},
+    "column_map": {
+     "order_id": "OrderID",
+     "price": "Price",
+     "product_id": "ProductID",
+     "qty": "Qty"
+    },
+    "columns": {
+     "order_id": [
+      "identifier",
+      "",
+      0,
+      360,
+      "",
+      [],
+      0.0,
+      0,
+      "5002",
+      "9999",
+      "named like an ID or code"
+     ],
+     "price": [
+      "measure",
+      "price",
+      0,
+      736,
+      "",
+      [],
+      0.0,
+      0,
+      "np.float64(2.05)",
+      "np.float64(19.99)",
+      "a price"
+     ],
+     "product_id": [
+      "identifier",
+      "",
+      0,
+      20,
+      "",
+      [],
+      0.0,
+      0,
+      "1",
+      "20",
+      "named like an ID or code"
+     ],
+     "qty": [
+      "measure",
+      "quantity",
+      0,
+      5,
+      "",
+      [],
+      0.0,
+      0,
+      "1",
+      "5",
+      "a quantity"
+     ]
+    },
+    "date_formats": {},
+    "duplicate_keys": 0,
+    "exact_duplicates": 0,
+    "extra_rows": 0,
+    "grain": "one row per `order_id` × `product_id`",
+    "hashes": {
+     "order_id": "24b968a98a72f4e2",
+     "price": "1c5b8bc17b39c2ea",
+     "product_id": "66a410e5a40671f8",
+     "qty": "665efe104c95440d"
+    },
+    "key_status": "composite",
+    "placeholders": {},
+    "primary_key": [
+     "order_id",
+     "product_id"
+    ],
+    "rows": 948,
+    "source": "order_items.csv",
+    "types": {
+     "order_id": "integer",
+     "price": "decimal",
+     "product_id": "integer",
+     "qty": "integer"
+    },
+    "units": {},
+    "unparsed_dates": {},
+    "unparsed_numbers": {}
+   },
+   "orders": {
+    "ambiguous_dates": [],
+    "cleaned": {},
+    "column_map": {
+     "customer_id": "CustomerID",
+     "freight": "Freight",
+     "order": "order",
+     "order_date": "OrderDate",
+     "order_id": "OrderID",
+     "ship_date": "ShipDate"
+    },
+    "columns": {
+     "customer_id": [
+      "identifier",
+      "",
+      0,
+      95,
+      "",
+      [],
+      0.0,
+      0,
+      "1",
+      "100",
+      "named like an ID or code"
+     ],
+     "freight": [
+      "measure",
+      "charge",
+      0,
+      384,
+      "",
+      [],
+      0.0,
+      0,
+      "np.float64(5.22)",
+      "np.float64(49.86)",
+      "a charge such as freight or tax"
+     ],
+     "order": [
+      "dimension",
+      "",
+      0,
+      2,
+      "",
+      [],
+      3.99,
+      5,
+      "",
+      "",
+      "2 labels to group by"
+     ],
+     "order_date": [
+      "datetime",
+      "",
+      0,
+      285,
+      "",
+      [],
+      0.0,
+      0,
+      "2022-01-02T00:00:00",
+      "2023-06-24T00:00:00",
+      "dates"
+     ],
+     "order_id": [
+      "identifier",
+      "",
+      0,
+      400,
+      "",
+      [],
+      0.0,
+      0,
+      "5001",
+      "5400",
+      "named like an ID or code"
+     ],
+     "ship_date": [
+      "datetime",
+      "",
+      19,
+      280,
+      "",
+      [],
+      0.0,
+      0,
+      "2022-01-13T00:00:00",
+      "2023-07-05T00:00:00",
+      "dates"
+     ]
+    },
+    "date_formats": {
+     "order_date": "%m/%d/%Y",
+     "ship_date": "%m/%d/%Y"
+    },
+    "duplicate_keys": 0,
+    "exact_duplicates": 0,
+    "extra_rows": 0,
+    "grain": "one row per `order_id`",
+    "hashes": {
+     "customer_id": "43a597d2fbe6088a",
+     "freight": "da63039bbabe8252",
+     "order": "5bd324d80a214abb",
+     "order_date": "0ab1a3ea8b7d5127",
+     "order_id": "55fee7a533ebf1a3",
+     "ship_date": "be18b29ccb398099"
+    },
+    "key_status": "single",
+    "placeholders": {},
+    "primary_key": [
+     "order_id"
+    ],
+    "rows": 400,
+    "source": "orders.csv",
+    "types": {
+     "customer_id": "integer",
+     "freight": "decimal",
+     "order": "text",
+     "order_date": "date",
+     "order_id": "integer",
+     "ship_date": "date"
+    },
+    "units": {},
+    "unparsed_dates": {},
+    "unparsed_numbers": {}
+   },
+   "products": {
+    "ambiguous_dates": [],
+    "cleaned": {},
+    "column_map": {
+     "category": "Category",
+     "product": "Product",
+     "product_id": "ProductID",
+     "unit_cost": "UnitCost"
+    },
+    "columns": {
+     "category": [
+      "dimension",
+      "",
+      0,
+      3,
+      "",
+      [],
+      5.2,
+      6,
+      "",
+      "",
+      "3 labels to group by"
+     ],
+     "product": [
+      "dimension",
+      "",
+      0,
+      20,
+      "",
+      [],
+      2.55,
+      3,
+      "",
+      "",
+      "20 labels to group by"
+     ],
+     "product_id": [
+      "identifier",
+      "",
+      0,
+      20,
+      "",
+      [],
+      0.0,
+      0,
+      "1",
+      "20",
+      "named like an ID or code"
+     ],
+     "unit_cost": [
+      "measure",
+      "price",
+      0,
+      19,
+      "",
+      [],
+      0.0,
+      0,
+      "np.float64(1.13)",
+      "np.float64(8.91)",
+      "a price"
+     ]
+    },
+    "date_formats": {},
+    "duplicate_keys": 0,
+    "exact_duplicates": 0,
+    "extra_rows": 0,
+    "grain": "one row per `product_id`",
+    "hashes": {
+     "category": "f91dc8906ffc4847",
+     "product": "5ad19d99f3e86aeb",
+     "product_id": "7747a514fec0c8bb",
+     "unit_cost": "2e2362ed3d1a1e8b"
+    },
+    "key_status": "single",
+    "placeholders": {},
+    "primary_key": [
+     "product_id"
+    ],
+    "rows": 20,
+    "source": "products.csv",
+    "types": {
+     "category": "text",
+     "product": "text",
+     "product_id": "integer",
+     "unit_cost": "decimal"
+    },
+    "units": {},
+    "unparsed_dates": {},
+    "unparsed_numbers": {}
+   }
+  }
+ },
+ "sweep:single_row": {
+  "fanouts": [],
+  "relationships": [],
+  "skipped": [],
+  "tables": {
+   "t": {
+    "ambiguous_dates": [],
+    "cleaned": {},
+    "column_map": {
+     "amount": "amount",
+     "id": "id",
+     "order_date": "order_date"
+    },
+    "columns": {
+     "amount": [
+      "constant",
+      "",
+      0,
+      1,
+      "",
+      [],
+      0.0,
+      0,
+      "5",
+      "5",
+      "only one distinct value"
+     ],
+     "id": [
+      "constant",
+      "",
+      0,
+      1,
+      "",
+      [],
+      0.0,
+      0,
+      "1",
+      "1",
+      "only one distinct value"
+     ],
+     "order_date": [
+      "constant",
+      "",
+      0,
+      1,
+      "",
+      [],
+      0.0,
+      0,
+      "2020-01-01T00:00:00",
+      "2020-01-01T00:00:00",
+      "only one distinct value"
+     ]
+    },
+    "date_formats": {
+     "order_date": "%Y-%m-%d"
+    },
+    "duplicate_keys": 0,
+    "exact_duplicates": 0,
+    "extra_rows": 0,
+    "grain": "one row per `id`",
+    "hashes": {
+     "amount": "ef2d127de37b942b",
+     "id": "6b86b273ff34fce1",
+     "order_date": "aabc72f1be621d5b"
+    },
+    "key_status": "single",
+    "placeholders": {},
+    "primary_key": [
+     "id"
+    ],
+    "rows": 1,
+    "source": "t.csv",
+    "types": {
+     "amount": "integer",
+     "id": "integer",
+     "order_date": "date"
+    },
+    "units": {},
+    "unparsed_dates": {},
+    "unparsed_numbers": {}
+   }
+  }
+ },
+ "sweep:text_only": {
+  "fanouts": [],
+  "relationships": [],
+  "skipped": [],
+  "tables": {
+   "t": {
+    "ambiguous_dates": [],
+    "cleaned": {},
+    "column_map": {
+     "city": "city",
+     "name": "name"
+    },
+    "columns": {
+     "city": [
+      "dimension",
+      "",
+      0,
+      2,
+      "",
+      [],
+      1.0,
+      1,
+      "",
+      "",
+      "2 labels to group by"
+     ],
+     "name": [
+      "attribute",
+      "",
+      0,
+      60,
+      "",
+      [],
+      2.833333,
+      3,
+      "",
+      "",
+      "60 different values: describes rows rather than grouping them"
+     ]
+    },
+    "date_formats": {},
+    "duplicate_keys": 0,
+    "exact_duplicates": 0,
+    "extra_rows": 0,
+    "grain": "no column (or pair of columns) identifies a row",
+    "hashes": {
+     "city": "d3c9c44252e39e75",
+     "name": "f1780d1b97003f70"
+    },
+    "key_status": "none",
+    "placeholders": {},
+    "primary_key": [],
+    "rows": 60,
+    "source": "t.csv",
+    "types": {
+     "city": "text",
+     "name": "text"
+    },
+    "units": {},
+    "unparsed_dates": {},
+    "unparsed_numbers": {}
+   }
+  }
+ },
+ "sweep:three_months": {
+  "fanouts": [],
+  "relationships": [],
+  "skipped": [],
+  "tables": {
+   "sales": {
+    "ambiguous_dates": [],
+    "cleaned": {},
+    "column_map": {
+     "date": "date",
+     "id": "id",
+     "sales": "sales"
+    },
+    "columns": {
+     "date": [
+      "datetime",
+      "",
+      0,
+      90,
+      "",
+      [],
+      0.0,
+      0,
+      "2023-01-01T00:00:00",
+      "2023-03-31T00:00:00",
+      "dates"
+     ],
+     "id": [
+      "identifier",
+      "",
+      0,
+      90,
+      "",
+      [],
+      0.0,
+      0,
+      "0",
+      "89",
+      "named like an ID or code"
+     ],
+     "sales": [
+      "measure",
+      "amount",
+      0,
+      90,
+      "",
+      [],
+      0.0,
+      0,
+      "np.float64(1.108077805137181)",
+      "np.float64(8.991600686550488)",
+      "a money amount"
+     ]
+    },
+    "date_formats": {
+     "date": "%Y-%m-%d"
+    },
+    "duplicate_keys": 0,
+    "exact_duplicates": 0,
+    "extra_rows": 0,
+    "grain": "one row per `id`",
+    "hashes": {
+     "date": "c583395c7d5a6b41",
+     "id": "50f35c548c75c129",
+     "sales": "893f1902b5555814"
+    },
+    "key_status": "single",
+    "placeholders": {},
+    "primary_key": [
+     "id"
+    ],
+    "rows": 90,
+    "source": "sales.csv",
+    "types": {
+     "date": "date",
+     "id": "integer",
+     "sales": "float"
+    },
+    "units": {},
+    "unparsed_dates": {},
+    "unparsed_numbers": {}
+   }
+  }
+ },
+ "sweep:timestamps_tz": {
+  "fanouts": [],
+  "relationships": [],
+  "skipped": [],
+  "tables": {
+   "t": {
+    "ambiguous_dates": [],
+    "cleaned": {},
+    "column_map": {
+     "amount": "amount",
+     "created_at": "created_at",
+     "id": "id"
+    },
+    "columns": {
+     "amount": [
+      "measure",
+      "amount",
+      0,
+      50,
+      "",
+      [],
+      0.0,
+      0,
+      "np.float64(1.8668893438892715)",
+      "np.float64(8.788587882343851)",
+      "a money amount"
+     ],
+     "created_at": [
+      "datetime",
+      "",
+      0,
+      28,
+      "",
+      [],
+      0.0,
+      0,
+      "2022-01-01T10:00:00",
+      "2022-01-28T10:00:00",
+      "date and time"
+     ],
+     "id": [
+      "identifier",
+      "",
+      0,
+      50,
+      "",
+      [],
+      0.0,
+      0,
+      "0",
+      "49",
+      "named like an ID or code"
+     ]
+    },
+    "date_formats": {
+     "created_at": "ISO8601"
+    },
+    "duplicate_keys": 0,
+    "exact_duplicates": 0,
+    "extra_rows": 0,
+    "grain": "one row per `id`",
+    "hashes": {
+     "amount": "622a1cb3bbb2f0d6",
+     "created_at": "dd475d38c0da5d86",
+     "id": "9be607546c08e5b9"
+    },
+    "key_status": "single",
+    "placeholders": {},
+    "primary_key": [
+     "id"
+    ],
+    "rows": 50,
+    "source": "t.csv",
+    "types": {
+     "amount": "float",
+     "created_at": "timestamp",
+     "id": "integer"
+    },
+    "units": {},
+    "unparsed_dates": {},
+    "unparsed_numbers": {}
+   }
+  }
+ },
+ "sweep:two_unrelated": {
+  "fanouts": [],
+  "relationships": [],
+  "skipped": [],
+  "tables": {
+   "a": {
+    "ambiguous_dates": [],
+    "cleaned": {},
+    "column_map": {
+     "x": "x"
+    },
+    "columns": {
+     "x": [
+      "measure",
+      "other",
+      0,
+      10,
+      "",
+      [],
+      0.0,
+      0,
+      "0",
+      "9",
+      "numbers"
+     ]
+    },
+    "date_formats": {},
+    "duplicate_keys": 0,
+    "exact_duplicates": 0,
+    "extra_rows": 0,
+    "grain": "one row per `x`",
+    "hashes": {
+     "x": "29dd21f55e4611d4"
+    },
+    "key_status": "single",
+    "placeholders": {},
+    "primary_key": [
+     "x"
+    ],
+    "rows": 10,
+    "source": "a.csv",
+    "types": {
+     "x": "integer"
+    },
+    "units": {},
+    "unparsed_dates": {},
+    "unparsed_numbers": {}
+   },
+   "b": {
+    "ambiguous_dates": [],
+    "cleaned": {},
+    "column_map": {
+     "y": "y"
+    },
+    "columns": {
+     "y": [
+      "dimension",
+      "",
+      0,
+      2,
+      "",
+      [],
+      1.0,
+      1,
+      "",
+      "",
+      "2 labels to group by"
+     ]
+    },
+    "date_formats": {},
+    "duplicate_keys": 0,
+    "exact_duplicates": 8,
+    "extra_rows": 0,
+    "grain": "no column (or pair of columns) identifies a row",
+    "hashes": {
+     "y": "e5cb69eb8b311037"
+    },
+    "key_status": "none",
+    "placeholders": {},
+    "primary_key": [],
+    "rows": 10,
+    "source": "b.csv",
+    "types": {
+     "y": "text"
+    },
+    "units": {},
+    "unparsed_dates": {},
+    "unparsed_numbers": {}
+   }
+  }
+ },
+ "sweep:unicode_values": {
+  "fanouts": [],
+  "relationships": [],
+  "skipped": [],
+  "tables": {
+   "t": {
+    "ambiguous_dates": [],
+    "cleaned": {},
+    "column_map": {
+     "amount": "amount",
+     "column_2": "城市",
+     "id": "id",
+     "order_date": "order_date"
+    },
+    "columns": {
+     "amount": [
+      "measure",
+      "amount",
+      0,
+      80,
+      "",
+      [],
+      0.0,
+      0,
+      "np.float64(1.0779308677570842)",
+      "np.float64(8.87669711385459)",
+      "a money amount"
+     ],
+     "column_2": [
+      "dimension",
+      "",
+      0,
+      3,
+      "",
+      [],
+      3.35,
+      6,
+      "",
+      "",
+      "3 labels to group by"
+     ],
+     "id": [
+      "identifier",
+      "",
+      0,
+      80,
+      "",
+      [],
+      0.0,
+      0,
+      "0",
+      "79",
+      "named like an ID or code"
+     ],
+     "order_date": [
+      "datetime",
+      "",
+      0,
+      80,
+      "",
+      [],
+      0.0,
+      0,
+      "2021-01-01T00:00:00",
+      "2021-03-21T00:00:00",
+      "dates"
+     ]
+    },
+    "date_formats": {
+     "order_date": "%Y-%m-%d"
+    },
+    "duplicate_keys": 0,
+    "exact_duplicates": 0,
+    "extra_rows": 0,
+    "grain": "one row per `id`",
+    "hashes": {
+     "amount": "a431af9a9cdabd11",
+     "column_2": "ede76ce5f1a7d2f3",
+     "id": "f147b582c08ffede",
+     "order_date": "f4d3fba915cd72af"
+    },
+    "key_status": "single",
+    "placeholders": {},
+    "primary_key": [
+     "id"
+    ],
+    "rows": 80,
+    "source": "t.csv",
+    "types": {
+     "amount": "float",
+     "column_2": "text",
+     "id": "integer",
+     "order_date": "date"
+    },
+    "units": {},
+    "unparsed_dates": {},
+    "unparsed_numbers": {}
+   }
+  }
+ },
+ "sweep:wide": {
+  "fanouts": [],
+  "relationships": [],
+  "skipped": [],
+  "tables": {
+   "t": {
+    "ambiguous_dates": [],
+    "cleaned": {},
+    "column_map": {
+     "amount": "amount",
+     "c0": "c0",
+     "c1": "c1",
+     "c10": "c10",
+     "c11": "c11",
+     "c12": "c12",
+     "c13": "c13",
+     "c14": "c14",
+     "c15": "c15",
+     "c16": "c16",
+     "c17": "c17",
+     "c18": "c18",
+     "c19": "c19",
+     "c2": "c2",
+     "c20": "c20",
+     "c21": "c21",
+     "c22": "c22",
+     "c23": "c23",
+     "c24": "c24",
+     "c25": "c25",
+     "c26": "c26",
+     "c27": "c27",
+     "c28": "c28",
+     "c29": "c29",
+     "c3": "c3",
+     "c30": "c30",
+     "c31": "c31",
+     "c32": "c32",
+     "c33": "c33",
+     "c34": "c34",
+     "c35": "c35",
+     "c36": "c36",
+     "c37": "c37",
+     "c38": "c38",
+     "c39": "c39",
+     "c4": "c4",
+     "c40": "c40",
+     "c41": "c41",
+     "c42": "c42",
+     "c43": "c43",
+     "c44": "c44",
+     "c45": "c45",
+     "c46": "c46",
+     "c47": "c47",
+     "c48": "c48",
+     "c49": "c49",
+     "c5": "c5",
+     "c50": "c50",
+     "c51": "c51",
+     "c52": "c52",
+     "c53": "c53",
+     "c54": "c54",
+     "c55": "c55",
+     "c56": "c56",
+     "c57": "c57",
+     "c58": "c58",
+     "c59": "c59",
+     "c6": "c6",
+     "c60": "c60",
+     "c61": "c61",
+     "c62": "c62",
+     "c63": "c63",
+     "c64": "c64",
+     "c65": "c65",
+     "c66": "c66",
+     "c67": "c67",
+     "c68": "c68",
+     "c69": "c69",
+     "c7": "c7",
+     "c8": "c8",
+     "c9": "c9",
+     "id": "id",
+     "sale_date": "sale_date"
+    },
+    "columns": {
+     "amount": [
+      "measure",
+      "amount",
+      0,
+      100,
+      "",
+      [],
+      0.0,
+      0,
+      "np.float64(1.114718245383766)",
+      "np.float64(4.996839122085022)",
+      "a money amount"
+     ],
+     "c0": [
+      "measure",
+      "other",
+      0,
+      5,
+      "",
+      [],
+      0.0,
+      0,
+      "0",
+      "4",
+      "numbers"
+     ],
+     "c1": [
+      "measure",
+      "other",
+      0,
+      5,
+      "",
+      [],
+      0.0,
+      0,
+      "0",
+      "4",
+      "numbers"
+     ],
+     "c10": [
+      "measure",
+      "other",
+      0,
+      5,
+      "",
+      [],
+      0.0,
+      0,
+      "0",
+      "4",
+      "numbers"
+     ],
+     "c11": [
+      "measure",
+      "other",
+      0,
+      5,
+      "",
+      [],
+      0.0,
+      0,
+      "0",
+      "4",
+      "numbers"
+     ],
+     "c12": [
+      "measure",
+      "other",
+      0,
+      5,
+      "",
+      [],
+      0.0,
+      0,
+      "0",
+      "4",
+      "numbers"
+     ],
+     "c13": [
+      "measure",
+      "other",
+      0,
+      5,
+      "",
+      [],
+      0.0,
+      0,
+      "0",
+      "4",
+      "numbers"
+     ],
+     "c14": [
+      "measure",
+      "other",
+      0,
+      5,
+      "",
+      [],
+      0.0,
+      0,
+      "0",
+      "4",
+      "numbers"
+     ],
+     "c15": [
+      "measure",
+      "other",
+      0,
+      5,
+      "",
+      [],
+      0.0,
+      0,
+      "0",
+      "4",
+      "numbers"
+     ],
+     "c16": [
+      "measure",
+      "other",
+      0,
+      5,
+      "",
+      [],
+      0.0,
+      0,
+      "0",
+      "4",
+      "numbers"
+     ],
+     "c17": [
+      "measure",
+      "other",
+      0,
+      5,
+      "",
+      [],
+      0.0,
+      0,
+      "0",
+      "4",
+      "numbers"
+     ],
+     "c18": [
+      "measure",
+      "other",
+      0,
+      5,
+      "",
+      [],
+      0.0,
+      0,
+      "0",
+      "4",
+      "numbers"
+     ],
+     "c19": [
+      "measure",
+      "other",
+      0,
+      5,
+      "",
+      [],
+      0.0,
+      0,
+      "0",
+      "4",
+      "numbers"
+     ],
+     "c2": [
+      "measure",
+      "other",
+      0,
+      5,
+      "",
+      [],
+      0.0,
+      0,
+      "0",
+      "4",
+      "numbers"
+     ],
+     "c20": [
+      "measure",
+      "other",
+      0,
+      5,
+      "",
+      [],
+      0.0,
+      0,
+      "0",
+      "4",
+      "numbers"
+     ],
+     "c21": [
+      "measure",
+      "other",
+      0,
+      5,
+      "",
+      [],
+      0.0,
+      0,
+      "0",
+      "4",
+      "numbers"
+     ],
+     "c22": [
+      "measure",
+      "other",
+      0,
+      5,
+      "",
+      [],
+      0.0,
+      0,
+      "0",
+      "4",
+      "numbers"
+     ],
+     "c23": [
+      "measure",
+      "other",
+      0,
+      5,
+      "",
+      [],
+      0.0,
+      0,
+      "0",
+      "4",
+      "numbers"
+     ],
+     "c24": [
+      "measure",
+      "other",
+      0,
+      5,
+      "",
+      [],
+      0.0,
+      0,
+      "0",
+      "4",
+      "numbers"
+     ],
+     "c25": [
+      "measure",
+      "other",
+      0,
+      5,
+      "",
+      [],
+      0.0,
+      0,
+      "0",
+      "4",
+      "numbers"
+     ],
+     "c26": [
+      "measure",
+      "other",
+      0,
+      5,
+      "",
+      [],
+      0.0,
+      0,
+      "0",
+      "4",
+      "numbers"
+     ],
+     "c27": [
+      "measure",
+      "other",
+      0,
+      5,
+      "",
+      [],
+      0.0,
+      0,
+      "0",
+      "4",
+      "numbers"
+     ],
+     "c28": [
+      "measure",
+      "other",
+      0,
+      5,
+      "",
+      [],
+      0.0,
+      0,
+      "0",
+      "4",
+      "numbers"
+     ],
+     "c29": [
+      "measure",
+      "other",
+      0,
+      5,
+      "",
+      [],
+      0.0,
+      0,
+      "0",
+      "4",
+      "numbers"
+     ],
+     "c3": [
+      "measure",
+      "other",
+      0,
+      5,
+      "",
+      [],
+      0.0,
+      0,
+      "0",
+      "4",
+      "numbers"
+     ],
+     "c30": [
+      "measure",
+      "other",
+      0,
+      5,
+      "",
+      [],
+      0.0,
+      0,
+      "0",
+      "4",
+      "numbers"
+     ],
+     "c31": [
+      "measure",
+      "other",
+      0,
+      5,
+      "",
+      [],
+      0.0,
+      0,
+      "0",
+      "4",
+      "numbers"
+     ],
+     "c32": [
+      "measure",
+      "other",
+      0,
+      5,
+      "",
+      [],
+      0.0,
+      0,
+      "0",
+      "4",
+      "numbers"
+     ],
+     "c33": [
+      "measure",
+      "other",
+      0,
+      5,
+      "",
+      [],
+      0.0,
+      0,
+      "0",
+      "4",
+      "numbers"
+     ],
+     "c34": [
+      "measure",
+      "other",
+      0,
+      5,
+      "",
+      [],
+      0.0,
+      0,
+      "0",
+      "4",
+      "numbers"
+     ],
+     "c35": [
+      "measure",
+      "other",
+      0,
+      5,
+      "",
+      [],
+      0.0,
+      0,
+      "0",
+      "4",
+      "numbers"
+     ],
+     "c36": [
+      "measure",
+      "other",
+      0,
+      5,
+      "",
+      [],
+      0.0,
+      0,
+      "0",
+      "4",
+      "numbers"
+     ],
+     "c37": [
+      "measure",
+      "other",
+      0,
+      5,
+      "",
+      [],
+      0.0,
+      0,
+      "0",
+      "4",
+      "numbers"
+     ],
+     "c38": [
+      "measure",
+      "other",
+      0,
+      5,
+      "",
+      [],
+      0.0,
+      0,
+      "0",
+      "4",
+      "numbers"
+     ],
+     "c39": [
+      "measure",
+      "other",
+      0,
+      5,
+      "",
+      [],
+      0.0,
+      0,
+      "0",
+      "4",
+      "numbers"
+     ],
+     "c4": [
+      "measure",
+      "other",
+      0,
+      5,
+      "",
+      [],
+      0.0,
+      0,
+      "0",
+      "4",
+      "numbers"
+     ],
+     "c40": [
+      "measure",
+      "other",
+      0,
+      5,
+      "",
+      [],
+      0.0,
+      0,
+      "0",
+      "4",
+      "numbers"
+     ],
+     "c41": [
+      "measure",
+      "other",
+      0,
+      5,
+      "",
+      [],
+      0.0,
+      0,
+      "0",
+      "4",
+      "numbers"
+     ],
+     "c42": [
+      "measure",
+      "other",
+      0,
+      5,
+      "",
+      [],
+      0.0,
+      0,
+      "0",
+      "4",
+      "numbers"
+     ],
+     "c43": [
+      "measure",
+      "other",
+      0,
+      5,
+      "",
+      [],
+      0.0,
+      0,
+      "0",
+      "4",
+      "numbers"
+     ],
+     "c44": [
+      "measure",
+      "other",
+      0,
+      5,
+      "",
+      [],
+      0.0,
+      0,
+      "0",
+      "4",
+      "numbers"
+     ],
+     "c45": [
+      "measure",
+      "other",
+      0,
+      5,
+      "",
+      [],
+      0.0,
+      0,
+      "0",
+      "4",
+      "numbers"
+     ],
+     "c46": [
+      "measure",
+      "other",
+      0,
+      5,
+      "",
+      [],
+      0.0,
+      0,
+      "0",
+      "4",
+      "numbers"
+     ],
+     "c47": [
+      "measure",
+      "other",
+      0,
+      5,
+      "",
+      [],
+      0.0,
+      0,
+      "0",
+      "4",
+      "numbers"
+     ],
+     "c48": [
+      "measure",
+      "other",
+      0,
+      5,
+      "",
+      [],
+      0.0,
+      0,
+      "0",
+      "4",
+      "numbers"
+     ],
+     "c49": [
+      "measure",
+      "other",
+      0,
+      5,
+      "",
+      [],
+      0.0,
+      0,
+      "0",
+      "4",
+      "numbers"
+     ],
+     "c5": [
+      "measure",
+      "other",
+      0,
+      5,
+      "",
+      [],
+      0.0,
+      0,
+      "0",
+      "4",
+      "numbers"
+     ],
+     "c50": [
+      "measure",
+      "other",
+      0,
+      5,
+      "",
+      [],
+      0.0,
+      0,
+      "0",
+      "4",
+      "numbers"
+     ],
+     "c51": [
+      "measure",
+      "other",
+      0,
+      5,
+      "",
+      [],
+      0.0,
+      0,
+      "0",
+      "4",
+      "numbers"
+     ],
+     "c52": [
+      "measure",
+      "other",
+      0,
+      5,
+      "",
+      [],
+      0.0,
+      0,
+      "0",
+      "4",
+      "numbers"
+     ],
+     "c53": [
+      "measure",
+      "other",
+      0,
+      5,
+      "",
+      [],
+      0.0,
+      0,
+      "0",
+      "4",
+      "numbers"
+     ],
+     "c54": [
+      "measure",
+      "other",
+      0,
+      5,
+      "",
+      [],
+      0.0,
+      0,
+      "0",
+      "4",
+      "numbers"
+     ],
+     "c55": [
+      "measure",
+      "other",
+      0,
+      5,
+      "",
+      [],
+      0.0,
+      0,
+      "0",
+      "4",
+      "numbers"
+     ],
+     "c56": [
+      "measure",
+      "other",
+      0,
+      5,
+      "",
+      [],
+      0.0,
+      0,
+      "0",
+      "4",
+      "numbers"
+     ],
+     "c57": [
+      "measure",
+      "other",
+      0,
+      5,
+      "",
+      [],
+      0.0,
+      0,
+      "0",
+      "4",
+      "numbers"
+     ],
+     "c58": [
+      "measure",
+      "other",
+      0,
+      5,
+      "",
+      [],
+      0.0,
+      0,
+      "0",
+      "4",
+      "numbers"
+     ],
+     "c59": [
+      "measure",
+      "other",
+      0,
+      5,
+      "",
+      [],
+      0.0,
+      0,
+      "0",
+      "4",
+      "numbers"
+     ],
+     "c6": [
+      "measure",
+      "other",
+      0,
+      5,
+      "",
+      [],
+      0.0,
+      0,
+      "0",
+      "4",
+      "numbers"
+     ],
+     "c60": [
+      "measure",
+      "other",
+      0,
+      5,
+      "",
+      [],
+      0.0,
+      0,
+      "0",
+      "4",
+      "numbers"
+     ],
+     "c61": [
+      "measure",
+      "other",
+      0,
+      5,
+      "",
+      [],
+      0.0,
+      0,
+      "0",
+      "4",
+      "numbers"
+     ],
+     "c62": [
+      "measure",
+      "other",
+      0,
+      5,
+      "",
+      [],
+      0.0,
+      0,
+      "0",
+      "4",
+      "numbers"
+     ],
+     "c63": [
+      "measure",
+      "other",
+      0,
+      5,
+      "",
+      [],
+      0.0,
+      0,
+      "0",
+      "4",
+      "numbers"
+     ],
+     "c64": [
+      "measure",
+      "other",
+      0,
+      5,
+      "",
+      [],
+      0.0,
+      0,
+      "0",
+      "4",
+      "numbers"
+     ],
+     "c65": [
+      "measure",
+      "other",
+      0,
+      5,
+      "",
+      [],
+      0.0,
+      0,
+      "0",
+      "4",
+      "numbers"
+     ],
+     "c66": [
+      "measure",
+      "other",
+      0,
+      5,
+      "",
+      [],
+      0.0,
+      0,
+      "0",
+      "4",
+      "numbers"
+     ],
+     "c67": [
+      "measure",
+      "other",
+      0,
+      5,
+      "",
+      [],
+      0.0,
+      0,
+      "0",
+      "4",
+      "numbers"
+     ],
+     "c68": [
+      "measure",
+      "other",
+      0,
+      5,
+      "",
+      [],
+      0.0,
+      0,
+      "0",
+      "4",
+      "numbers"
+     ],
+     "c69": [
+      "measure",
+      "other",
+      0,
+      5,
+      "",
+      [],
+      0.0,
+      0,
+      "0",
+      "4",
+      "numbers"
+     ],
+     "c7": [
+      "measure",
+      "other",
+      0,
+      5,
+      "",
+      [],
+      0.0,
+      0,
+      "0",
+      "4",
+      "numbers"
+     ],
+     "c8": [
+      "measure",
+      "other",
+      0,
+      5,
+      "",
+      [],
+      0.0,
+      0,
+      "0",
+      "4",
+      "numbers"
+     ],
+     "c9": [
+      "measure",
+      "other",
+      0,
+      5,
+      "",
+      [],
+      0.0,
+      0,
+      "0",
+      "4",
+      "numbers"
+     ],
+     "id": [
+      "identifier",
+      "",
+      0,
+      100,
+      "",
+      [],
+      0.0,
+      0,
+      "0",
+      "99",
+      "named like an ID or code"
+     ],
+     "sale_date": [
+      "datetime",
+      "",
+      0,
+      100,
+      "",
+      [],
+      0.0,
+      0,
+      "2021-01-01T00:00:00",
+      "2021-04-10T00:00:00",
+      "dates"
+     ]
+    },
+    "date_formats": {
+     "sale_date": "%Y-%m-%d"
+    },
+    "duplicate_keys": 0,
+    "exact_duplicates": 0,
+    "extra_rows": 0,
+    "grain": "one row per `id`",
+    "hashes": {
+     "amount": "b3a1e5094297d1ea",
+     "c0": "91d7dc711fcc8166",
+     "c1": "7cc9ffe3f5010bba",
+     "c10": "9fe418b94aa05d4e",
+     "c11": "f9d91ea525ffa562",
+     "c12": "684baefe12a1f639",
+     "c13": "7ef5683a5df330c2",
+     "c14": "2068f12213d20fe1",
+     "c15": "7141f5f53f14ed2c",
+     "c16": "d4929361a7b31ce4",
+     "c17": "3d52518820f28c1d",
+     "c18": "2c92951c7f5c573c",
+     "c19": "2a765dbd6e7df3e1",
+     "c2": "35352964d7e9ff43",
+     "c20": "4783485a25c3dbe6",
+     "c21": "c25cf95be21b3b6b",
+     "c22": "4df1af45e43e55bc",
+     "c23": "356eeb4df99096a7",
+     "c24": "5fd90f2359347832",
+     "c25": "850d3db735a8659c",
+     "c26": "45f5fe211a8f2210",
+     "c27": "8590f550f2288d94",
+     "c28": "c66f250e0884e606",
+     "c29": "71dfe9e05f90f76c",
+     "c3": "aaca564777678dcc",
+     "c30": "639ebec6639a0334",
+     "c31": "e9aaa0268800ad78",
+     "c32": "791e0f58768f82b9",
+     "c33": "4487bd8b0af0196c",
+     "c34": "9489aa908392b37f",
+     "c35": "6a98319590a1ebbf",
+     "c36": "84d67c3f4e80db9e",
+     "c37": "f0df143c7ca976e9",
+     "c38": "a470166d80c9245d",
+     "c39": "08bd1ddd4b3e968d",
+     "c4": "6dbcc7be335c2909",
+     "c40": "4cda4170cf44067b",
+     "c41": "52cc647fcdaf9fee",
+     "c42": "4180b8fb0dea3fbc",
+     "c43": "e2b2d562af2b9afc",
+     "c44": "8451895993276ef5",
+     "c45": "3f651c12d0bf1f35",
+     "c46": "c37caa2527f362bc",
+     "c47": "7e80383c5d884c17",
+     "c48": "c9934c91f8f72691",
+     "c49": "498c84b1b2863d58",
+     "c5": "7b9bc2a0ddd84c87",
+     "c50": "fb8a4b34d46eef79",
+     "c51": "c452727a4207e1af",
+     "c52": "4f1afff5b321ef57",
+     "c53": "21537ea5aabbfe10",
+     "c54": "cc4f93a4a0b21c3f",
+     "c55": "6625e2de15a6f96b",
+     "c56": "5d0ab986257961a1",
+     "c57": "ba5e62107ccf343a",
+     "c58": "ae812c5627411881",
+     "c59": "ec5153a9d34ed8d9",
+     "c6": "a6f6e14e92a5dfc2",
+     "c60": "34677eb773d100ef",
+     "c61": "7bbbf89e81e4a749",
+     "c62": "77d6ae64e9740f61",
+     "c63": "2130e42481f11418",
+     "c64": "0b5f7b3fade96982",
+     "c65": "feea42408f58467a",
+     "c66": "2f413e14b28d4900",
+     "c67": "199778acd9d4e2f8",
+     "c68": "69d73b9da7794637",
+     "c69": "96e7dd661e46e8cc",
+     "c7": "86dec0172e49a050",
+     "c8": "6ca5a7e39dea2179",
+     "c9": "ef5e09938df88118",
+     "id": "50703a5fac96bb84",
+     "sale_date": "bd3d631396c3d1fd"
+    },
+    "key_status": "single",
+    "placeholders": {},
+    "primary_key": [
+     "id"
+    ],
+    "rows": 100,
+    "source": "t.csv",
+    "types": {
+     "amount": "float",
+     "c0": "integer",
+     "c1": "integer",
+     "c10": "integer",
+     "c11": "integer",
+     "c12": "integer",
+     "c13": "integer",
+     "c14": "integer",
+     "c15": "integer",
+     "c16": "integer",
+     "c17": "integer",
+     "c18": "integer",
+     "c19": "integer",
+     "c2": "integer",
+     "c20": "integer",
+     "c21": "integer",
+     "c22": "integer",
+     "c23": "integer",
+     "c24": "integer",
+     "c25": "integer",
+     "c26": "integer",
+     "c27": "integer",
+     "c28": "integer",
+     "c29": "integer",
+     "c3": "integer",
+     "c30": "integer",
+     "c31": "integer",
+     "c32": "integer",
+     "c33": "integer",
+     "c34": "integer",
+     "c35": "integer",
+     "c36": "integer",
+     "c37": "integer",
+     "c38": "integer",
+     "c39": "integer",
+     "c4": "integer",
+     "c40": "integer",
+     "c41": "integer",
+     "c42": "integer",
+     "c43": "integer",
+     "c44": "integer",
+     "c45": "integer",
+     "c46": "integer",
+     "c47": "integer",
+     "c48": "integer",
+     "c49": "integer",
+     "c5": "integer",
+     "c50": "integer",
+     "c51": "integer",
+     "c52": "integer",
+     "c53": "integer",
+     "c54": "integer",
+     "c55": "integer",
+     "c56": "integer",
+     "c57": "integer",
+     "c58": "integer",
+     "c59": "integer",
+     "c6": "integer",
+     "c60": "integer",
+     "c61": "integer",
+     "c62": "integer",
+     "c63": "integer",
+     "c64": "integer",
+     "c65": "integer",
+     "c66": "integer",
+     "c67": "integer",
+     "c68": "integer",
+     "c69": "integer",
+     "c7": "integer",
+     "c8": "integer",
+     "c9": "integer",
+     "id": "integer",
+     "sale_date": "date"
+    },
+    "units": {},
+    "unparsed_dates": {},
+    "unparsed_numbers": {}
+   }
+  }
+ },
+ "sweep:zero_revenue_quarter": {
+  "fanouts": [],
+  "relationships": [],
+  "skipped": [],
+  "tables": {
+   "t": {
+    "ambiguous_dates": [],
+    "cleaned": {},
+    "column_map": {
+     "amount": "amount",
+     "id": "id",
+     "order_date": "order_date"
+    },
+    "columns": {
+     "amount": [
+      "measure",
+      "amount",
+      0,
+      301,
+      "",
+      [],
+      0.0,
+      0,
+      "np.float64(0.0)",
+      "np.float64(8.99374934000647)",
+      "a money amount"
+     ],
+     "id": [
+      "identifier",
+      "",
+      0,
+      400,
+      "",
+      [],
+      0.0,
+      0,
+      "0",
+      "399",
+      "named like an ID or code"
+     ],
+     "order_date": [
+      "datetime",
+      "",
+      0,
+      400,
+      "",
+      [],
+      0.0,
+      0,
+      "2021-01-01T00:00:00",
+      "2022-02-04T00:00:00",
+      "dates"
+     ]
+    },
+    "date_formats": {
+     "order_date": "%Y-%m-%d"
+    },
+    "duplicate_keys": 0,
+    "exact_duplicates": 0,
+    "extra_rows": 0,
+    "grain": "one row per `id`",
+    "hashes": {
+     "amount": "cc09ab65902507b8",
+     "id": "e8e2bb13995dfcf7",
+     "order_date": "b3507663c01a8dad"
+    },
+    "key_status": "single",
+    "placeholders": {},
+    "primary_key": [
+     "id"
+    ],
+    "rows": 400,
+    "source": "t.csv",
+    "types": {
+     "amount": "float",
+     "id": "integer",
+     "order_date": "date"
+    },
+    "units": {},
+    "unparsed_dates": {},
+    "unparsed_numbers": {}
+   }
+  }
+ }
+}

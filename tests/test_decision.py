@@ -1,166 +1,94 @@
-import numpy as np
 import pandas as pd
+import pytest
 
-from automl.decision import decide
-from automl.profiling import profile_dataset
-
-
-def run(df, target):
-    return decide(df, profile_dataset(df), target)
+from autosql import read_files
+from conftest import analyse, as_csv, catalog_from
 
 
 def keys(d):
     return [s.key for s in d.steps]
 
 
-def test_messy_columns_are_dropped_or_converted(classification_df):
-    d = run(classification_df, "churn")
-    assert set(d.drop_cols) == {"customer_id", "source"}
-    assert d.date_cols == ["signup"]
-    assert "signup_year" in d.num_features and "city" in d.cat_features
-    assert {"id_column", "constant_column", "datetime_column", "missing_values"} <= set(keys(d))
+def test_northwind_auto(northwind):
+    d = northwind
+    assert d.analysis == "kpi"
+    assert (d.fact, d.line_level, d.header, d.order_key) == ("order_details", True, "orders", "order_id")
+    rev = d.revenue
+    assert (rev.kind, rev.price, rev.quantity, rev.discount, rev.discount_scale) == ("price_qty", "unit_price", "quantity", "discount", 1)
+    assert d.date == ("orders", "order_date") and d.period == "quarter" and d.multi_year
+    assert [d.label(p) for p in d.partial_periods] == ["1998-Q2"]
+    assert [d.label(p) for p in d.compare] == ["1997-Q4", "1998-Q1"]
+    assert [d.label(p) for p in d.yoy] == ["1997-Q1", "1998-Q1"]
+    assert d.lead == ("orders", "order_date", "shipped_date") and d.required == "required_date"
+    assert d.rating is None and d.customer == ("orders", "customer_id")
+    assert [(x.table, x.column) for x in d.dimensions[:2]] == [("customers", "country"), ("categories", "category_name")]
+    assert d.item[:2] == ("products", "product_name")
+    assert d.null_trap["not_in"][0].child_col == "reports_to"
+    assert d.null_trap["count"] == ("orders", "shipped_date")
+    assert {"line_grain", "header_table", "partial_period", "lead_time", "late_flag", "fanout", "fk_self", "fk_suggested"} <= set(keys(d))
+    assert d.skipped == {}
 
 
-def test_imbalanced_binary_classification(classification_df):
-    d = run(classification_df, "churn")
-    assert (d.task, d.subtype, d.model) == ("classification", "binary", "RandomForestClassifier")
-    assert d.class_weight and d.stratify and d.primary_metric == "Macro F1"
-    assert "class_weight='balanced'" in d.model_constructor()
-    assert "imbalanced" in keys(d)
+def test_ticking_a_suggested_link_adds_the_shipper_dimension(northwind_catalog):
+    d = analyse(northwind_catalog, accept=["orders.ship_via → shippers.shipper_id"])
+    assert ("shippers", "company_name", "fulfilment") in [(x.table, x.column, x.group) for x in d.dimensions]
 
 
-def test_numeric_target_with_few_values_is_classification():
-    rng = np.random.default_rng(0)
-    df = pd.DataFrame({"x": rng.random(300), "grade": rng.integers(1, 6, 300)})
-    d = run(df, "grade")
-    assert d.task == "classification" and d.subtype == "multiclass"
-    assert d.model == "LogisticRegression"  # small data -> simple model
+def test_new_wheels_shape(new_wheels_catalog):
+    d = analyse(new_wheels_catalog)
+    assert (d.fact, d.line_level, d.header, d.order_key) == ("orders", False, None, "order_id")
+    assert d.revenue.price == "vehicle_price" and d.revenue.discount == "discount"
+    assert d.rating.name == "customer_feedback" and d.rating.scale
+    assert d.lead == ("orders", "order_date", "ship_date") and d.period == "quarter" and not d.multi_year
+    assert d.date_parts == [("orders", "quarter_number", "quarter")]
+    assert {"cardinality", "orphans"} <= set(d.skipped)
 
 
-def test_skewed_regression_uses_log_target(regression_df):
-    d = run(regression_df, "price")
-    assert d.task == "regression" and d.log_target
-    assert d.model == "LinearRegression" and d.scale_numeric
+def test_messy_shop(shop_catalog):
+    d = analyse(shop_catalog)
+    assert d.fact == "order_items" and d.header == "orders" and d.line_level
+    assert "customers" in d.dedupe and "grain_intended" in keys(d)
+    assert next(r for r in d.schema.accepted if r.child_table == "order_items" and r.child_col == "order_id").orphan_rows == 3
 
 
-def test_collinear_small_regression_uses_ridge():
-    rng = np.random.default_rng(0)
-    a = rng.normal(size=200)
-    df = pd.DataFrame({"a": a, "a_copy": a + rng.normal(scale=0.01, size=200), "y": a * 3 + rng.normal(size=200)})
-    assert run(df, "y").model == "RidgeCV"
+def test_validate_mode_skips_kpis(northwind_catalog):
+    d = analyse(northwind_catalog, mode="validate")
+    assert d.analysis == "validate" and "kpis" in d.skipped and "orphans" not in d.skipped
+    assert keys(d)[1] == "focus_validate"
 
 
-def test_clustering_without_target(blobs_df):
-    d = run(blobs_df, None)
-    assert d.task == "clustering" and d.model == "KMeans" and d.scale_numeric
+def test_auto_falls_back_to_validation_without_measure_or_date():
+    people = pd.DataFrame({"person_id": range(50), "team": ["a", "b"] * 25, "name": [f"p{i}" for i in range(50)]})
+    d = analyse(catalog_from({"people": people}))
+    assert d.analysis == "validate" and "focus_auto_validate" in keys(d)
 
 
-def test_large_data_is_sampled_and_uses_fast_model():
-    rng = np.random.default_rng(0)
-    n = 120_000
-    df = pd.DataFrame({"x": rng.random(n), "y": rng.random(n) * 100})
-    d = run(df, "y")
-    assert d.model == "HistGradientBoostingRegressor"
-    assert d.sample_rows == 100_000 and "sampled" in keys(d)  # 5 candidate models are compared, so cap the rows
-    d = run(pd.DataFrame({"x": rng.random(60_000), "y": rng.random(60_000) * 100}), "y")
-    assert d.model == "RandomForestRegressor" and d.sample_rows == 50_000
+def test_manual_picks_and_bad_picks(northwind_catalog):
+    d = analyse(northwind_catalog, mode="manual", picks={"fact": "order_details", "measure": "price_qty", "price": "unit_price",
+                                                         "quantity": "quantity", "date": "orders.required_date"})
+    assert d.analysis == "kpi" and d.revenue.discount is None and d.date == ("orders", "required_date")
+    bad = analyse(northwind_catalog, mode="manual", picks={"fact": "order_details", "measure": "amount", "amount": "product_id_x"})
+    assert bad.halted and bad.steps[-1].key == "halt_pick"
+    bad_date = analyse(northwind_catalog, mode="manual", picks={"fact": "order_details", "date": "orders.ship_name"})
+    assert bad_date.halted
 
 
-def test_rare_classes_are_removed():
-    rng = np.random.default_rng(0)
-    labels = ["a"] * 100 + ["b"] * 100 + ["only_once"]
-    df = pd.DataFrame({"x": rng.random(201), "label": labels})
-    d = run(df, "label")
-    assert d.rare_classes == ["only_once"] and d.subtype == "binary"
+def test_count_measure_and_percent_discount():
+    df = pd.DataFrame({"ticket_id": range(200), "opened_at": pd.date_range("2023-01-01", periods=200, freq="D").strftime("%Y-%m-%d"),
+                       "status": ["open", "closed"] * 100})
+    d = analyse(catalog_from({"tickets": df}))
+    assert d.revenue.kind == "count" and d.analysis == "kpi" and "rfm" in d.skipped
+    sales = pd.DataFrame({"sale_id": range(100), "unit_price": [9.5, 12.25] * 50, "qty": [1, 2, 3, 4] * 25, "discount_pct": [0, 10, 25, 50] * 25,
+                          "sold_on": pd.date_range("2023-01-01", periods=100, freq="W").strftime("%Y-%m-%d")})
+    d2 = analyse(catalog_from({"sales": sales}))
+    assert d2.revenue.discount_scale == 100 and "discount_percent" in keys(d2)
 
 
-def test_quality_gates():
-    assert keys(run(pd.DataFrame({"a": range(10), "b": range(10)}), None))[-1] == "halt_small"
-    assert run(pd.DataFrame({"a": range(100)}), None).halted
-    empty = pd.DataFrame({"a": [np.nan] * 99 + [1.0], "b": [np.nan] * 99 + [2.0]})
-    assert keys(run(empty, None))[-1] == "halt_missing"
-    dates = pd.DataFrame({"x": range(50), "when": pd.date_range("2024-01-01", periods=50)})
-    assert keys(run(dates, "when"))[-1] == "halt_target_type"
+def test_empty_upload_halts():
+    d = analyse(read_files([("empty.csv", b"a,b\n")]))
+    assert d.halted and d.steps[-1].key == "halt_empty"
 
 
-def test_every_step_reads_as_a_sentence(classification_df):
-    for s in run(classification_df, "churn").steps:
-        assert s.found and s.why and s.action
-        assert "{" not in s.markdown()  # no unfilled template placeholders
-
-
-def test_metric_choice_follows_class_balance():
-    """Accuracy hides failure on a minority class, so it is only used when classes are close to even."""
-    rng = np.random.default_rng(0)
-    x = rng.random(1000)
-    even = pd.DataFrame({"x": x, "y": np.where(x > 0.5, "a", "b")})                      # 50 / 50
-    uneven = pd.DataFrame({"x": x, "y": np.where(x > 0.7, "yes", "no")})                 # 30 / 70
-    rare = pd.DataFrame({"x": x, "y": np.where(x > 0.9, "yes", "no")})                   # 10 / 90
-    assert run(even, "y").primary_metric == "Accuracy"
-    d = run(uneven, "y")
-    assert d.primary_metric == "Macro F1" and not d.class_weight and "uneven" in keys(d)
-    d = run(rare, "y")
-    assert d.primary_metric == "Macro F1" and d.class_weight
-
-
-# ── Choosing the target: let the engine decide / pick it / no target ─────────
-def test_auto_mode_finds_an_outcome_column():
-    from pathlib import Path
-    from automl.decision import resolve_target
-    hotels = pd.read_csv(Path(__file__).resolve().parents[1] / "examples" / "inn_hotels" / "INNHotelsGroup.csv")
-    p = profile_dataset(hotels)
-    target, step = resolve_target(p, "auto")
-    assert target == "booking_status" and step.key == "target_auto_found"
-    d = decide(hotels, p, target, step)
-    assert d.task == "classification" and keys(d)[1] == "target_auto_found"   # second line of the trace
-
-    target, step = resolve_target(p, "none")                                   # same file, user says "no target"
-    d = decide(hotels, p, target, step)
-    assert target is None and d.task == "clustering" and "booking_status" in d.drop_cols
-
-
-def test_auto_mode_chooses_clustering_when_nothing_looks_like_an_outcome():
-    from automl.decision import resolve_target
-    rng = np.random.default_rng(0)
-    df = pd.DataFrame({"height": rng.normal(170, 10, 200), "weight": rng.normal(70, 8, 200)})
-    p = profile_dataset(df)
-    target, step = resolve_target(p, "auto")
-    assert target is None and step.key == "target_auto_none"
-    assert decide(df, p, target, step).task == "clustering"
-
-
-def test_manual_mode_respects_the_user_and_mentions_the_engines_suggestion():
-    from automl.decision import resolve_target
-    rng = np.random.default_rng(0)
-    df = pd.DataFrame({"x": rng.random(300), "price": rng.random(300) * 100, "status": rng.choice(["a", "b"], 300),
-                       "when": pd.date_range("2024-01-01", periods=300).astype(str)})
-    p = profile_dataset(df)
-    target, step = resolve_target(p, "manual", "price")
-    assert target == "price" and "`status`" in step.found                     # engine would have picked status
-    assert decide(df, p, target, step).task == "regression"
-    _, same = resolve_target(p, "manual", "status")
-    assert "suggests the same column" in same.found
-    target, step = resolve_target(p, "manual", "when")                       # a date can't be predicted here
-    assert keys(decide(df, p, target, step))[-1] == "halt_target_type"
-    for bad in [("manual", "nope"), ("guess", None)]:
-        try:
-            resolve_target(p, *bad)
-            raise AssertionError("expected ValueError")
-        except ValueError:
-            pass
-
-
-def test_auto_mode_finds_a_numeric_outcome_by_name():
-    from sklearn.datasets import load_diabetes
-    from automl.decision import resolve_target
-    df = load_diabetes(as_frame=True).frame        # outcome column is literally called "target", 214 values
-    p = profile_dataset(df)
-    target, step = resolve_target(p, "auto")
-    assert target == "target" and "numeric with 214 values" in step.found
-    assert decide(df, p, target, step).task == "regression"
-
-
-def test_an_id_column_cannot_be_the_target():
-    df = pd.DataFrame({"Booking_ID": [f"B{i:05d}" for i in range(200)], "x": np.random.default_rng(0).normal(size=200)})
-    d = run(df, "Booking_ID")
-    assert d.halted and keys(d)[-1] == "halt_target_type" and "names rows" in d.steps[-1].why
+def test_unknown_mode():
+    with pytest.raises(ValueError):
+        analyse(read_files([("x.csv", as_csv(pd.DataFrame({"a": [1]})))]), mode="guess")

@@ -3,13 +3,13 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>AutoML Explorer Roadmap</title>
+<title>AutoSQL Explorer Roadmap</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,600;12..96,800&family=IBM+Plex+Sans:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500&display=swap">
 <style>
-/* Layout concept: a transit map. One shared trunk line every file rides, a junction where the task is chosen,
-   three coloured lines (regression / classification / clustering), then the shared modelling line. Each stop
-   lists its real IF -> THEN conditions. Example buttons light up the exact route one real file takes. */
+/* Layout concept: a transit map. One trunk line every upload rides (load, keys, links, validation), a junction
+   where the focus is chosen, three coloured lines (KPIs / window functions / root cause), then the shared
+   "fast & correct" line. Each stop lists its real IF -> THEN conditions. Example buttons light up one route. */
 :root {
   --bg: #f3f5f8; --surface: #ffffff; --ink: #18202c; --muted: #5a6475; --rule: #d6dbe4; --chip: #eef1f6;
   --trunk: #2b3443; --reg: #0b8577; --cls: #b8620b; --clu: #6a4dc0; --stop: #b3261e; --ok: #23784a;
@@ -108,26 +108,26 @@ pre { margin: 0; overflow-x: auto; background: var(--chip); border-radius: 8px; 
 <body>
 
 <div class="page">
-  <p class="eyebrow">AutoML Explorer · how the engine decides</p>
-  <h1>AutoML Explorer Roadmap</h1>
+  <p class="eyebrow">AutoSQL Explorer · how the engine decides</p>
+  <h1>AutoSQL Explorer Roadmap</h1>
   <p class="lede">Every stop on this map is one step the app runs. Each card says what happens, why, and the exact rules
     (<b>IF</b> this is true <b>THEN</b> that happens). Follow the dark line from your upload to the junction, then the
-    coloured line for your task. Pick an example to light up the route a real file takes.</p>
+    coloured lines of the analysis. Pick an example to light up the route a real upload takes.</p>
 
   <div class="controls">
     <div class="legend" aria-label="Line colours">
-      <span><i class="swatch" style="--c: var(--trunk)"></i>Every file</span>
-      <span><i class="swatch" style="--c: var(--reg)"></i>Regression (predict a number)</span>
-      <span><i class="swatch" style="--c: var(--cls)"></i>Classification (predict a label)</span>
-      <span><i class="swatch" style="--c: var(--clu)"></i>Clustering (find groups)</span>
+      <span><i class="swatch" style="--c: var(--trunk)"></i>Every upload: schema and validation</span>
+      <span><i class="swatch" style="--c: var(--reg)"></i>KPIs</span>
+      <span><i class="swatch" style="--c: var(--cls)"></i>Window functions</span>
+      <span><i class="swatch" style="--c: var(--clu)"></i>Root cause</span>
       <span><i class="swatch" style="--c: var(--muted); height: 6px; border: 1px dashed var(--muted); background: transparent"></i>Dashed stop = only when its condition holds</span>
     </div>
-    <div class="picker" role="group" aria-label="Trace an example file">
+    <div class="picker" role="group" aria-label="Trace an example upload">
       <span class="eyebrow">Trace</span>
-      <button type="button" id="t-all" data-trace="" aria-pressed="true">Whole map</button>
-      <button type="button" id="t-inn" data-trace="inn" aria-pressed="false">Hotel bookings</button>
-      <button type="button" id="t-dia" data-trace="dia" aria-pressed="false">Diabetes (number)</button>
-      <button type="button" id="t-iris" data-trace="iris" aria-pressed="false">Iris, no target</button>
+      <button type="button" data-trace="" aria-pressed="true">Whole map</button>
+      <button type="button" data-trace="nw" aria-pressed="false">Northwind (8 tables)</button>
+      <button type="button" data-trace="wheels" aria-pressed="false">New Wheels shape (1 table)</button>
+      <button type="button" data-trace="staff" aria-pressed="false">Staff list (no sales)</button>
       <p class="trace-note" id="trace-note" aria-live="polite">Showing every possible route.</p>
     </div>
   </div>
@@ -135,276 +135,276 @@ pre { margin: 0; overflow-x: auto; background: var(--chip); border-radius: 8px; 
   <!-- ═════════════ TRUNK ═════════════ -->
   <section class="section">
     <header>
-      <p class="eyebrow">Part 1 · every file rides this line</p>
-      <h2>From upload to the junction</h2>
+      <p class="eyebrow">Part 1 · every upload rides this line</p>
+      <h2>Learn the schema and the grain</h2>
     </header>
     <div class="line">
-      <article class="stop on" data-routes="inn dia iris">
-        <p class="kicker">Stop 1</p><h3>Profile every column</h3>
-        <p class="why">A column's <i>type</i> is how it is stored; its <i>role</i> is how a model should use it. Rules are checked in this order, first match wins.</p>
+      <article class="stop on" data-routes="nw wheels staff">
+        <p class="kicker">Stop 1</p><h3>Load: text first, then types</h3>
+        <p class="why">Reading straight into numbers loses codes like <code>05021</code>; reading straight into text loses dates. So every column is read as text and typed afterwards.</p>
         <ul class="rules">
-          <li><span class="if">IF</span><span>only one distinct value <b>→ constant</b> (dropped)</span></li>
-          <li><span class="if">IF</span><span>stored as a date, or text where ≥ 90% parses as dates <b>→ date</b> (becomes year / month / weekday)</span></li>
-          <li><span class="if">IF</span><span>whole numbers, unique in &gt; 95% of rows, and counting 1, 2, 3… or named like <code>id</code> / <code>key</code> <b>→ ID</b> (dropped)</span></li>
-          <li><span class="if">IF</span><span>other numbers <b>→ numeric</b></span></li>
-          <li><span class="if">IF</span><span>text averaging &gt; 30 characters with spaces <b>→ free text</b> (set aside)</span></li>
-          <li><span class="if">IF</span><span>text unique in &gt; 95% of rows <b>→ ID</b>; &gt; 50 distinct values <b>→ many categories</b>; otherwise <b>→ category</b></span></li>
+          <li><span class="if">IF</span><span>whole numbers with no leading zero <b>→ integer</b>; with ≤ 4 decimals <b>→ decimal</b></span></li>
+          <li><span class="if">IF</span><span>≥ 95% of values parse with <i>one</i> date format <b>→ DATE</b> (or TIMESTAMP when times appear); no day above 12 in m/d vs d/m <b>→ warn: ambiguous</b></span></li>
+          <li><span class="if">IF</span><span>≥ 95% are numbers once a currency sign, thousands separators, <code>%</code> and <code>(12.50)</code> are read <b>→ number</b>, with the sign kept as the unit; <code>-</code>, <code>#N/A</code> <b>→ NULL</b></span></li>
+          <li><span class="if">ALWAYS</span><span>names <b>→ snake_case</b> (<code>OrderID</code> → <code>order_id</code>); a CSV is a table, each Excel sheet is a table, a ZIP holds up to 50 of them</span></li>
         </ul>
-        <p class="ex" data-ex="inn"><code>Booking_ID</code> → ID (100% unique text). <code>arrival_year/month/date</code> detected as one date split in three.</p>
-        <p class="ex" data-ex="dia">All 11 columns numeric; nothing to drop.</p>
-        <p class="ex" data-ex="iris">4 numeric columns.</p>
+        <p class="ex" data-ex="nw">8 CSVs; 75 columns renamed; 18 postal codes keep their leading zero; <code>OrderDate</code> becomes a DATE.</p>
+        <p class="ex" data-ex="wheels">1 CSV; <code>customer_feedback</code> stays text (it is a rating scale, found in Stop 2).</p>
+        <p class="ex" data-ex="staff">1 CSV: <code>employee_id</code>, <code>manager_id</code>, <code>dept</code>.</p>
       </article>
 
-      <article class="stop on" data-routes="inn dia iris">
-        <p class="kicker">Stop 2</p><h3>Choose what to predict</h3>
-        <p class="why">You decide how the target is chosen. Most tables are collected to predict one thing; some have no answer column at all.</p>
+      <article class="stop on" data-routes="nw wheels staff">
+        <p class="kicker">Stop 2</p><h3>Roles and the primary key</h3>
+        <p class="why">A column's <i>type</i> is how it is stored; its <i>role</i> is how SQL should use it: join on an identifier, add up a measure, group by a dimension. The key says what one row is.</p>
         <ul class="rules">
-          <li><span class="if">🤖 AUTO</span><span>a column named like <code>status</code>, <code>target</code>, <code>label</code>, <code>churn</code>, <code>cancel</code>, <code>fraud</code>… with 2–15 values (or numeric with any number of values) <b>→ predict it</b>; else the last column if it is a category with 2–15 values <b>→ predict it</b>; else <b>→ clustering</b> (the engine says why)</span></li>
-          <li><span class="if">🎯 PICK</span><span>you choose any column <b>→ predict it</b> (the trace notes when the engine would have chosen differently)</span></li>
-          <li><span class="if">🔍 NONE</span><span><b>→ clustering</b>; a column named like an outcome is still left out of the groups</span></li>
+          <li><span class="if">IF</span><span>named like <code>…_id</code> / <code>…_code</code> / <code>…_no</code> <b>→ identifier</b>; a number <b>→ measure</b> (price, quantity, discount, charge, amount); 2–50 labels <b>→ dimension</b>; "Very Bad … Very Good" <b>→ rating</b> (1–5)</span></li>
+          <li><span class="if">KEY</span><span>one unique, never-empty column (scored by name and position) <b>→ single</b>; else two IDs together <b>→ composite</b> (order lines); else an ID unique once exact copies are removed, or in ≥ 90% of rows <b>→ meant to be the key</b>: duplicates are listed and removed with <code>ROW_NUMBER()</code></span></li>
+          <li><span class="if">PROOF</span><span><code>COUNT(*)</code> vs <code>COUNT(DISTINCT key)</code> per table, in SQL</span></li>
         </ul>
-        <p class="ex" data-ex="inn">Let the engine decide → <code>booking_status</code> (its name says "status", 2 values).</p>
-        <p class="ex" data-ex="dia">Let the engine decide → <code>target</code> (named like an outcome, numeric with 214 values → regression).</p>
-        <p class="ex" data-ex="iris">Let the engine decide → no outcome column found → clustering.</p>
+        <p class="ex" data-ex="nw"><code>order_details</code>: (<code>order_id</code>, <code>product_id</code>), one row per order line. <code>customers</code>: <code>customer_id</code> beats the also-unique <code>company_name</code>.</p>
+        <p class="ex" data-ex="wheels"><code>order_id</code>, one row per order. <code>customer_feedback</code> → rating; <code>quarter_number</code> → a date part, checked against <code>order_date</code>.</p>
+        <p class="ex" data-ex="staff"><code>employee_id</code>, one row per employee.</p>
       </article>
 
-      <article class="stop on" data-routes="inn dia iris">
-        <p class="kicker">Stop 3</p><h3>Quality gates</h3>
-        <p class="why">Some files can't give a trustworthy result. The app stops and explains instead of guessing.</p>
+      <article class="stop on" data-routes="nw staff">
+        <p class="kicker">Stop 3</p><h3>Foreign keys and cardinality</h3>
+        <p class="why">Matching values prove little: the codes 1, 2, 3 are valid keys of many tables. Names are strong evidence; values alone are only a suggestion.</p>
         <ul class="rules">
-          <li><span class="if stopflag">STOP IF</span><span>fewer than <b>30 rows</b></span></li>
-          <li><span class="if stopflag">STOP IF</span><span>fewer than <b>2 columns</b></span></li>
-          <li><span class="if stopflag">STOP IF</span><span>more than <b>60%</b> of all cells are empty</span></li>
-          <li><span class="if stopflag">STOP IF</span><span>the target is free text, a date, a single value, or an ID (a different value in every row)</span></li>
-          <li><span class="if stopflag">STOP IF</span><span>after clean-up no inputs are left (clustering needs ≥ 2)</span></li>
+          <li><span class="if">IF</span><span>named like another table's key and ≥ 95% of values found there <b>→ used</b></span></li>
+          <li><span class="if">IF</span><span>both columns of a two-column key (<code>region</code> + <code>store_no</code>) and ≥ 95% of the pairs found <b>→ used, joined on both</b></span></li>
+          <li><span class="if">IF</span><span><code>reports_to</code> / <code>manager_id</code> / <code>parent_id</code>, all found in the same table <b>→ used (self-reference)</b></span></li>
+          <li><span class="if">IF</span><span>values only: all found, and equal value sets or a shared name stem <b>→ suggested</b>: you tick it</span></li>
+          <li><span class="if">THEN</span><span>children per parent (1:1 or 1:N); parent numbers summed before and after the join <b>→ fan-out</b></span></li>
         </ul>
-        <p class="ex" data-ex="inn">36,275 rows, 0% empty → passes.</p>
-        <p class="ex" data-ex="dia">442 rows → passes.</p>
-        <p class="ex" data-ex="iris">150 rows → passes.</p>
+        <p class="ex" data-ex="nw">7 used + <code>orders.ship_via → shippers</code> suggested = Microsoft's 8 constraints. <code>freight</code>: 64,942.69, or 207,306.10 after joining lines (3.19×).</p>
+        <p class="ex" data-ex="staff"><code>manager_id → employees</code> (self-reference). It becomes the NULL-trap demo.</p>
       </article>
 
-      <article class="stop on" data-routes="inn dia iris">
-        <p class="kicker">Stop 4</p><h3>Clean up</h3>
-        <p class="why">Messy inputs either crash models or quietly make them worse.</p>
+      <article class="stop on" data-routes="nw wheels staff">
+        <p class="kicker">Stop 4</p><h3>Validate before analysing</h3>
+        <p class="why">Duplicates, NULLs, orphans and missing days all change totals without raising an error.</p>
         <ul class="rules">
-          <li><span class="if">IF</span><span>ID, constant, free text, or &gt; 40% empty <b>→ drop the column</b></span></li>
-          <li><span class="if">IF</span><span>year + month + day columns share a prefix <b>→ build the real date, add weekday</b>; impossible dates (29 Feb 2018) left blank</span></li>
-          <li><span class="if">IF</span><span>exact duplicate rows ≤ <b>5%</b> <b>→ drop</b> (looks like double entry)</span></li>
-          <li><span class="if">IF</span><span>duplicates &gt; 5%, or rows identical apart from the ID <b>→ keep</b>, but also score the model on "unseen" test rows</span></li>
-          <li><span class="if">IF</span><span>no target and a column is <i>named</i> like an outcome <b>→ leave it out of clustering</b></span></li>
-          <li><span class="if">IF</span><span>a number is ±infinity (usually a division by zero) <b>→ treat it as missing</b></span></li>
-          <li><span class="if">ALWAYS</span><span>gaps → median (numbers) or a "missing" category (text)</span></li>
+          <li><span class="if">CHECK</span><span>duplicates: <code>GROUP BY key HAVING COUNT(*) &gt; 1</code></span></li>
+          <li><span class="if">CHECK</span><span>NULLs: <code>COUNT(*) - COUNT(col)</code> for every column; impossible values: a negative price, a discount out of range (negative quantities: likely returns)</span></li>
+          <li><span class="if">CHECK</span><span>dates: MIN / MAX, rows per period; a first or last period with &lt; 90% of its days <b>→ partial</b></span></li>
+          <li><span class="if">CHECK</span><span>orphans: <code>LEFT JOIN … WHERE parent.key IS NULL</code>, and parents nobody points at (<code>NOT EXISTS</code>)</span></li>
+          <li><span class="if stopflag">STOP IF</span><span>no table has any rows</span></li>
         </ul>
-        <p class="ex" data-ex="inn">Drop <code>Booking_ID</code>; add <code>arrival_weekday</code> (37 impossible dates); keep 10,275 look-alike rows (28%).</p>
-        <p class="ex" data-ex="dia">Nothing to clean.</p>
-        <p class="ex" data-ex="iris">1 exact duplicate (0.7%) → dropped.</p>
-      </article>
-
-      <article class="stop on" data-routes="inn dia iris">
-        <p class="kicker">Stop 5 · the junction</p><h3>Pick the task</h3>
-        <p class="why">The type of answer you want decides the whole rest of the route.</p>
-        <ul class="rules">
-          <li><span class="if">IF</span><span>no target <b>→ clustering</b></span></li>
-          <li><span class="if">IF</span><span>target is a number with <b>more than 15</b> distinct values <b>→ regression</b></span></li>
-          <li><span class="if">ELSE</span><span><b>classification</b>: binary if 2 classes, multiclass if more (classes seen only once are dropped first)</span></li>
-          <li><span class="if">IF</span><span>fewer than <b>200 rows</b> <b>→ small-data warning</b>: one test row moves the score a lot</span></li>
-        </ul>
-        <p class="ex" data-ex="inn">2 classes → binary classification.</p>
-        <p class="ex" data-ex="dia">Number with 214 values → regression.</p>
-        <p class="ex" data-ex="iris">No target → clustering.</p>
+        <p class="ex" data-ex="nw">0 duplicates, 0 orphans, no impossible values; 2 customers never ordered; 21 orders not shipped; 1998-Q2 partial (36 of 91 days).</p>
+        <p class="ex" data-ex="wheels">No NULLs; 4 complete quarters; <code>quarter_number</code> agrees with <code>order_date</code> on every row.</p>
+        <p class="ex" data-ex="staff">The one NULL <code>manager_id</code> is the top of the org chart.</p>
       </article>
     </div>
 
-    <div class="junction" aria-hidden="true">
+    <div class="junction">
+      <p class="eyebrow">Junction · what should we measure?</p>
       <div class="fork">
-        <div class="reg"><b>Regression</b><p>"How much?": price, sales, a measurement</p></div>
-        <div class="cls"><b>Classification</b><p>"Which one?": cancel or not, churn, a species</p></div>
-        <div class="clu"><b>Clustering</b><p>"What groups exist?": no answer column</p></div>
+        <div class="reg"><b>🤖 Let the engine decide</b><p>fact table, revenue, date, drivers and dimensions found from the data. No money and no date <b>→ validation only</b></p></div>
+        <div class="cls"><b>🎯 I'll choose</b><p>you pick the fact table, revenue formula, date, keys and up to 3 dimensions; your picks always win</p></div>
+        <div class="clu"><b>🔍 Just validate</b><p>schema, grain, duplicates, NULLs, dates, orphans, EXPLAIN and NULL traps; no KPIs</p></div>
       </div>
     </div>
   </section>
 
-  <!-- ═════════════ BRANCHES ═════════════ -->
+  <!-- ═════════════ ANALYSIS LINES ═════════════ -->
   <section class="section">
     <header>
-      <p class="eyebrow">Part 2 · the three lines</p>
-      <h2>Explore, set the bar, explain with statistics</h2>
+      <p class="eyebrow">Part 2 · the analysis</p>
+      <h2>Build at the right grain, then measure, rank and explain</h2>
     </header>
     <div class="branches">
-      <div class="line reg" aria-label="Regression line">
-        <article class="stop on" data-routes="dia">
-          <p class="kicker">Regression</p><h3>Key drivers</h3>
-          <p class="why">Average target for each group of every column; numbers are cut into 5 equal-sized bands, groups under 30 rows hidden.</p>
-          <p class="ex" data-ex="dia"><code>bmi</code>: average 98 in the lowest band, 218 in the highest.</p>
-        </article>
-        <article class="stop on" data-routes="dia">
-          <p class="kicker">Regression</p><h3>Split, prepare, baseline</h3>
-          <p class="why">80% training / 20% locked test set. The baseline always guesses the average; its R² ≈ 0 is the bar to beat.</p>
-          <ul class="rules"><li><span class="if">IF</span><span>|skew| &gt; 1 and no negatives <b>→ model log(target)</b>, convert back</span></li></ul>
-        </article>
-        <article class="stop on" data-routes="dia">
-          <p class="kicker">Regression</p><h3>Multicollinearity (VIF)</h3>
-          <p class="why">Inputs that copy each other make coefficients unreliable.</p>
-          <ul class="rules"><li><span class="if">WHILE</span><span>any VIF &gt; <b>10</b> <b>→ drop the worst</b>; &lt; 5 is safe, 5–10 "read with care"</span></li></ul>
-          <p class="ex" data-ex="dia"><code>s1</code> removed (VIF 55); largest left 8.2.</p>
-        </article>
-        <article class="stop on" data-routes="dia">
-          <p class="kicker">Regression</p><h3>OLS statistics</h3>
-          <p class="why">y = β₀ + β₁x₁ + … with a p-value and 95% confidence interval for each β, R², adjusted R² and the F-test.</p>
-          <ul class="rules"><li><span class="if">IF</span><span>p &lt; 0.05 <b>→ significant driver</b></span></li></ul>
-          <p class="ex" data-ex="dia">R² 0.52; 5 of 9 inputs significant; <code>bmi</code> +560 per unit.</p>
-        </article>
-        <article class="stop on" data-routes="dia">
-          <p class="kicker">Regression</p><h3>Check assumptions</h3>
-          <p class="why">P-values are only valid if these hold. Each gets a plot and a test.</p>
+      <div class="line reg">
+        <article class="stop on" data-routes="nw wheels">
+          <p class="kicker">KPIs · 1</p><h3>Fact table, grain, revenue</h3>
           <ul class="rules">
-            <li><span class="if">TEST</span><span>linearity (RESET), equal spread (Breusch–Pagan), normal residuals (Jarque–Bera): <b>p ≥ 0.05 = OK</b></span></li>
-            <li><span class="if">TEST</span><span>independence: Durbin–Watson between <b>1.5 and 2.5 = OK</b></span></li>
+            <li><span class="if">FACT</span><span>the table with price × quantity (or an amount) and the most rows</span></li>
+            <li><span class="if">IF</span><span>the order key repeats <b>→ line level</b>: roll lines up to orders <b>before</b> joining order tables</span></li>
+            <li><span class="if">REVENUE</span><span>price × quantity × (1 − discount) › SUM(amount) › row counts; a list price from another table is flagged</span></li>
+            <li><span class="if">IF</span><span>a status (cancelled, refunded, returned, test…), an <code>is_test</code> flag or a second currency <b>→ left out</b> with <code>col IS NULL OR col NOT IN (…)</code>, and reconciled as its own row</span></li>
           </ul>
-          <p class="ex" data-ex="dia">All four pass.</p>
+          <p class="ex" data-ex="nw"><code>order_details</code>, line level, order table <code>orders</code>; revenue net of discount = 1,265,793.04.</p>
+          <p class="ex" data-ex="wheels"><code>orders</code>, one row per order; revenue = vehicle_price × quantity × (1 − discount).</p>
+        </article>
+        <article class="stop on" data-routes="nw wheels">
+          <p class="kicker">KPIs · 2</p><h3>Views with CTEs, reconciled</h3>
+          <ul class="rules">
+            <li><span class="if">BUILD</span><span><code>order_facts</code> (one row per order) and <code>line_facts</code> (one row per line), LEFT JOIN + 'Unknown'</span></li>
+            <li><span class="if">CHECK</span><span>raw table (less what the business rules leave out) = each view = pandas on the uploaded file, to the cent</span></li>
+          </ul>
+          <p class="ex" data-ex="nw">1,265,793.04 four times; gross 1,354,458.59.</p>
+          <p class="ex" data-ex="wheels">One view; reconciled.</p>
+        </article>
+        <article class="stop on" data-routes="nw wheels">
+          <p class="kicker">KPIs · 3</p><h3>KPIs per period, driver next to symptom</h3>
+          <ul class="rules">
+            <li><span class="if">PERIOD</span><span>&gt; 5 years <b>→ year</b>; ≥ 4 complete quarters <b>→ quarter</b>; ≥ 3 complete months <b>→ month</b>; ≥ 4 complete ISO weeks <b>→ week</b>; else <b>→ month</b></span></li>
+            <li><span class="if">ALWAYS</span><span>AOV = revenue ÷ COUNT(DISTINCT order), with the median and P90 by rank; <code>period_index = year × 4 + quarter</code>; <code>LAG</code> kept only for a complete calendar neighbour (QoQ), YoY by joining on <code>period_index − 4</code> (complete periods only); partial periods labelled</span></li>
+            <li><span class="if">THEN</span><span>per day when the two periods differ in length by ≥ 3%; a 95% interval on every change <b>→ real, or within noise</b></span></li>
+          </ul>
+          <p class="ex" data-ex="nw">AOV 1,525.05 (a line: 587.37; the median order: 943.25). 1997-Q4 → 1998-Q1 +64.3%, real; AOV +8.3%, within noise; naive 1998-Q2 −52.4% (partial).</p>
+          <p class="ex" data-ex="wheels">Revenue falls each quarter while ship days rise (40 → 46 in the last two).</p>
+        </article>
+        <article class="stop on optional" data-routes="nw wheels">
+          <p class="kicker">KPIs · 4</p><h3>What discounts cost</h3>
+          <ul class="rules"><li><span class="if">IF</span><span>a discount column <b>→</b> lines per band (<code>CASE</code>), gross − net given away, units per line; band shares with <code>SUM(COUNT(*)) OVER ()</code></span></li></ul>
+          <p class="ex" data-ex="nw">6.5% of gross revenue given away on 39% of lines; discounted lines are 25% bigger.</p>
+          <p class="ex" data-ex="wheels">7.3% of gross revenue given away.</p>
         </article>
       </div>
 
-      <div class="line cls" aria-label="Classification line">
-        <article class="stop optional on" data-routes="inn">
-          <p class="kicker">Classification · binary only</p><h3>Key drivers</h3>
-          <p class="why">Rate of the rarer class (the one worth catching) for each group of every column.</p>
-          <p class="ex" data-ex="inn">Lead time: 11% cancel when booked ≤ 11 days ahead, 72% beyond 151 days.</p>
+      <div class="line cls">
+        <article class="stop on optional" data-routes="nw wheels">
+          <p class="kicker">Windows · 1</p><h3>Running total</h3>
+          <ul class="rules"><li><span class="if">IF</span><span>a date <b>→</b> <code>SUM() OVER (ORDER BY … ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW)</code></span></li></ul>
+          <p class="ex" data-ex="nw">Half of all revenue reached by 1997-Q3.</p>
+          <p class="ex" data-ex="wheels">Cumulative revenue per quarter.</p>
         </article>
-        <article class="stop on" data-routes="inn">
-          <p class="kicker">Classification</p><h3>Split, prepare, baseline</h3>
-          <p class="why">Stratified split keeps the class mix equal in train and test. The baseline always guesses the most common class.</p>
+        <article class="stop on optional" data-routes="nw">
+          <p class="kicker">Windows · 2</p><h3>Moving average and unusual periods</h3>
           <ul class="rules">
-            <li><span class="if">IF</span><span>smallest ÷ largest class &lt; <b>0.25</b> <b>→ imbalanced</b>: class weights on, resampling stop later, score by <b>macro F1</b></span></li>
-            <li><span class="if">ELSE IF</span><span>smallest class under <b>40%</b> (binary) <b>→ uneven</b>: score by <b>macro F1</b>, because accuracy would flatter a model that always says "no"</span></li>
-            <li><span class="if">ELSE</span><span>score by <b>accuracy</b></span></li>
+            <li><span class="if">IF</span><span>≥ 5 periods <b>→</b> 3-period moving average (<code>RANGE BETWEEN 2 PRECEDING AND CURRENT ROW</code>)</span></li>
+            <li><span class="if">THEN</span><span>flag a period only outside the 99% prediction intervals of up to 8 earlier complete periods: their level, |z| ≥ t(0.995, n−1)·√(1 + 1/n), <i>and</i> their trend (a fitted line), so steady growth is not unusual</span></li>
           </ul>
-          <p class="ex" data-ex="inn">32.8% Canceled: not imbalanced (ratio 0.49), but uneven → macro F1. Baseline 0.40.</p>
+          <p class="ex" data-ex="nw">1998-Q1: z = +4.8 against a limit of 4.36 (6 earlier quarters); the trend predicted 196,668.16.</p>
         </article>
-        <article class="stop optional on" data-routes="inn">
-          <p class="kicker">Classification · binary only</p><h3>Logistic regression odds</h3>
-          <p class="why">statsmodels <code>Logit</code>: each input's odds ratio, 95% CI and p-value. 0.5 = halves the odds, 2 = doubles them.</p>
-          <ul class="rules"><li><span class="if">IF</span><span>the fit doesn't converge <b>→ warning</b>: a category is (almost) always one class</span></li></ul>
-          <p class="ex" data-ex="inn">Repeat guest: odds of cancelling −87%; parking needed −84%.</p>
+        <article class="stop on optional" data-routes="nw wheels">
+          <p class="kicker">Windows · 3</p><h3>Top N per group</h3>
+          <ul class="rules"><li><span class="if">IF</span><span>items inside a group (products in a category; else customers in a region) <b>→</b> <code>DENSE_RANK</code> next to <code>ROW_NUMBER</code>, ties reported</span></li></ul>
+          <p class="ex" data-ex="nw">Top 3 products per category; Côte de Blaye leads Beverages.</p>
+          <p class="ex" data-ex="wheels">Top 3 customers per state.</p>
+        </article>
+        <article class="stop on optional" data-routes="nw wheels">
+          <p class="kicker">Windows · 4</p><h3>Pareto / ABC concentration</h3>
+          <ul class="rules"><li><span class="if">IF</span><span>money and a customer <b>→</b> cumulative share with <code>SUM() OVER (ORDER BY … ROWS UNBOUNDED PRECEDING)</code> ÷ <code>SUM() OVER ()</code>; A / B / C at 80% / 95%</span></li></ul>
+          <p class="ex" data-ex="nw">Top 20% of customers → 60% of revenue; class A is 34 customers.</p>
+          <p class="ex" data-ex="wheels">Top 20% of customers → 39% of revenue: no dependence.</p>
+        </article>
+        <article class="stop on optional" data-routes="nw wheels">
+          <p class="kicker">Windows · 5</p><h3>Latest record and RFM</h3>
+          <ul class="rules">
+            <li><span class="if">IF</span><span>a customer and a date <b>→</b> <code>ROW_NUMBER() … = 1</code> per customer; recency to the last date in the data</span></li>
+            <li><span class="if">IF</span><span>and money <b>→</b> <code>CEIL(5 × CUME_DIST())</code> R / F / M scores (equal values, equal scores) and named segments</span></li>
+          </ul>
+          <p class="ex" data-ex="nw">Champions: 24 of 89 customers, 54.4% of revenue.</p>
+          <p class="ex" data-ex="wheels">Recency and RFM for each customer.</p>
+        </article>
+        <article class="stop on optional" data-routes="nw wheels">
+          <p class="kicker">Windows · 6</p><h3>Days between orders, overdue customers</h3>
+          <ul class="rules"><li><span class="if">IF</span><span>a customer and a date <b>→</b> <code>LAG(date) OVER (PARTITION BY customer ORDER BY date)</code>; overdue = silent for more than 2 × their own usual gap (3+ orders)</span></li></ul>
+          <p class="ex" data-ex="nw">Reorders every 59 days on average; 5 of 86 repeat customers overdue.</p>
+          <p class="ex" data-ex="wheels">16 of 49 repeat customers overdue: a third of their revenue.</p>
         </article>
       </div>
 
-      <div class="line clu" aria-label="Clustering line">
-        <article class="stop on" data-routes="iris">
-          <p class="kicker">Clustering</p><h3>Scale everything</h3>
-          <p class="why">K-Means measures distance, so a column in thousands would drown one in fractions.</p>
-          <ul class="rules"><li><span class="if">IF</span><span>more than <b>10,000 rows</b> <b>→ MiniBatchKMeans</b> (faster); else K-Means</span></li></ul>
+      <div class="line clu">
+        <article class="stop on optional" data-routes="nw wheels">
+          <p class="kicker">Root cause · 1</p><h3>Driver tree</h3>
+          <ul class="rules"><li><span class="if">IF</span><span>two consecutive complete periods <b>→</b> Δrevenue = volume + order value, each at the average of the other (exact, nothing left over); then Δ by segment with conditional aggregation</span></li></ul>
+          <p class="ex" data-ex="nw">+116,810.09: 84% from more orders (120 → 182); Beverages 57% of the change.</p>
+          <p class="ex" data-ex="wheels">The fall is mostly fewer orders.</p>
         </article>
-        <article class="stop on" data-routes="iris">
-          <p class="kicker">Clustering</p><h3>PCA</h3>
-          <p class="why">How many directions hold 80% of the information, and which columns build them.</p>
-          <p class="ex" data-ex="iris">2 of 4 components keep 80%; the first two keep 96%.</p>
+        <article class="stop on optional" data-routes="nw wheels">
+          <p class="kicker">Root cause · 2</p><h3>Drill down: symptom next to driver</h3>
+          <ul class="rules">
+            <li><span class="if">IF</span><span>a driver (ship days, late %, rating) <b>→</b> both per complete period and per segment; correlations only with ≥ 6 periods, on levels and on changes, each with a 95% interval</span></li>
+            <li><span class="if">THEN</span><span>driver moved ≥ 10% <b>in the direction that would explain it</b> (more days while revenue fell; a falling rating while revenue fell) <b>→ candidate cause: confirm with a controlled test</b>; else <b>→ not the cause</b></span></li>
+          </ul>
+          <p class="ex" data-ex="nw">Ship days 9.2 → 8.6 while revenue +64%: not the cause.</p>
+          <p class="ex" data-ex="wheels">Ship days +15% while revenue −17%: a candidate cause, to test.</p>
         </article>
-        <article class="stop on" data-routes="iris">
-          <p class="kicker">Clustering</p><h3>Choose k</h3>
-          <p class="why">Try k = 2 to min(8, rows ÷ 10). Elbow chart (inertia) plus silhouette score.</p>
-          <ul class="rules"><li><span class="if">PICK</span><span>the k with the <b>highest silhouette</b></span></li></ul>
-          <p class="ex" data-ex="iris">k = 2, silhouette 0.58 (strong).</p>
-        </article>
-        <article class="stop on" data-routes="iris">
-          <p class="kicker">Clustering</p><h3>Fit and describe</h3>
-          <p class="why">Clusters on a PCA map with centres; each cluster named by its two most unusual columns.</p>
-          <p class="ex" data-ex="iris">Cluster 0 (34%): small petals. Cluster 1 (66%): large petals.</p>
-        </article>
-        <article class="stop on" data-routes="iris">
-          <p class="kicker">Clustering</p><h3>Hierarchical cross-check</h3>
-          <p class="why">Ward dendrogram on ≤ 1,500 rows, cut into the same k; compared with K-Means.</p>
-          <ul class="rules"><li><span class="if">IF</span><span>agreement (adjusted Rand) &gt; <b>0.6</b> <b>→ robust groups</b>; else treat them as tendencies</span></li></ul>
-          <p class="ex" data-ex="iris">Agreement 0.97 → robust.</p>
+        <article class="stop on optional" data-routes="nw wheels">
+          <p class="kicker">Root cause · 3</p><h3>Cohorts</h3>
+          <ul class="rules"><li><span class="if">IF</span><span>a customer and a date <b>→</b> first-order period × periods since (year × 4 + quarter arithmetic)</span></li></ul>
+          <p class="ex" data-ex="nw">The 1996-Q3 cohort is 43 customers.</p>
+          <p class="ex" data-ex="wheels">Quarterly cohorts.</p>
         </article>
       </div>
     </div>
   </section>
 
-  <!-- ═════════════ MODELLING LINE ═════════════ -->
+  <!-- ═════════════ FAST & CORRECT ═════════════ -->
   <section class="section">
     <header>
-      <p class="eyebrow">Part 3 · regression and classification rejoin here</p>
-      <h2>Find the best model, honestly</h2>
-      <p class="lede">The golden rule on this line: every choice (model, settings, threshold, resampling) is made with
-        cross-validation on <b>training rows only</b>. The test set is used once, at the end.</p>
+      <p class="eyebrow">Part 3 · every analysis ends here</p>
+      <h2>Fast and correct</h2>
     </header>
     <div class="line">
-      <article class="stop on" data-routes="inn dia">
-        <p class="kicker">Stop 6</p><h3>Compare 5–7 models</h3>
-        <p class="why">3-fold cross-validation on up to 10,000 training rows. The highest average wins; the rule-of-thumb pick is only a first guess.</p>
+      <article class="stop on" data-routes="nw wheels staff">
+        <p class="kicker">Stop 5</p><h3>Read the plan; keep filters sargable</h3>
         <ul class="rules">
-          <li><span class="if">ALWAYS</span><span>linear, decision tree, random forest (bagging), AdaBoost and gradient boosting (boosting)</span></li>
-          <li><span class="if">IF</span><span>installed <b>→ also XGBoost and LightGBM</b></span></li>
-          <li><span class="if">IF</span><span>the simple linear model is within 0.01 of the winner <b>→ suggest it</b> (easier to explain)</span></li>
+          <li><span class="if">ALWAYS</span><span><code>EXPLAIN</code> (MySQL: <code>EXPLAIN FORMAT=TREE</code>) read into its operators</span></li>
+          <li><span class="if">IF</span><span>a date <b>→</b> <code>YEAR(d) = y</code> vs <code>d &gt;= 'y-01-01' AND d &lt; 'y+1-01-01'</code>: same rows, only the range can use an index</span></li>
+          <li><span class="if">ALWAYS</span><span><code>CREATE INDEX</code> for foreign keys (PostgreSQL doesn't add them) and the date filter</span></li>
         </ul>
-        <p class="ex" data-ex="inn">Macro F1: LightGBM 0.862 ≈ random forest 0.858 ≈ XGBoost 0.857 &gt; … &gt; logistic 0.761.</p>
-        <p class="ex" data-ex="dia">Linear regression wins (0.48): the relationship really is close to a straight line.</p>
+        <p class="ex" data-ex="nw">Both 1997 filters return 408 rows.</p>
+        <p class="ex" data-ex="wheels">Both filters return every 2018 order.</p>
+        <p class="ex" data-ex="staff">The plan of the orphan check.</p>
       </article>
-      <article class="stop optional on" data-routes="">
-        <p class="kicker">Stop 7 · only if imbalanced</p><h3>Handle the rare class</h3>
-        <p class="why">Compare class weights with random oversampling, random undersampling and SMOTE. Resampling happens inside each training fold only.</p>
-        <ul class="rules"><li><span class="if">IF</span><span>smallest ÷ largest class &lt; 0.25 and <code>imbalanced-learn</code> installed <b>→ run this stop</b>; keep the best method</span></li></ul>
-      </article>
-      <article class="stop on" data-routes="inn dia">
-        <p class="kicker">Stop 8</p><h3>Tune the winner</h3>
-        <p class="why">RandomizedSearchCV tries up to 8 setting combinations (depth, learning rate, α/λ regularisation…) with 3-fold CV.</p>
-        <ul class="rules"><li><span class="if">IF</span><span>the winner has no settings to tune (linear regression) <b>→ skip</b></span></li><li><span class="if">IF</span><span>no combination beats the defaults <b>→ keep the defaults</b></span></li></ul>
-        <p class="ex" data-ex="inn">8 combinations tried; none beat LightGBM's defaults (0.859 vs 0.862), so the defaults stay.</p>
-        <p class="ex" data-ex="dia">Linear regression → nothing to tune.</p>
-      </article>
-      <article class="stop on" data-routes="inn dia">
-        <p class="kicker">Stop 9</p><h3>Train on all training rows, sit the final exam</h3>
-        <p class="why">Score on train and test, plus the extras that apply.</p>
+      <article class="stop on" data-routes="nw wheels staff">
+        <p class="kicker">Stop 6</p><h3>NULL traps</h3>
         <ul class="rules">
-          <li><span class="if">GAP</span><span>train − test ≤ 0.05 <b class="good">generalises</b> · ≤ 0.15 <b class="warn">mild overfitting</b> · &gt; 0.15 <b class="bad">overfitting</b></span></li>
-          <li><span class="if">IF</span><span>look-alike rows <b>→ also score test rows with no twin in training</b></span></li>
-          <li><span class="if">IF</span><span>binary <b>→ ROC curve and AUC</b>; regression <b>→ MAE and predicted-vs-actual</b></span></li>
-          <li><span class="if">IF</span><span>test set under 100 rows <b>→ warn</b> that each row is worth several points</span></li>
-          <li><span class="if">IF</span><span>test score ≥ 0.99 <b class="bad">→ leakage warning</b>: real data is rarely that easy, so check that no column gives away the answer</span></li>
+          <li><span class="if">IF</span><span>a link whose column has NULLs <b>→</b> <code>NOT IN</code> vs <code>NOT EXISTS</code> on your data; else one NULL is injected to show it</span></li>
+          <li><span class="if">IF</span><span>a nullable driver <b>→</b> <code>COUNT(*)</code> vs <code>COUNT(col)</code> vs <code>AVG</code></span></li>
+          <li><span class="if">SHOWN</span><span>integer division: <code>2 / 3</code> = 0 in PostgreSQL; write <code>100.0 * a / NULLIF(b, 0)</code></span></li>
         </ul>
-        <p class="ex" data-ex="inn">Test macro F1 0.88 (baseline 0.40), ROC-AUC 0.96; 0.84 on test rows with no twin in training.</p>
-        <p class="ex" data-ex="dia">Test R² 0.45, average error 42.8.</p>
-      </article>
-      <article class="stop optional on" data-routes="inn">
-        <p class="kicker">Stop 10 · binary only</p><h3>Tune the decision threshold</h3>
-        <p class="why">Default: say "yes" above 50% probability. Lower catches more (recall) with more false alarms (precision).</p>
-        <ul class="rules"><li><span class="if">PICK</span><span>the threshold with the best F1, from out-of-fold training predictions</span></li></ul>
-        <p class="ex" data-ex="inn">Threshold 0.44 lifts recall 0.81 → 0.82, but F1 dips slightly, so the note says to keep 0.50.</p>
-      </article>
-      <article class="stop on" data-routes="inn dia">
-        <p class="kicker">Stop 11</p><h3>Readable rules and importance</h3>
-        <p class="why">A 3-question decision tree in real units, then permutation importance (how much the score drops when a column is shuffled).</p>
-        <ul class="rules"><li><span class="if">IF</span><span>the 3-question tree is no better than the baseline <b>→ say so</b>: the pattern needs many columns</span></li><li><span class="if">IF</span><span>it matches or beats the full model <b>→ recommend the simple rules</b></span></li></ul>
-        <p class="ex" data-ex="inn">First question: is lead time ≤ 151.5 days?</p>
-        <p class="ex" data-ex="dia">First question: is bmi ≤ 0.005?</p>
-      </article>
-      <article class="stop on" data-routes="inn dia iris">
-        <p class="kicker">Last stop</p><h3>What the results mean</h3>
-        <p class="why">Every cell already wrote its own 📌 findings; the summary collects them in plain English.</p>
+        <p class="ex" data-ex="nw">Employees who manage nobody: NOT IN 0, NOT EXISTS 7. COUNT(*) 830 vs COUNT(shipped_date) 809.</p>
+        <p class="ex" data-ex="wheels">No NULLs here, so only the integer-division demo applies.</p>
+        <p class="ex" data-ex="staff">NOT IN returns 0 because of the one NULL <code>manager_id</code>.</p>
       </article>
     </div>
   </section>
 
-  <!-- ═════════════ VERDICTS ═════════════ -->
+  <!-- ═════════════ BUSINESS BRIEF ═════════════ -->
   <section class="section">
     <header>
-      <p class="eyebrow">Part 4 · reading the verdicts</p>
-      <h2>What the numbers mean</h2>
+      <p class="eyebrow">Part 4 · for the people who decide</p>
+      <h2>From results to a business brief</h2>
+    </header>
+    <div class="line">
+      <article class="stop on" data-routes="nw wheels staff">
+        <p class="kicker">Stop 7</p><h3>Data-trust score</h3>
+        <ul class="rules">
+          <li><span class="if">ALWAYS</span><span>Completeness 25% · Uniqueness 20% · Integrity 20% · Validity 15% · Consistency 20%, each 0–100 with its reason</span></li>
+          <li><span class="if">THEN</span><span>≥ 90 <b>→ High</b>; ≥ 75 <b>→ Good, with caveats</b>; else <b>→ Use with care</b></span></li>
+          <li><span class="if">CAP</span><span>totals that don't reconcile <b>→ Use with care</b>; any check below 60 <b>→ at most Good, with caveats</b>, whatever the average</span></li>
+        </ul>
+        <p class="ex" data-ex="nw">99 / 100, High: only <code>shipped_date</code> is 2.5% empty.</p>
+        <p class="ex" data-ex="wheels">100 / 100, High.</p>
+        <p class="ex" data-ex="staff">Scored on keys, links and completeness; no KPI totals to reconcile.</p>
+      </article>
+      <article class="stop on" data-routes="nw wheels">
+        <p class="kicker">Stop 8</p><h3>Recommendations</h3>
+        <ul class="rules">
+          <li><span class="if">ALWAYS</span><span>evidence → implication → next step, with a priority (Act now / Plan / Monitor), a confidence (measured / indicative / needs a test) and its SQL step</span></li>
+          <li><span class="if">IF</span><span>a partial period <b>→</b> it leads, as a data warning</span></li>
+        </ul>
+        <p class="ex" data-ex="nw">Act now: 1998-Q2 is incomplete. Plan: Beverages drove 57% of the change.</p>
+        <p class="ex" data-ex="wheels">Act now: 16 customers overdue; ship days +15% (needs a test). Monitor: revenue −13.3% per day, within normal variation.</p>
+      </article>
+      <article class="stop on" data-routes="nw wheels staff">
+        <p class="kicker">Stop 9</p><h3>One-page brief</h3>
+        <ul class="rules"><li><span class="if">ALWAYS</span><span>one offline HTML page: KPI tiles, what to do, trend with the driver on its own axis, revenue waterfall, segments, concentration, RFM, discounts, trust, method; a table view per chart</span></li></ul>
+        <p class="ex" data-ex="nw">"Revenue reached 298,491.55 in 1998-Q1 (+64.3% on 1997-Q4, +115.8% year over year)."</p>
+        <p class="ex" data-ex="wheels">"Revenue reached 8.31M in 2018-Q4 (−17.0% on 2018-Q3, −13.3% per day). That is within normal variation (95% CI −31% to +9%). Most of the movement came from fewer orders."</p>
+        <p class="ex" data-ex="staff">Validation only: the trust section and the method.</p>
+      </article>
+    </div>
+  </section>
+
+  <!-- ═════════════ RESULTS ═════════════ -->
+  <section class="section">
+    <header>
+      <p class="eyebrow">Measured on Northwind</p>
+      <h2>Four traps, naive vs correct</h2>
     </header>
     <div class="scroll">
       <table>
-        <thead><tr><th>Measure</th><th>Good</th><th>Middle</th><th>Weak / warning</th><th>In one sentence</th></tr></thead>
+        <thead><tr><th>Trap</th><th>Naive SQL</th><th>Naive answer</th><th>Correct answer</th></tr></thead>
         <tbody>
-          <tr><td>Gain over baseline</td><td class="num good">&gt; 0.10</td><td class="num warn">0.01 – 0.10</td><td class="num bad">≤ 0.01</td><td>Is the model better than guessing?</td></tr>
-          <tr><td>Train − test gap</td><td class="num good">≤ 0.05</td><td class="num warn">0.05 – 0.15</td><td class="num bad">&gt; 0.15</td><td>Does it memorise instead of learn?</td></tr>
-          <tr><td>ROC-AUC</td><td class="num good">≥ 0.90</td><td class="num warn">0.75 – 0.90</td><td class="num bad">&lt; 0.75</td><td>Does it rank positives above negatives?</td></tr>
-          <tr><td>Silhouette</td><td class="num good">≥ 0.50</td><td class="num warn">0.25 – 0.50</td><td class="num bad">&lt; 0.25</td><td>Are the clusters clearly separated?</td></tr>
-          <tr><td>VIF</td><td class="num good">&lt; 5</td><td class="num warn">5 – 10</td><td class="num bad">&gt; 10 (dropped)</td><td>Is a column a copy of the others?</td></tr>
-          <tr><td>p-value</td><td class="num good">&lt; 0.05</td><td class="num">–</td><td class="num">≥ 0.05</td><td>Is the effect real, or could it be chance?</td></tr>
-          <tr><td>Durbin–Watson</td><td class="num good">1.5 – 2.5</td><td class="num">–</td><td class="num bad">outside</td><td>Are neighbouring rows' errors independent?</td></tr>
-          <tr><td>Test score near 1.0</td><td class="num">–</td><td class="num">–</td><td class="num bad">≥ 0.99</td><td>Too good to be true? Look for a column that leaks the answer.</td></tr>
-          <tr><td>Hierarchical agreement (ARI)</td><td class="num good">&gt; 0.6</td><td class="num">–</td><td class="num warn">≤ 0.6</td><td>Do two methods find the same groups?</td></tr>
+          <tr><td>Fan-out</td><td><code>SUM(o.freight)</code> after joining order lines</td><td class="num bad">207,306.10</td><td class="num good">64,942.69</td></tr>
+          <tr><td>Partial period</td><td>latest quarter vs the one before</td><td class="num bad">−52.4%</td><td class="num good">+64.3% (last two complete)</td></tr>
+          <tr><td>Wrong grain</td><td><code>AVG(line revenue)</code> as order value</td><td class="num bad">587.37</td><td class="num good">1,525.05</td></tr>
+          <tr><td>NULL in NOT IN</td><td><code>WHERE id NOT IN (SELECT reports_to …)</code></td><td class="num bad">0</td><td class="num good">7 (NOT EXISTS)</td></tr>
         </tbody>
       </table>
     </div>
@@ -413,89 +413,131 @@ pre { margin: 0; overflow-x: auto; background: var(--chip); border-radius: 8px; 
   <!-- ═════════════ GOING FURTHER ═════════════ -->
   <section class="section">
     <header>
-      <p class="eyebrow">Part 5 · not automated yet, here is the code</p>
+      <p class="eyebrow">Not automated · ready to paste</p>
       <h2>Going further by hand</h2>
-      <p class="lede">These course techniques aren't run automatically. Paste them into the downloaded notebook after the
-        "Train" cell; they reuse its variables (<code>X_train</code>, <code>y_train</code>, <code>preprocessor</code>, …).</p>
+      <p class="lede">Each snippet runs on the Northwind project as exported by the app (tables plus the <code>order_facts</code> / <code>line_facts</code> views), and was tested on MySQL 8.4 and PostgreSQL 16.</p>
     </header>
     <div class="further">
       <article>
-        <h3>Early stopping and the validation-loss curve</h3>
-        <p class="why">Boosting adds trees until the validation error stops improving, instead of a fixed number.</p>
-<pre>from xgboost import XGBClassifier
-from sklearn.model_selection import train_test_split
-Xa, Xv, ya, yv = train_test_split(X_train, y_train, test_size=0.2,
-                                  stratify=y_train, random_state=42)
-prep = preprocessor.fit(Xa)
-codes = {c: i for i, c in enumerate(sorted(y_train.unique()))}
-xgb = XGBClassifier(n_estimators=2000, learning_rate=0.05,
-                    early_stopping_rounds=50, eval_metric="logloss")
-xgb.fit(prep.transform(Xa), ya.map(codes),
-        eval_set=[(prep.transform(Xv), yv.map(codes))], verbose=False)
-loss = xgb.evals_result()["validation_0"]["logloss"]
-plt.plot(loss); plt.axvline(xgb.best_iteration, ls="--")
-plt.xlabel("trees"); plt.ylabel("validation log-loss"); plt.show()
-print("best number of trees:", xgb.best_iteration)</pre>
+        <h3>Recursive CTE: the org chart</h3>
+        <p class="why">Walk a self-reference to any depth. Same SQL in MySQL 8 and PostgreSQL.</p>
+<pre>WITH RECURSIVE org AS (
+    SELECT employee_id, last_name, reports_to, 1 AS depth
+    FROM   employees
+    WHERE  reports_to IS NULL
+    UNION ALL
+    SELECT e.employee_id, e.last_name, e.reports_to, o.depth + 1
+    FROM   employees e
+    JOIN   org o ON e.reports_to = o.employee_id
+)
+SELECT * FROM org ORDER BY depth, employee_id;</pre>
       </article>
       <article>
-        <h3>Bagging any model</h3>
-        <p class="why">Random forest is bagging of trees; <code>BaggingClassifier</code> bags any model and reports an out-of-bag score.</p>
-<pre>from sklearn.ensemble import BaggingClassifier
-from sklearn.tree import DecisionTreeClassifier
-bag = make_pipe(BaggingClassifier(
-    DecisionTreeClassifier(max_depth=8), n_estimators=100,
-    max_samples=0.8, oob_score=True, random_state=42))
-bag.fit(X_train, y_train)
-print("OOB score:", bag.named_steps["model"].oob_score_)
-print("test score:", score(y_test, bag.predict(X_test)))</pre>
+        <h3>Median per segment</h3>
+        <p class="why">The app reports the overall median order (943.25). Per category: PostgreSQL has an ordered-set aggregate; MySQL needs window functions. Both give Beverages a median line of 251.55.</p>
+<pre>-- PostgreSQL
+SELECT category_name,
+       ROUND(PERCENTILE_CONT(0.5) WITHIN GROUP (ORDER BY revenue)::numeric, 2) AS median_line_revenue
+FROM   line_facts
+GROUP  BY category_name
+ORDER  BY category_name;
+
+-- MySQL 8 (also runs on PostgreSQL: / 2.0 never truncates)
+WITH ranked AS (
+    SELECT category_name, revenue,
+           ROW_NUMBER() OVER (PARTITION BY category_name ORDER BY revenue) AS row_num,
+           COUNT(*) OVER (PARTITION BY category_name) AS cnt
+    FROM   line_facts
+)
+SELECT category_name, ROUND(AVG(revenue), 2) AS median_line_revenue
+FROM   ranked
+WHERE  row_num IN (FLOOR((cnt + 1) / 2.0), FLOOR((cnt + 2) / 2.0))
+GROUP  BY category_name
+ORDER  BY category_name;</pre>
       </article>
       <article>
-        <h3>SMOTE for mixed numbers and categories</h3>
-        <p class="why">Plain SMOTE invents in-between values such as "0.4 of a category". SMOTENC keeps categories whole.</p>
-<pre>from imblearn.over_sampling import SMOTENC
-from imblearn.pipeline import Pipeline as ImbPipeline
-from sklearn.impute import SimpleImputer
-from sklearn.compose import ColumnTransformer
-fill = ColumnTransformer([("n", SimpleImputer(strategy="median"), num_features),
-                          ("c", "passthrough", cat_features)])
-cat_idx = list(range(len(num_features), len(num_features) + len(cat_features)))
-pipe_nc = ImbPipeline([("fill", fill),
-                       ("smote", SMOTENC(categorical_features=cat_idx, random_state=42)),
-                       ("prep", ColumnTransformer([
-                           ("n", StandardScaler(), list(range(len(num_features)))),
-                           ("c", OneHotEncoder(handle_unknown="ignore"), cat_idx)])),
-                       ("model", clone(tuned_model))])
-pipe_nc.fit(X_train, y_train)</pre>
+        <h3>Pivot with conditional aggregation</h3>
+        <p class="why">Years as columns, one row per category. Same SQL in both dialects.</p>
+<pre>SELECT category_name,
+       ROUND(SUM(CASE WHEN order_year = 1996 THEN revenue ELSE 0 END), 2) AS revenue_1996,
+       ROUND(SUM(CASE WHEN order_year = 1997 THEN revenue ELSE 0 END), 2) AS revenue_1997,
+       ROUND(SUM(CASE WHEN order_year = 1998 THEN revenue ELSE 0 END), 2) AS revenue_1998
+FROM   line_facts
+GROUP  BY category_name
+ORDER  BY revenue_1997 DESC;</pre>
       </article>
       <article>
-        <h3>Threshold from business costs</h3>
-        <p class="why">Instead of best F1, choose the threshold that costs least. Example: a missed cancellation costs €100, a false alarm €10.</p>
-<pre>cost_miss, cost_false_alarm = 100, 10
-proba = pipe.predict_proba(X_test)[:, list(pipe.classes_).index(positive)]
-is_pos = (y_test == positive).to_numpy()
-cuts = np.linspace(0.05, 0.95, 91)
-cost = [cost_miss * ((proba &lt; t) &amp; is_pos).sum()
-        + cost_false_alarm * ((proba &gt;= t) &amp; ~is_pos).sum() for t in cuts]
-best = cuts[int(np.argmin(cost))]
-plt.plot(cuts, cost); plt.axvline(best, ls="--"); plt.show()
-print(f"cheapest threshold: {best:.2f}")
-# Pick this on validation data in a real project, then check it once on test.</pre>
+        <h3>Gaps and islands: months in a row</h3>
+        <p class="why">Consecutive values minus <code>ROW_NUMBER()</code> are constant within a streak. BERGS and QUICK ordered 8 months in a row.</p>
+<pre>WITH months AS (
+    SELECT DISTINCT customer_id,
+           order_year * 12 + MONTH(order_date) AS month_index
+           -- PostgreSQL: EXTRACT(MONTH FROM order_date)::int
+    FROM   order_facts
+),
+islands AS (
+    SELECT customer_id, month_index,
+           month_index - ROW_NUMBER() OVER (PARTITION BY customer_id
+                                            ORDER BY month_index) AS island
+    FROM   months
+)
+SELECT customer_id, COUNT(*) AS months_in_a_row
+FROM   islands
+GROUP  BY customer_id, island
+ORDER  BY months_in_a_row DESC, customer_id
+LIMIT  5;</pre>
+      </article>
+      <article>
+        <h3>Date spine: months with no orders show 0</h3>
+        <p class="why">GROUP BY only returns months that have rows; join to a calendar instead.</p>
+<pre>-- MySQL 8: a recursive CTE builds the calendar
+WITH RECURSIVE spine AS (
+    SELECT DATE '1996-07-01' AS month_start
+    UNION ALL
+    SELECT month_start + INTERVAL 1 MONTH FROM spine
+    WHERE  month_start &lt; DATE '1998-05-01'
+)
+SELECT s.month_start, ROUND(COALESCE(SUM(f.revenue), 0), 2) AS revenue
+FROM   spine s
+LEFT   JOIN order_facts f
+       ON  f.order_date &gt;= s.month_start
+       AND f.order_date &lt;  s.month_start + INTERVAL 1 MONTH
+GROUP  BY s.month_start
+ORDER  BY s.month_start;
+
+-- PostgreSQL: FROM generate_series(DATE '1996-07-01', DATE '1998-05-01',
+--                                  INTERVAL '1 month') AS s(month_start)
+--             and INTERVAL '1 month' in the join</pre>
+      </article>
+      <article>
+        <h3>Upsert: insert or update</h3>
+        <p class="why">Reloading a day must replace it, not duplicate it.</p>
+<pre>-- MySQL 8.0.19+
+INSERT INTO daily_revenue (day, revenue)
+VALUES (DATE '1998-05-06', 250.00) AS new
+ON DUPLICATE KEY UPDATE revenue = new.revenue;
+
+-- PostgreSQL
+INSERT INTO daily_revenue (day, revenue)
+VALUES (DATE '1998-05-06', 250.00)
+ON CONFLICT (day) DO UPDATE SET revenue = EXCLUDED.revenue;</pre>
       </article>
     </div>
   </section>
 
-  <p class="footer">Every threshold on this map is a constant in the AutoML Explorer code (<code>automl/profiling.py</code>,
-    <code>automl/decision.py</code>, <code>automl/codegen.py</code>, <code>automl/narrative.py</code>). The full specification
-    is in <code>docs/DECISION_TREE.md</code> in the repository.</p>
+  <p class="footer">Every threshold on this map is a constant in the AutoSQL Explorer code (<code>autosql/loading.py</code>,
+    <code>autosql/profiling.py</code>, <code>autosql/schema.py</code>, <code>autosql/decision.py</code>, <code>autosql/codegen.py</code>).
+    The full specification is in <code>docs/DECISION_TREE.md</code> in the repository. The New Wheels route uses a synthetic test table
+    with the same shape as the real project, not its data.</p>
 </div>
 
 <script>
 (function () {
   var notes = {
     "": "Showing every possible route.",
-    inn: "Hotel bookings (36,275 rows, target booking_status): trunk → classification line → modelling line. Stop 7 (resampling) is skipped: 32.8% vs 67.2% is uneven, so it's judged by macro F1, but not imbalanced enough (ratio 0.49, not under 0.25) to need resampling.",
-    dia: "Diabetes (442 rows, target is a number with 214 values): trunk → regression line → modelling line.",
-    iris: "Iris measurements with no target: trunk → clustering line. Clustering doesn't use the modelling line."
+    nw: "Northwind (8 tables): trunk → all three analysis lines → fast & correct. One link (ship_via → shippers) waits for you to tick it.",
+    wheels: "New Wheels shape (one table of orders with a feedback scale): Stop 3 is skipped (a single table has no foreign keys); everything else runs.",
+    staff: "Staff list (employees with a manager, no money, no date): the engine falls back to validation, so the analysis lines are skipped."
   };
   var buttons = document.querySelectorAll(".picker button");
   var stops = document.querySelectorAll(".stop");
@@ -508,11 +550,11 @@ print(f"cheapest threshold: {best:.2f}")
       s.querySelectorAll(".ex").forEach(function (e) { e.classList.toggle("show", e.dataset.ex === key); });
     });
     document.getElementById("trace-note").textContent = notes[key];
-    try { localStorage.setItem("roadmap-trace", key); } catch (e) {}
+    try { localStorage.setItem("autosql-roadmap-trace", key); } catch (e) {}
   }
   buttons.forEach(function (b) { b.addEventListener("click", function () { trace(b.dataset.trace); }); });
   var saved = "";
-  try { saved = localStorage.getItem("roadmap-trace") || ""; } catch (e) {}
+  try { saved = localStorage.getItem("autosql-roadmap-trace") || ""; } catch (e) {}
   if (location.hash && notes.hasOwnProperty(location.hash.slice(1))) saved = location.hash.slice(1);
   trace(notes.hasOwnProperty(saved) ? saved : "");
 })();

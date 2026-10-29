@@ -1,0 +1,70 @@
+name: tests
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: tests-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    name: pytest (DuckDB, live PostgreSQL 16 and MySQL 8.4)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 40
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_PASSWORD: autosql
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 20
+    env:
+      AUTOSQL_REQUIRE_LIVE: "1"          # a live database that is missing fails the run instead of skipping
+      AUTOSQL_PG_URL: postgresql://postgres:autosql@localhost:5432/postgres
+      AUTOSQL_MYSQL_CONTAINER: autosql-mysql
+      AUTOSQL_MYSQL_PASSWORD: autosql
+      MPLBACKEND: Agg
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Start MySQL 8.4 (LOAD DATA LOCAL INFILE needs --local-infile on the server)
+        run: docker run -d --name autosql-mysql -e MYSQL_ROOT_PASSWORD=autosql mysql:8.4 --local-infile=1
+
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.13"
+          cache: pip
+          cache-dependency-path: |
+            requirements*.txt
+            .github/constraints.txt
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements-dev.txt -c .github/constraints.txt
+
+      - name: Wait for MySQL
+        run: |
+          # the first start initialises the data directory and reports port 0; the real server then reports port 3306
+          for i in $(seq 1 90); do
+            if docker logs autosql-mysql 2>&1 | grep -q "port: 3306"; then exit 0; fi
+            sleep 2
+          done
+          docker logs autosql-mysql
+          exit 1
+
+      - name: Run the tests
+        run: |
+          psql --version
+          python -m pytest -q -rs

@@ -1,258 +1,442 @@
-"""Generated code must actually run and beat the baseline."""
-import json
+"""Every generated cell must run, and every MySQL / PostgreSQL statement must respect the dialect rules."""
+import re
 
 import numpy as np
 import pandas as pd
 import pytest
+import sqlglot
 
-from automl import build_cells, decide, interpret, profile_dataset, run_cells, to_notebook
+from autosql import Customization, build_cells, run_cells
+from autosql.dialect import BANNED, RESERVED
+from autosql.report import to_business_brief
+from conftest import NORTHWIND, analyse, catalog_from, new_wheels_frame, shop_frames
+from htmltree import parse_tree
 
 
-def execute(df, target):
-    d = decide(df, profile_dataset(df), target)
-    cells = build_cells(d)
-    results, metrics = run_cells(cells, df)
-    errors = [(r.cell_id, r.stdout) for r in results if r.error]
+def timestamps_frame():
+    rng = np.random.default_rng(3)
+    start = pd.Timestamp("2021-01-01") + pd.to_timedelta(rng.integers(0, 600 * 24, 300), unit="h")
+    return pd.DataFrame({"order_id": range(300), "customer_id": rng.integers(1, 40, 300),
+                         "created_at": start.strftime("%Y-%m-%d %H:%M:%S"),
+                         "delivered_at": (start + pd.to_timedelta(rng.integers(20, 200, 300), unit="h")).strftime("%Y-%m-%d %H:%M:%S"),
+                         "amount": rng.uniform(5, 500, 300).round(2), "channel": rng.choice(["app", "web"], 300),
+                         "rating": rng.integers(1, 6, 300)})
+
+
+def list_price_frames():
+    """Quantity in the fact table, price only in the product table (list price)."""
+    rng = np.random.default_rng(4)
+    products = pd.DataFrame({"product_id": range(1, 11), "product_name": [f"Item {i}" for i in range(1, 11)],
+                             "category": rng.choice(["A", "B"], 10), "list_price": rng.uniform(1, 50, 10).round(2)})
+    days = pd.Timestamp("2022-01-01") + pd.to_timedelta(rng.integers(0, 400, 500), unit="D")
+    sales = pd.DataFrame({"sale_id": range(500), "product_id": rng.integers(1, 11, 500), "quantity": rng.integers(1, 4, 500),
+                          "sale_date": days.strftime("%Y-%m-%d"), "store": rng.choice(["North", "South"], 500)})
+    return {"products": products, "sales": sales}
+
+
+def denormalised_lines():
+    """One table of order lines with no separate orders table: order-level columns repeat on every line."""
+    rng = np.random.default_rng(5)
+    orders = pd.DataFrame({"invoice_no": range(1000, 1200), "customer_id": rng.integers(1, 50, 200),
+                           "invoice_date": (pd.Timestamp("2010-12-01") + pd.to_timedelta(rng.integers(0, 365, 200), unit="D")).strftime("%Y-%m-%d"),
+                           "country": rng.choice(["UK", "France", "Spain"], 200)})
+    lines = orders.loc[orders.index.repeat(rng.integers(1, 5, 200))].reset_index(drop=True)
+    lines["stock_code"] = rng.integers(100, 140, len(lines))
+    lines["quantity"] = rng.integers(1, 10, len(lines))
+    lines["unit_price"] = rng.uniform(0.5, 9, len(lines)).round(2)
+    return {"online_retail": lines.drop_duplicates(["invoice_no", "stock_code"])}
+
+
+def awkward_names_frames():
+    """Reserved words, capitals, symbols and quotes in names and values."""
+    rng = np.random.default_rng(6)
+    return {"Order": pd.DataFrame({
+        "Order ID": range(1, 121), "select": rng.choice(["it's", 'say "hi"', "back\\slash", "{x}"], 120),
+        "Group": rng.choice(["x", "y"], 120), "Date": pd.date_range("2022-01-05", periods=120, freq="5D").strftime("%Y-%m-%d"),
+        "Amount": rng.uniform(1, 9, 120).round(2), "user": rng.integers(1, 20, 120)})}
+
+
+def tickets_frame():
+    """No money column at all: the analysis counts rows (orders) per period."""
+    rng = np.random.default_rng(8)
+    return pd.DataFrame({"ticket_id": range(400), "customer_id": rng.integers(1, 60, 400),
+                         "opened_at": pd.date_range("2022-01-01", periods=400, freq="D").strftime("%Y-%m-%d"),
+                         "status": rng.choice(["open", "closed"], 400)})
+
+
+def gap_quarter_frame():
+    """No orders at all in 2022-Q3: LAG must not compare 2022-Q4 with 2022-Q2."""
+    rng = np.random.default_rng(9)
+    days = pd.date_range("2022-01-01", "2023-06-30", freq="D")
+    days = days[~((days >= "2022-07-01") & (days < "2022-10-01"))]
+    return pd.DataFrame({"order_id": range(len(days)), "customer_id": rng.integers(1, 80, len(days)),
+                         "amount": rng.uniform(1, 9, len(days)).round(2), "order_date": days.strftime("%Y-%m-%d")})
+
+
+def ten_weeks_frame():
+    """Ten weeks of orders (5 Jan to 13 Mar 2022): too short for months, so the engine analyses ISO weeks."""
+    rng = np.random.default_rng(11)
+    n = 700
+    day = pd.Timestamp("2022-01-05") + pd.to_timedelta(np.sort(rng.integers(0, 68, n)), unit="D")
+    return pd.DataFrame({"order_id": range(1, n + 1), "customer_id": rng.integers(1, 120, n), "region": rng.choice(["North", "South", "East"], n),
+                         "amount": rng.gamma(2, 40, n).round(2), "order_date": day.strftime("%Y-%m-%d"),
+                         "ship_date": (day + pd.to_timedelta(rng.integers(1, 6, n), unit="D")).strftime("%Y-%m-%d")})
+
+
+def double_loaded_frames():
+    """The shop with five order lines loaded twice: exact copies the views must drop."""
+    frames = shop_frames()
+    frames["order_items"] = pd.concat([frames["order_items"], frames["order_items"].iloc[:5]])
+    return frames
+
+
+def northwind_double_loaded():
+    """Northwind with four order lines loaded twice: the views, gross vs net and the discount bands must all drop the copies."""
+    frames = {p.stem: pd.read_csv(p) for p in sorted(NORTHWIND.glob("*.csv"))}
+    frames["Order Details"] = pd.concat([frames["Order Details"], frames["Order Details"].iloc[:4]])
+    return frames
+
+
+def impossible_values_frame():
+    """Orders with values no sale can have (a negative price, a 150% discount) and returns written as negative quantities."""
+    rng = np.random.default_rng(14)
+    n = 240
+    df = pd.DataFrame({"order_id": range(1, n + 1), "customer_id": rng.integers(1, 40, n),
+                       "order_date": pd.date_range("2022-01-01", periods=n, freq="3D").strftime("%Y-%m-%d"),
+                       "unit_price": rng.uniform(5, 50, n).round(2), "quantity": rng.integers(1, 5, n),
+                       "discount": rng.choice([0.0, 0.05, 0.1, 0.2], n)})
+    df.loc[[3, 9], "unit_price"] = [-12.5, -3.0]
+    df.loc[5, "discount"] = 1.5
+    df.loc[[7, 8, 11], "quantity"] = [-1, -2, 0]
+    return df
+
+
+def composite_key_frames():
+    """Stores keyed by region + store number (no store_id), and sales that point at a store with both columns."""
+    rng = np.random.default_rng(15)
+    stores = pd.DataFrame([(r, n) for r in ("N", "S", "E", "W") for n in range(1, 11)], columns=["region", "store_no"])
+    stores["store_tier"] = rng.choice(["flagship", "standard", "outlet"], len(stores))
+    stores["monthly_rent"] = rng.uniform(2000, 9000, len(stores)).round(2)        # stored once per store: a fan-out trap
+    picked = stores.iloc[rng.integers(0, len(stores) - 1, 600)]                      # the last store (W, 10) never sells
+    sales = pd.DataFrame({"sale_id": range(1, 601), "region": picked["region"].to_numpy(), "store_no": picked["store_no"].to_numpy(),
+                          "customer_id": rng.integers(1, 90, 600), "amount": rng.gamma(2, 30, 600).round(2),
+                          "sale_date": (pd.Timestamp("2022-01-01") + pd.to_timedelta(np.sort(rng.integers(0, 540, 600)), unit="D")).strftime("%Y-%m-%d")})
+    return {"stores": stores, "sales": sales}
+
+
+def composite_key_with_orphans():
+    """The sweep's stores / sales pair: a quarter of the (region, store_no) pairs have no store, so the link is only suggested."""
+    from datasets import sweep_cases
+    return sweep_cases()["composite_fk"]
+
+
+def business_rules_frames():
+    """A shop whose extract holds rows that are not sales: cancelled, returned, test and EUR orders, and returned lines."""
+    frames = shop_frames(seed=12)
+    rng = np.random.default_rng(12)
+    orders, items = frames["orders"], frames["order_items"]
+    orders["Status"] = rng.choice(["Delivered", "Shipped", "Cancelled", "Returned", "Partially refunded"], len(orders), p=[.6, .2, .08, .07, .05])
+    orders.loc[orders.index[::40], "Status"] = None                       # no status: kept (NULL is never left out)
+    orders["Currency"] = rng.choice(["USD", "EUR"], len(orders), p=[.9, .1])
+    orders["is_test"] = rng.choice(["N", "Y"], len(orders), p=[.97, .03])
+    items["line_status"] = rng.choice(["ok", "returned"], len(items), p=[.95, .05])
+    frames["orders"] = pd.concat([orders, orders.iloc[[0, 1]]])          # loaded twice: de-duplicated before the rules apply
+    return frames
+
+
+def signed_amounts_frame():
+    """One table of orders whose amounts carry their currency sign ($ or €), with refunded, chargeback and test orders."""
+    rng = np.random.default_rng(13)
+    n = 300
+    amount, euro = rng.uniform(5, 500, n).round(2), rng.random(n) < 0.15
+    return pd.DataFrame({"order_id": range(1, n + 1), "customer_id": rng.integers(1, 50, n),
+                         "order_date": pd.date_range("2022-01-01", periods=n, freq="2D").strftime("%Y-%m-%d"),
+                         "amount": [f"€{a:,.2f}" if e else f"${a:,.2f}" for a, e in zip(amount, euro)],
+                         "order_status": rng.choice(["completed", "refunded", "chargeback"], n, p=[.9, .07, .03]),
+                         "is_test": rng.choice(["false", "true"], n, p=[.95, .05])})
+
+
+# Your own assumptions and KPIs on three different shapes: quarters with money and a header table, ISO weeks, and no money at all. Every
+# generic test below (the cells run, the dialect rules, sqlglot, the brief's promises) and the live PostgreSQL / MySQL suites then cover
+# the statements written from them. Each KPI is valid on all three databases; the SQL that fails is in tests/test_custom.py.
+CUSTOM_NORTHWIND = {
+    "assumptions": {"add": ["Figures are in US dollars."],
+                    "edit": {"revenue": "Revenue = price × quantity × (1 − discount); freight is not included."}},
+    "kpis": [
+        {"key": "freight_share", "name": "Freight share of revenue", "definition": "Freight charged as a share of revenue.",
+         "sql": "100.0 * SUM(freight) / NULLIF(SUM(revenue), 0)", "unit": "pct", "direction": "down"},
+        {"key": "big_orders", "name": "Orders over 1,000", "definition": "Orders worth more than 1,000.",
+         "sql": "SUM(CASE WHEN revenue > 1000 THEN 1 ELSE 0 END)", "unit": "number", "direction": "up",
+         "why": "Large orders carry the revenue.", "pitfall": "The 1,000 threshold is a round number, not a finding."},
+        {"key": "days_covered", "name": "Days between first and last order", "definition": "The span of order dates within the period.",
+         "sql": {"mysql": "DATEDIFF(MAX(order_date), MIN(order_date))", "postgres": "MAX(order_date) - MIN(order_date)"},
+         "unit": "days", "direction": "context"},
+        {"key": "only_words", "name": "Only a definition", "definition": "A KPI with words and no SQL."},
+    ],
+}
+CUSTOM_WEEKS = {"kpis": [{"key": "revenue_per_customer", "name": "Revenue per customer", "definition": "Revenue per distinct customer.",
+                          "sql": "SUM(revenue) / NULLIF(COUNT(DISTINCT customer_id), 0)", "unit": "money", "direction": "up"}]}
+CUSTOM_TICKETS = {"assumptions": ["A ticket is one request, whoever opened it."],
+                  "kpis": [{"key": "tickets_per_customer", "name": "Tickets per customer", "definition": "Tickets ÷ distinct customers.",
+                            "sql": "1.0 * COUNT(*) / NULLIF(COUNT(DISTINCT customer_id), 0)", "unit": "number", "direction": "down"}]}
+
+CASES = {
+    "northwind": (None, "auto", ()),
+    "northwind_validate": (None, "validate", ()),
+    "northwind_ticked": (None, "auto", ("orders.ship_via → shippers.shipper_id",)),
+    "new_wheels": ({"orders": new_wheels_frame}, "auto", ()),
+    "shop": (shop_frames, "auto", ()),
+    "shop_validate": (shop_frames, "validate", ()),
+    "timestamps": ({"deliveries": timestamps_frame}, "auto", ()),
+    "list_price": (list_price_frames, "auto", ()),
+    "denormalised_lines": (denormalised_lines, "auto", ()),
+    "awkward_names": (awkward_names_frames, "auto", ()),
+    "tickets_count_only": ({"tickets": tickets_frame}, "auto", ()),
+    "gap_quarter": ({"orders": gap_quarter_frame}, "auto", ()),
+    "double_loaded": (double_loaded_frames, "auto", ()),
+    "ten_weeks": ({"orders": ten_weeks_frame}, "auto", ()),
+    "northwind_double_loaded": (northwind_double_loaded, "auto", ()),
+    "impossible_values": ({"orders": impossible_values_frame}, "auto", ()),
+    "composite_fk": (composite_key_frames, "auto", ()),
+    "composite_fk_ticked": (composite_key_with_orphans, "auto", ("sales.(region, store_no) → stores.(region, store_no)",)),
+    "business_rules": (business_rules_frames, "auto", ()),
+    "signed_amounts": ({"orders": signed_amounts_frame}, "auto", ()),
+    "northwind_custom": (None, "auto", (), CUSTOM_NORTHWIND),
+    "ten_weeks_custom": ({"orders": ten_weeks_frame}, "auto", (), CUSTOM_WEEKS),
+    "tickets_custom": ({"tickets": tickets_frame}, "auto", (), CUSTOM_TICKETS),
+}
+
+
+def build(case, northwind_catalog):
+    frames, mode, accept, *custom = CASES[case]
+    if frames is None:
+        catalog = northwind_catalog
+    elif callable(frames):
+        catalog = catalog_from(frames())
+    else:
+        catalog = catalog_from({name: make() for name, make in frames.items()})
+    d = analyse(catalog, mode=mode, accept=accept, custom=Customization.from_dict(custom[0]) if custom else None)
+    return catalog, d, build_cells(d)
+
+
+@pytest.fixture(scope="module", params=list(CASES))
+def case(request, northwind_catalog):
+    catalog, d, cells = build(request.param, northwind_catalog)
+    results, metrics = run_cells(cells, catalog)
+    return request.param, d, cells, results, metrics
+
+
+def test_every_cell_runs(case):
+    name, d, cells, results, metrics = case
+    assert not d.halted
+    errors = [(r.cell_id, r.error, r.stdout[-800:]) for r in results if r.error]
     assert not errors, errors
-    return d, cells, results, metrics
+    assert all(r.notes for r in results), [r.cell_id for r in results if not r.notes]  # every cell explains its result
+    assert all(c.code("mysql").startswith("-- Why:") for c in cells)
+    if d.kpi:
+        assert metrics.get("reconciled") is True
 
 
-@pytest.mark.parametrize("fixture,target", [("classification_df", "churn"), ("regression_df", "price")])
-def test_supervised_pipeline_runs_and_beats_baseline(request, fixture, target):
-    df = request.getfixturevalue(fixture)
-    _, cells, results, m = execute(df, target)
-    assert m["test_score"] > m["baseline_score"] + 0.1
-    assert m["top_features"]
-    assert all(r.figures for r in results if r.cell_id in ("eda", "train", "explain"))
-    assert all(c.code.startswith("# Why:") for c in cells)
-    assert interpret(m, target)
+def test_the_brief_of_every_case_keeps_its_promises(case):
+    """What a page says about itself is true for any dataset: its evidence exists, its links lead somewhere, its SQL is the engine's."""
+    name, d, cells, _, metrics = case
+    page = to_business_brief(d, metrics, title=name)
+    tree = parse_tree(page)
+    by_id = {c.id: c for c in cells}
+    steps = {n.attrs["data-step"]: n for n in tree.find_all("details", cls="step")}
+    present = {n.attrs["data-ev"] for n in tree.find_all() if "data-ev" in n.attrs}
+
+    for step, node in steps.items():                                     # the appendix is the engine's own code, whole
+        for dialect in ("mysql", "postgres"):
+            code = node.find("div", cls=f"sql-{dialect}").find("code").text()
+            assert all(st.sql[dialect] in code for st in by_id[step].statements), (step, dialect)
+    for a in tree.find_all("a", cls="sqllink"):                          # every SQL link leads to a step that is on the page
+        assert all(t in steps for t in a.attrs["data-sql"].split()), a.attrs
+    for card in tree.find_all("div", cls="card"):                        # a chart always comes with its table view and its SQL
+        if card.attrs.get("data-ev", "").startswith("chart:"):
+            assert card.find("details", cls="tv") and card.find("details", cls="sqlv"), card.attrs["data-ev"]
+            for pane in card.find("details", cls="sqlv").find_all("div", cls="sqlpane"):
+                assert pane.find("code").text().strip(), card.attrs["data-ev"]
+    openers = tree.find_all("button", cls="evbtn")
+    for button in openers:                                               # a recommendation names only what the page has
+        keys = (button.attrs["data-cards"] + " " + button.attrs["data-charts"]).split()
+        assert set(keys) <= present, (button.attrs, sorted(present))
+        assert all(s in steps for s in button.attrs["data-sql"].split()), button.attrs
+    articles = tree.find_all("article", cls="action")
+    assert len(openers) == len(articles)                                 # and every one of them has something to open
+    assert (tree.find("dialog", id="evidence") is not None) == bool(openers or tree.find_all("a", cls="sqllink"))
+    text = re.sub(r"<(style|script|code|pre)\b.*?</\1>", " ", page, flags=re.S)
+    assert "`" not in text                                               # no markdown marks in a sentence
 
 
-def test_clustering_pipeline_runs(blobs_df):
-    _, _, _, m = execute(blobs_df, None)  # messy columns: must still run
-    assert m["k"] >= 2
-
-    clean = blobs_df[["f1", "f2", "f3"]]  # clean blobs: must find the 3 groups
-    _, _, _, m = execute(clean, None)
-    assert m["k"] == 3 and m["silhouette"] > 0.5
+def _strip_comments(sql: str) -> str:
+    return re.sub(r"--[^\n]*", "", sql)
 
 
-def test_mixed_type_categories_and_unseen_values():
-    rng = np.random.default_rng(0)
-    n = 400
-    df = pd.DataFrame({
-        "x": rng.normal(size=n),
-        "mixed": rng.choice([1, "two", 3.0, None], n).tolist(),  # mixed types used to crash OneHotEncoder
-        "rare": [f"r{i % 60}" for i in range(n)],
-    })
-    df["y"] = df["x"] * 2 + rng.normal(size=n) * 0.1
-    execute(df, "y")
+def _left_join_filters(sql: str) -> list[str]:
+    """Columns of a LEFT-joined table used in a WHERE condition other than `IS NULL` (that turns the join into an inner join)."""
+    bad = []
+    for body in re.split(r"\bUNION ALL\b", _strip_comments(sql)):
+        for alias in re.findall(r"LEFT\s+JOIN\s+\S+\s+(\w+)\s+ON", body):
+            # a WHERE clause ends at GROUP / ORDER / LIMIT, at the ")" closing its CTE or sub-query, or at the next SELECT
+            for where in re.findall(r"\bWHERE\b(.*?)(?=\bGROUP\b|\bORDER\b|\bLIMIT\b|\)\s*(?:AS\b|,|\n|\Z)|\bSELECT\b|\Z)", body, re.S):
+                for m in re.finditer(rf"\b{alias}\.\w+", where):
+                    if not re.match(r"\s+IS\s+(NOT\s+)?NULL", where[m.end():]):
+                        bad.append(m.group())
+    return bad
 
 
-def test_error_skips_later_cells(classification_df):
-    d = decide(classification_df, profile_dataset(classification_df), "churn")
-    cells = build_cells(d)
-    broken = cells[:2] + [cells[2].__class__("boom", "Boom", cells[2].story, "raise ValueError('bad')")] + cells[3:]
-    results, _ = run_cells(broken, classification_df)
-    assert results[2].error == "ValueError: bad"
-    assert all(r.skipped for r in results[3:])
+def test_dialect_rules(case):
+    name, d, cells, *_ = case
+    for cell in cells:
+        for st in cell.statements:
+            for dialect in ("mysql", "postgres", "duckdb"):
+                sql = st.sql[dialect]
+                body = _strip_comments(sql).upper()
+                for construct, why in BANNED.items():
+                    assert construct not in body, f"{cell.id}/{st.label}/{dialect}: {construct} ({why})"
+                aliases = re.findall(r"\bAS\s+([a-z_][a-z0-9_]*)\b", _strip_comments(sql))
+                assert not [a for a in aliases if a in RESERVED], (cell.id, st.label, aliases)
+                assert not _left_join_filters(sql), (cell.id, st.label, _left_join_filters(sql))
+                if st.run != "show":  # the integer-division demo divides integers on purpose
+                    for m in re.finditer(r"/\s*", _strip_comments(sql)):
+                        after = _strip_comments(sql)[m.end():m.end() + 12]
+                        assert after.startswith("NULLIF(") or re.match(r"\d+\.\d", after), (cell.id, st.label, dialect, after)
+            assert "::" not in st.sql["mysql"], (cell.id, st.label)
+            pg = _strip_comments(st.sql["postgres"])
+            assert all(pg[m.end():].startswith("(") for m in re.finditer(r"ROUND\(", pg)), (cell.id, st.label)  # ROUND((x)::numeric, n)
 
 
-def test_notebook_export_is_valid_json(classification_df):
-    d = decide(classification_df, profile_dataset(classification_df), "churn")
-    nb = json.loads(to_notebook(build_cells(d), d, "data.csv"))
-    sources = ["".join(c["source"]) for c in nb["cells"]]
-    assert any('pd.read_csv("data.csv")' in s for s in sources)
-    assert any("What we found" in s for s in sources)
+def test_mysql_and_postgres_parse(case):
+    name, d, cells, *_ = case
+    failures = []
+    for cell in cells:
+        for st in cell.statements:
+            for dialect in ("mysql", "postgres"):
+                try:
+                    sqlglot.parse(st.sql[dialect], read=dialect)
+                except sqlglot.errors.ParseError as error:
+                    failures.append((cell.id, st.label, dialect, str(error)[:200]))
+    assert not failures, failures
 
 
-def test_each_plt_show_is_its_own_figure(classification_df):
-    """Plots must not draw on top of each other (histograms, heatmap, class bars = 3 images)."""
-    d = decide(classification_df, profile_dataset(classification_df), "churn")
-    results, _ = run_cells(build_cells(d), classification_df)
-    eda = next(r for r in results if r.cell_id == "eda")
-    assert len(eda.figures) == 3
+def test_copies_are_dropped_before_every_total(northwind_catalog):
+    catalog, d, cells = build("northwind_double_loaded", northwind_catalog)
+    results, m = run_cells(cells, catalog)
+    assert not [r.error for r in results if r.error]                      # the discount bands once read a CTE they never defined
+    assert round(m["revenue_total"], 2) == 1265793.04 and round(m["revenue_gross"], 2) == 1354458.59   # as if loaded once
+    assert round(m["discounts"]["given"], 2) == round(1354458.59 - 1265793.04, 2)
 
 
-def test_every_cell_has_a_five_part_story_and_explains_its_result(regression_df, blobs_df):
-    """Before: found / why / action / code. After running: at least one 📌 note."""
-    for df, target in [(regression_df, "price"), (blobs_df[["f1", "f2", "f3"]], None)]:
-        d = decide(df, profile_dataset(df), target)
-        cells = build_cells(d)
-        for c in cells:
-            assert c.story.found and c.story.why and c.story.action and c.story.code, c.id
-        results, _ = run_cells(cells, df)
-        assert not [r.cell_id for r in results if r.error]
-        silent = [r.cell_id for r in results if r.cell_id != "setup" and not r.notes]
-        assert not silent, silent
+def test_impossible_values_are_counted_not_rescaled(northwind_catalog):
+    from autosql.business import trust_score
+    catalog, d, cells = build("impossible_values", northwind_catalog)
+    assert d.revenue.discount_scale == 1                 # one mistyped 1.5 must not turn every 0.05 into 0.05%
+    results, m = run_cells(cells, catalog)
+    assert m["impossible"] == {"orders.unit_price": {"rule": "negative price", "rows": 2},
+                               "orders.discount": {"rule": "discount outside 0-1", "rows": 1},
+                               "orders.quantity": {"rule": "zero or negative quantity", "rows": 3}}
+    assert (m["impossible_values"], m["questionable_values"]) == (3, 3)   # returns are questionable, not impossible
+    validity = next(x for x in trust_score(d, m).dimensions if x.name == "Validity")
+    assert validity.score == 97 and "3 impossible value(s)" in validity.detail
 
 
-def test_regression_runs_statistical_inference(regression_df):
-    d = decide(regression_df, profile_dataset(regression_df), "price")
-    assert [c.id for c in build_cells(d)][7:10] == ["vif", "ols", "assumptions"]
-    _, _, _, m = execute(regression_df, "price")
-    assert 0 < m["ols_r2"] <= 1 and m["ols_f_pvalue"] < 0.05
-    assert set(m["assumptions"]) == {"Linearity (RESET test)", "Equal spread / homoscedasticity (Breusch-Pagan)",
-                                     "Normal residuals (Jarque-Bera)"}
-    assert len(m["cv_scores"]) == len(d.candidates) >= 5 and "rules_score" in m
+def test_error_skips_later_cells(northwind_catalog):
+    _, d, cells = build("northwind", northwind_catalog)
+    broken = cells[:2] + [cells[2].__class__("boom", "Boom", "x", cells[2].story, cells[2].statements, "raise ValueError('bad')")] + cells[3:]
+    results, _ = run_cells(broken, northwind_catalog)
+    assert results[2].error.startswith("ValueError") and all(r.skipped for r in results[3:])
 
 
-def test_clustering_runs_pca_and_hierarchical(blobs_df):
-    _, cells, _, m = execute(blobs_df[["f1", "f2", "f3"]], None)
-    assert [c.id for c in cells][-4:] == ["pca", "choose_k", "cluster_fit", "hierarchical"]
-    assert m["pca_n80"] <= 3 and m["cluster_agreement"] > 0.6
+def test_gaps_never_produce_a_wrong_period_comparison(northwind_catalog):
+    catalog, d, cells = build("gap_quarter", northwind_catalog)
+    assert d.missing_periods == ["2022-Q3"] and "missing_periods" in [s.key for s in d.steps]
+    results, metrics = run_cells(cells, catalog)
+    per = next(r for r in results if r.cell_id == "kpi_by_period").statements[0].frame.set_index(["order_year", "quarter_number"])
+    assert pd.isna(per.loc[(2022, 4), "revenue_qoq_pct"])          # its LAG row is 2022-Q2: not a neighbour
+    expected = 100 * (per.loc[(2023, 1), "revenue"] / per.loc[(2022, 1), "revenue"] - 1)
+    assert abs(per.loc[(2023, 1), "revenue_yoy_pct"] - expected) < 0.1  # joined on the same quarter a year earlier
+    assert metrics["missing_periods"] == ["2022-Q3"]
 
 
-def test_imbalanced_data_compares_resampling_and_never_crashes():
-    """Regression test: the logit cell crashed when no input was significant; resampling must stay inside the folds."""
-    pytest.importorskip("imblearn")
-    from sklearn.datasets import make_classification
-    X, y = make_classification(1500, 6, n_informative=3, weights=[0.95], random_state=1)
-    df = pd.DataFrame(X, columns=[f"f{i}" for i in range(6)])
-    df["fraud"] = y
-    d, cells, results, m = execute(df, "fraud")
-    assert d.class_weight and d.resample and "resample" in [c.id for c in cells]
-    assert set(m["balance_scores"]) >= {"class weights (current)", "random oversampling", "random undersampling"}
-    assert m["balance_method"] in m["balance_scores"]
+def test_double_loaded_lines_are_removed_before_revenue(northwind_catalog):
+    catalog, d, cells = build("double_loaded", northwind_catalog)
+    clean, _, clean_cells = build("shop", northwind_catalog)
+    assert d.dedupe["order_items"][0] == ("order_id", "product_id")
+    _, m = run_cells(cells, catalog)
+    _, m_clean = run_cells(clean_cells, clean)
+    assert m["reconciled"] and round(m["revenue_total"], 2) == round(m_clean["revenue_total"], 2)
 
 
-def test_tuning_never_makes_the_model_worse(classification_df):
-    _, _, results, m = execute(classification_df, "churn")
-    if "tuned_cv" in m:
-        assert m["tuned_cv"] > m["cv_scores"][m["best_model"]]
-    assert next(r for r in results if r.cell_id == "tune").notes
+def test_count_only_data_is_measured_in_rows(northwind_catalog):
+    catalog, d, cells = build("tickets_count_only", northwind_catalog)
+    _, m = run_cells(cells, catalog)
+    assert d.revenue.kind == "count" and m["main_measure"] == "orders" and m["reconciled"]
+    assert any("orders changed" in line for line in __import__("autosql").interpret(m))
 
 
-def test_many_exact_duplicates_are_kept_not_dropped():
-    """300 rows of 3 small category columns repeat naturally; dropping copies used to leave only 9 rows."""
-    rng = np.random.default_rng(0)
-    df = pd.DataFrame({"colour": rng.choice(list("RGB"), 300), "size": rng.choice(list("SML"), 300), "shop": rng.choice(list("ab"), 300)})
-    d = decide(df, profile_dataset(df), None)
-    assert not d.drop_duplicates and "shop" not in d.drop_cols  # 'shop' is only the last column, not named like an outcome
-    results, _ = run_cells(build_cells(d), df)
-    prepare = next(r for r in results if r.cell_id == "prepare")
-    assert "**300 rows**" in prepare.notes[0]
+def test_technical_notes(northwind, new_wheels_catalog):
+    cells = {c.id: c for c in build_cells(northwind)}
+    assert {"CTE (WITH)", "window function", "LAG / LEAD", "LEFT JOIN", "NULLIF division guard"} <= set(cells["kpi_by_period"].techniques())
+    assert "anti-join" in cells["orphans"].techniques() and "CUME_DIST" in cells["rfm"].techniques()
+    assert ("ROUND(revenue, 2) AS revenue,", "ROUND((revenue)::numeric, 2) AS revenue,") in cells["kpi_by_period"].dialect_diff()
+    assert cells["grain"].dialect_diff() == []                                   # fully portable SQL: nothing to translate
+    base = {c.id: c for c in build_cells(analyse(new_wheels_catalog))}["base"]
+    assert any("DATEDIFF(ship_date, order_date)" in a and "ship_date - order_date" in b for a, b in base.dialect_diff())
 
 
-def test_xgboost_handles_text_labels_when_installed():
-    pytest.importorskip("xgboost")
-    rng = np.random.default_rng(0)
-    df = pd.DataFrame({"x": rng.normal(size=400), "z": rng.normal(size=400)})
-    df["label"] = np.where(df["x"] + rng.normal(scale=0.5, size=400) > 0, "yes", "no")
-    d = decide(df, profile_dataset(df), "label")
-    assert "XGBClassifier" in d.candidates
-    _, _, _, m = execute(df, "label")
-    assert m["cv_scores"]["XGBClassifier"] > 0.7
+def _monthly_orders(seed: int, spike: str | None = None) -> pd.DataFrame:
+    rng = np.random.default_rng(seed)
+    n = 4000
+    dates = pd.Timestamp("2020-01-01") + pd.to_timedelta(np.sort(rng.integers(0, 1096, n)), unit="D")
+    amount = rng.gamma(2, 50, n).round(2)
+    if spike:
+        amount = np.where(dates.strftime("%Y-%m") == spike, amount * 3, amount)
+    return pd.DataFrame({"order_id": range(n), "amount": amount, "order_date": dates.strftime("%Y-%m-%d")})
 
 
-def test_every_test_row_having_a_twin_does_not_crash():
-    """Regression test: with few input combinations, no test row is 'unseen'; scoring an empty set used to crash."""
-    rng = np.random.default_rng(0)
-    df = pd.DataFrame({"colour": rng.choice(list("RGB"), 300), "size": rng.choice(list("SML"), 300),
-                       "label": rng.choice(["a", "b"], 300)})
-    d, _, results, m = execute(df, "label")
-    assert d.lookalikes and "test_score_unseen" not in m
-    train = next(r for r in results if r.cell_id == "train")
-    assert any("Every test row has an identical twin" in n for n in train.notes)
+def test_trend_signals_ignore_noise_and_find_a_real_break():
+    flagged = 0
+    for seed in range(6):                                   # three years of i.i.d. monthly revenue: nothing is unusual
+        catalog = catalog_from({"orders": _monthly_orders(seed)})
+        d = analyse(catalog, "manual", {"fact": "orders", "measure": "amount", "amount": "amount", "date": "orders.order_date"})
+        _, m = run_cells([c for c in build_cells(d) if c.id in ("base", "trend_signals")], catalog)
+        flagged += len(m.get("unusual_periods", []))
+    assert flagged <= 1                                      # ~48 quarters judged; |z| >= 2 on a 4-period baseline would flag ~8
+    catalog = catalog_from({"orders": _monthly_orders(0, spike="2021-08")})
+    d = analyse(catalog)
+    results, m = run_cells([c for c in build_cells(d) if c.id in ("base", "trend_signals")], catalog)
+    assert [u["period"] for u in m["unusual_periods"]] == ["2021-Q3"] and m["unusual_periods"][0]["baseline"] >= 4
+    sql = {c.id: c for c in build_cells(d)}["trend_signals"].statements[0].sql["mysql"]
+    assert "RANGE BETWEEN 8 PRECEDING AND 1 PRECEDING" in sql and "COUNT(baseline_value) OVER" in sql
 
 
-# ── Regression tests from the thorough audit ──────────────────────────────────
-def test_column_names_never_break_the_generated_code():
-    """A target named with braces and quotes used to crash (f-string injection: `{x}` was executed)."""
-    rng = np.random.default_rng(0)
-    df = pd.DataFrame({"weird col (€)": rng.normal(size=300), "kategorie ü": rng.choice(list("xyz"), 300)})
-    df['target {x} "q"'] = df["weird col (€)"] * 3 + rng.normal(size=300)
-    _, cells, results, _ = execute(df, 'target {x} "q"')
-    assert {"insights", "ols"} <= {c.id for c in cells}
-    assert all(r.notes for r in results if r.cell_id != "setup")
+def test_short_uploads_are_analysed_by_iso_week(northwind_catalog):
+    catalog, d, cells = build("ten_weeks", northwind_catalog)
+    assert d.period == "week" and d.period_cols == ["order_isoyear", "week_number", "week_index"]
+    assert [d.label(p) for p in d.partial_periods] == ["2022-W01"] and d.label(d.complete_periods[-1]) == "2022-W10"
+    base = {c.id: c for c in cells}["base"].statements[0].sql
+    assert "YEARWEEK(order_date, 3) DIV 100 AS order_isoyear" in base["mysql"] and "WEEK(order_date, 3) AS week_number" in base["mysql"]
+    assert "FLOOR(DATEDIFF(order_date, DATE '1970-01-05') / 7.0) AS week_index" in base["mysql"]
+    assert "EXTRACT(ISOYEAR FROM order_date)::int AS order_isoyear" in base["postgres"]
+    assert "FLOOR((order_date - DATE '1970-01-05') / 7.0)::int AS week_index" in base["postgres"]
+    results, m = run_cells(cells, catalog)
+    assert m["qoq_last_complete"]["from"] == "2022-W09" and m["qoq_last_complete"]["to"] == "2022-W10"
+    assert "yoy" not in m and m["partial_periods"] == ["2022-W01"]
+    assert any("ISO weeks (Monday to Sunday)" in a for a in __import__("autosql").assumptions(d))
 
 
-def test_infinity_is_treated_as_missing():
-    rng = np.random.default_rng(0)
-    df = pd.DataFrame({"x": rng.normal(size=400), "ratio": np.where(rng.random(400) < 0.05, np.inf, rng.normal(size=400))})
-    df["y"] = df["x"] + rng.normal(size=400)
-    d, cells, _, _ = execute(df, "y")
-    assert d.has_infinite and "replace([np.inf, -np.inf], np.nan)" in cells[1].code
-
-
-def test_insights_with_no_group_large_enough_is_skipped_not_crashed():
-    rng = np.random.default_rng(0)
-    df = pd.DataFrame({"a": rng.normal(size=31), "b": rng.normal(size=31), "c": rng.choice(list("xyz"), 31)})
-    df["label"] = ["p", "q"] * 15 + ["p"]
-    _, _, results, _ = execute(df, "label")
-    insights = next(r for r in results if r.cell_id == "insights")
-    assert any("No group of any column has at least 30 rows" in n for n in insights.notes)
-
-
-def test_near_perfect_score_warns_about_leakage():
-    rng = np.random.default_rng(0)
-    df = pd.DataFrame({"a": rng.normal(size=500), "b": rng.normal(size=500)})
-    df["y"] = df["a"] * 2
-    df["y_copy"] = df["y"]                       # the answer, hiding under another name
-    _, _, results, _ = execute(df, "y")
-    train = next(r for r in results if r.cell_id == "train")
-    assert any("near-perfect score" in n for n in train.notes)
-
-
-# ── A boosting library that is installed but will not load (macOS without libomp) ─
-LIBOMP_ERROR = "dlopen(lib_lightgbm.dylib, 0x0006): Library not loaded: @rpath/libomp.dylib"
-
-
-@pytest.fixture
-def lightgbm_cannot_load(monkeypatch):
-    """Make `import lightgbm` fail the way it does on a Mac without libomp, for the engine and for generated code."""
-    import builtins
-    import importlib
-    import sys
-
-    from automl.decision import library_problem
-
-    real_import, real_import_module = builtins.__import__, importlib.import_module
-
-    def broken(name, *args, **kwargs):
-        if name == "lightgbm" or name.startswith("lightgbm."):
-            raise OSError(LIBOMP_ERROR)
-        return real_import(name, *args, **kwargs)
-
-    def broken_module(name, *args, **kwargs):
-        if name == "lightgbm":
-            raise OSError(LIBOMP_ERROR)
-        return real_import_module(name, *args, **kwargs)
-
-    for mod in [m for m in sys.modules if m == "lightgbm" or m.startswith("lightgbm.")]:
-        monkeypatch.delitem(sys.modules, mod)
-    monkeypatch.setattr(builtins, "__import__", broken)
-    monkeypatch.setattr(importlib, "import_module", broken_module)
-    library_problem.cache_clear()
-    yield
-    library_problem.cache_clear()
-
-
-def test_an_unloadable_lightgbm_is_skipped_and_explained(lightgbm_cannot_load, classification_df):
-    """Regression test: on macOS without libomp, `import lightgbm` raised OSError and stopped the whole run."""
-    d, _, results, m = execute(classification_df, "churn")
-    assert "LGBMClassifier" not in d.candidates and "LGBMClassifier" not in m["cv_scores"]
-    step = next(s for s in d.steps if s.key == "boosting_libs_broken")
-    assert "libomp" in step.found and "brew install libomp" in step.action
-
-
-def test_an_exported_notebook_survives_a_library_that_will_not_load(classification_df, monkeypatch):
-    """The notebook may run on another computer: built where LightGBM works, run where it does not."""
-    pytest.importorskip("lightgbm")
-    d = decide(classification_df, profile_dataset(classification_df), "churn")
-    cells = build_cells(d)
-    assert "LGBMClassifier" in d.candidates
-    import builtins
-    real_import = builtins.__import__
-
-    def broken(name, *args, **kwargs):
-        if name == "lightgbm":
-            raise OSError(LIBOMP_ERROR)
-        return real_import(name, *args, **kwargs)
-
-    monkeypatch.setattr(builtins, "__import__", broken)
-    results, m = run_cells(cells, classification_df)
-    assert not [r.cell_id for r in results if r.error]
-    compare = next(r for r in results if r.cell_id == "compare")
-    assert any("Skipped LGBMClassifier" in n and "brew install libomp" in n for n in compare.notes)
-    assert "LGBMClassifier" not in m["cv_scores"]
+def test_open_orders_past_their_date_count_as_late():
+    days = pd.date_range("2022-01-01", periods=120, freq="D")
+    orders = pd.DataFrame({"order_id": range(1, 121), "amount": 10.0 + np.arange(120) % 7, "order_date": days.strftime("%Y-%m-%d"),
+                           "required_date": (days + pd.Timedelta(days=10)).strftime("%Y-%m-%d"),
+                           "shipped_date": (days + pd.Timedelta(days=3)).strftime("%Y-%m-%d")})
+    orders.loc[orders.order_id.isin([5, 6, 7]), "shipped_date"] = None            # never shipped, long past their date
+    orders.loc[orders.order_id == 118, "shipped_date"] = None                       # not shipped, but not due yet
+    catalog = catalog_from({"orders": orders})
+    d = analyse(catalog)
+    assert d.required == "required_date"
+    _, m = run_cells([c for c in build_cells(d) if c.id in ("base", "kpis")], catalog)
+    k = m["kpis"]
+    assert (k["late_orders"], k["checked_orders"], k["open_overdue"]) == (3, 119, 3)    # 117 shipped on time + 3 overdue; 1 not due
+    assert round(k["late_pct"], 1) == 2.5

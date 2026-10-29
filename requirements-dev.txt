@@ -1,5 +1,5 @@
 -r requirements.txt
 pytest>=8
-# to rebuild examples/inn_hotels/INNHotels_cancellation_prediction.ipynb
-nbclient>=0.10
+sqlglot>=25          # parses every generated MySQL / PostgreSQL statement in the tests
+nbclient>=0.10       # executes the exported notebook in the tests
 ipykernel>=6
