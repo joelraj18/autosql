@@ -14,9 +14,11 @@ from __future__ import annotations
 
 import html
 import math
+import re
 
+from .briefsql import SqlLibrary
 from .business import KPI_BY_KEY, TRUST_WEIGHTS, Summary, effect_shares, executive_summary
-from .codegen import Builder, assumptions
+from .codegen import Builder, assumptions, build_cells
 from .decision import Decision
 
 W = 400          # SVG user units: charts sit in half-width cards (desktop) or full width (phone), so text scales ~0.85-1.15x
@@ -411,8 +413,9 @@ svg .dot-muted { fill: var(--partial); stroke: var(--surface); stroke-width: 2; 
 svg [data-tip] { cursor: default; outline: none; }
 svg [data-tip]:hover, svg [data-tip]:focus-visible { filter: brightness(1.12); }
 svg path[data-tip]:focus-visible, svg circle[data-tip]:focus-visible { stroke: var(--ink); stroke-width: 2; }
-#tip { position: fixed; z-index: 20; pointer-events: none; background: var(--tip-bg); color: var(--tip-ink); font: 600 12.5px/1.3 var(--sans);
-       padding: 6px 9px; border-radius: 6px; max-width: 260px; }
+[hidden] { display: none !important; }
+#tip, .tip { position: fixed; z-index: 20; pointer-events: none; background: var(--tip-bg); color: var(--tip-ink); font: 600 12.5px/1.3 var(--sans);
+             padding: 6px 9px; border-radius: 6px; max-width: 260px; }
 .actions { display: grid; gap: 12px; }
 .action { background: var(--surface); border: 1px solid var(--rule); border-radius: 12px; padding: 14px 16px; display: grid;
           grid-template-columns: 6.6rem minmax(0, 1fr); gap: 6px 14px; }
@@ -445,10 +448,41 @@ svg path[data-tip]:focus-visible, svg circle[data-tip]:focus-visible { stroke: v
 .toc a:hover, .toc a:focus-visible { color: var(--ink); border-color: var(--axis); outline: none; }
 .facts { display: grid; grid-template-columns: repeat(auto-fit, minmax(13rem, 1fr)); gap: 10px; margin: 0; }
 .facts > div { background: var(--surface); border: 1px solid var(--rule); border-radius: 10px; padding: 10px 14px; min-width: 0; }
-.facts dt { font-size: 0.78rem; color: var(--muted); text-transform: uppercase; letter-spacing: 0.06em; font-weight: 600; }
+.facts dt { font-size: 0.78rem; color: var(--muted); text-transform: uppercase; letter-spacing: 0.06em; font-weight: 600;
+            display: flex; justify-content: space-between; align-items: center; gap: 8px; }
 .facts dd { margin: 2px 0 0; font-weight: 600; overflow-wrap: anywhere; }
-details.tv summary { cursor: pointer; color: var(--ink-2); font-size: 0.85rem; }
-details.tv summary:focus-visible { outline: 2px solid var(--series); outline-offset: 2px; }
+.views { display: grid; gap: 4px; }
+details.tv summary, details.sqlv summary { cursor: pointer; color: var(--ink-2); font-size: 0.85rem; }
+details.tv summary:focus-visible, details.sqlv summary:focus-visible, details.step summary:focus-visible { outline: 2px solid var(--series); outline-offset: 2px; }
+/* SQL: the engine's own statements, one pane per dialect; the page shows the one the reader picked */
+.sqlcode { display: grid; gap: 8px; margin-top: 8px; min-width: 0; }
+.sqlpane { border: 1px solid var(--rule); border-radius: 8px; background: var(--chip); min-width: 0; overflow: hidden; }
+.sqlbar { display: flex; justify-content: space-between; align-items: center; gap: 8px; padding: 4px 6px 4px 10px; border-bottom: 1px solid var(--rule);
+          font: 600 0.7rem/1.2 var(--sans); letter-spacing: 0.06em; text-transform: uppercase; color: var(--ink-2); }
+.sqlpane pre { margin: 0; padding: 10px 12px; overflow: auto; max-height: 26rem; font: 0.78rem/1.5 var(--mono); color: var(--ink); tab-size: 2;
+               white-space: pre-wrap; overflow-wrap: anywhere; }   /* the comments explain the SQL: wrap them, never cut them off */
+.sqlpane pre:focus-visible { outline: 2px solid var(--series); outline-offset: -2px; }
+.sqlpane code { font: inherit; }
+.sqlpane .c { color: var(--muted); }
+.copy { font: 600 0.72rem/1 var(--sans); border: 1px solid var(--rule); background: var(--surface); color: var(--ink-2); border-radius: 6px; padding: 4px 8px; cursor: pointer; }
+.copy:hover, .copy:focus-visible { color: var(--ink); border-color: var(--axis); outline: none; }
+.page[data-dialect="postgres"] .sql-mysql, .page:not([data-dialect="postgres"]) .sql-postgres { display: none; }
+.page.js .sqlbar .lbl { display: none; }       /* with a script the tabs name the dialects; without one the label does */
+.dialect { display: inline-flex; align-items: center; gap: 4px; }
+.dialect button { font: 600 0.68rem/1 var(--sans); letter-spacing: 0.04em; padding: 4px 9px; border: 1px solid var(--rule); border-radius: 999px;
+                  background: transparent; color: var(--ink-2); cursor: pointer; text-transform: none; }
+.dialect button[aria-pressed="true"] { background: var(--ink); color: var(--bg); border-color: var(--ink); }
+.dialect button:focus-visible { outline: 2px solid var(--series); outline-offset: 2px; }
+a.sqllink { font: 600 0.7rem/1 var(--sans); letter-spacing: 0.04em; text-transform: none; color: var(--ink-2); text-decoration: none; padding: 3px 7px;
+            border: 1px solid var(--rule); border-radius: 999px; white-space: nowrap; align-self: center; }
+a.sqllink:hover, a.sqllink:focus-visible { color: var(--ink); border-color: var(--axis); outline: none; }
+.steps { display: grid; gap: 8px; }
+details.step { background: var(--surface); border: 1px solid var(--rule); border-radius: 10px; padding: 10px 14px; min-width: 0; }
+details.step:target { outline: 2px solid var(--series); }
+details.step summary { cursor: pointer; display: flex; flex-wrap: wrap; gap: 4px 10px; align-items: baseline; }
+details.step .sec { color: var(--muted); font-size: 0.8rem; }
+.sqlbody .q { color: var(--ink-2); font-size: 0.9rem; margin: 8px 0 0; }
+.sqlbody .by { color: var(--muted); }
 .scroll { overflow-x: auto; }
 table { border-collapse: collapse; width: 100%; font-size: 0.86rem; margin-top: 8px; }
 th, td { text-align: left; padding: 6px 10px; border-bottom: 1px solid var(--rule); vertical-align: top; }
@@ -472,20 +506,75 @@ footer.end { color: var(--muted); font-size: 0.85rem; border-top: 1px solid var(
 
 SCRIPT = """
 (function () {
+  var page = document.querySelector("main.page");
   var tip = document.getElementById("tip");
+  var shown = null;
+  // Tooltips: one set of listeners for the whole document, so that a chart copied into a popup works like the original.
+  // (A popup is in the browser's top layer, above everything else, so it carries a tooltip element of its own.)
+  function tipFor(el) { var host = el.closest("dialog"); return host ? host.querySelector(".tip") : tip; }
   function show(el, x, y) {
-    tip.textContent = el.getAttribute("data-tip");
-    tip.hidden = false;
-    var r = tip.getBoundingClientRect();
+    var t = tipFor(el);
+    if (!t) { return; }
+    if (shown && shown !== t) { shown.hidden = true; }
+    shown = t;
+    t.textContent = el.getAttribute("data-tip");
+    t.hidden = false;
+    var r = t.getBoundingClientRect();
     var left = Math.min(Math.max(8, x + 12), window.innerWidth - r.width - 8);
     var top = y - r.height - 12 < 8 ? y + 16 : y - r.height - 12;
-    tip.style.left = left + "px"; tip.style.top = top + "px";
+    t.style.left = left + "px"; t.style.top = top + "px";
   }
-  document.querySelectorAll("[data-tip]").forEach(function (el) {
-    el.addEventListener("pointermove", function (e) { show(el, e.clientX, e.clientY); });
-    el.addEventListener("pointerleave", function () { tip.hidden = true; });
-    el.addEventListener("focus", function () { var b = el.getBoundingClientRect(); show(el, b.left + b.width / 2, b.top); });
-    el.addEventListener("blur", function () { tip.hidden = true; });
+  function hide() { if (shown) { shown.hidden = true; shown = null; } }
+  function marked(e) { return e.target.closest ? e.target.closest("[data-tip]") : null; }
+  document.addEventListener("pointermove", function (e) { var el = marked(e); if (el) { show(el, e.clientX, e.clientY); } else { hide(); } });
+  document.addEventListener("pointerout", function (e) { if (!e.relatedTarget) { hide(); } });
+  document.addEventListener("focusin", function (e) { var el = marked(e); if (el) { var b = el.getBoundingClientRect(); show(el, b.left + b.width / 2, b.top); } });
+  document.addEventListener("focusout", hide);
+
+  // SQL dialect: every code block carries MySQL 8 and PostgreSQL; the reader's choice is remembered on this device
+  function setDialect(name, save) {
+    page.setAttribute("data-dialect", name);
+    document.querySelectorAll(".dialect button").forEach(function (b) { b.setAttribute("aria-pressed", String(b.getAttribute("data-dialect") === name)); });
+    if (save) { try { localStorage.setItem("autosql-dialect", name); } catch (e) { /* private mode: the choice just isn't kept */ } }
+  }
+  var saved = null;
+  try { saved = localStorage.getItem("autosql-dialect"); } catch (e) { /* no storage */ }
+  page.classList.add("js");
+  document.querySelectorAll(".dialect, .copy").forEach(function (el) { el.hidden = false; });
+  setDialect(saved === "postgres" ? "postgres" : "mysql", false);
+  document.addEventListener("click", function (e) {
+    var b = e.target.closest ? e.target.closest(".dialect button") : null;
+    if (b) { setDialect(b.getAttribute("data-dialect"), true); }
+  });
+
+  // Copy: the code of the pane that is showing
+  function copyText(text, button) {
+    function done(ok) { var was = button.textContent; button.textContent = ok ? "Copied" : "Select and press Ctrl+C"; setTimeout(function () { button.textContent = was; }, 1600); }
+    function fallback() {
+      var host = button.closest("dialog") || document.body, area = document.createElement("textarea");
+      area.value = text; area.setAttribute("readonly", ""); area.style.cssText = "position:fixed;opacity:0;top:0;left:0";
+      host.appendChild(area); area.select();
+      var ok = false;
+      try { ok = document.execCommand("copy"); } catch (e) { ok = false; }
+      host.removeChild(area); done(ok);
+    }
+    if (navigator.clipboard && navigator.clipboard.writeText) { navigator.clipboard.writeText(text).then(function () { done(true); }, fallback); } else { fallback(); }
+  }
+  document.addEventListener("click", function (e) {
+    var b = e.target.closest ? e.target.closest(".copy") : null;
+    if (b) { copyText(b.closest(".sqlpane").querySelector("code").textContent, b); }
+  });
+
+  // A "SQL" link on a card goes to the full code of the steps it comes from
+  document.addEventListener("click", function (e) {
+    var a = e.target.closest ? e.target.closest("a.sqllink") : null;
+    if (!a) { return; }
+    var first = null;
+    a.getAttribute("data-sql").split(" ").forEach(function (step) {
+      var d = document.getElementById("sql-" + step);
+      if (d) { d.open = true; first = first || d; }
+    });
+    if (first) { e.preventDefault(); first.scrollIntoView({ block: "start" }); }
   });
 })();
 """
@@ -525,14 +614,29 @@ def tile_value(t) -> str:
     return compact(t.value, True) if t.unit == "money" else full(t.value, t.unit).replace(" days", "")
 
 
-def _card(title: str, sub: str, chart: str, tv: str, wide: bool = False) -> str:
-    return (f'<div class="card{" wide" if wide else ""}"><h3>{esc(title)}</h3>' + (f'<p class="sub">{sub}</p>' if sub else "")
-            + f'<div class="chart">{chart}</div>{tv}</div>')
+def _card(title: str, sub: str, chart: str, tv: str, wide: bool = False, ev: str = "", sql: str = "") -> str:
+    """A chart card: the chart, then its table view and the SQL it was computed from. ``ev`` names it for the evidence popups."""
+    views = f'<div class="views">{tv}{sql}</div>' if tv or sql else ""
+    return (f'<div class="card{" wide" if wide else ""}"' + (f' data-ev="{esc(ev)}"' if ev else "") + f'><h3>{esc(title)}</h3>'
+            + (f'<p class="sub">{sub}</p>' if sub else "") + f'<div class="chart">{chart}</div>{views}</div>')
 
 
 def _section(anchor: str, eyebrow: str, heading: str, intro: str, body: str) -> str:
     return (f'<section class="section" id="{anchor}" aria-labelledby="{anchor}-h"><header><p class="eyebrow">{esc(eyebrow)}</p>'
             f'<h2 id="{anchor}-h">{esc(heading)}</h2>' + (f"<p>{intro}</p>" if intro else "") + f"</header>{body}</section>")
+
+
+PERIOD_SQL = [("kpi_by_period", "kpi_by_period")]      # the per-period statement behind the tiles and the trend charts
+# The SQL steps each context fact comes from (the counts of tables and links are made while profiling the files; the steps prove them)
+FACT_STEPS = {"Tables": ["schema", "cardinality"], "One row is": ["grain"], "Orders": ["kpis"], "Revenue, all periods": ["kpis"],
+              "Typical order": ["kpis"], "Revenue is": ["base"], "Not sales, left out": ["reconcile"], "Periods": ["date_range"]}
+# ... and the steps behind each data-quality check
+TRUST_STEPS = {"Completeness": ["nulls"], "Uniqueness": ["duplicates", "grain"], "Integrity": ["orphans", "cardinality"],
+               "Validity": ["date_range", "nulls"], "Consistency": ["reconcile"]}
+
+
+def slug(text: str) -> str:
+    return re.sub(r"[^a-z0-9]+", "-", text.lower()).strip("-")
 
 
 def _context(d: Decision, m: dict) -> list[tuple[str, str]]:
@@ -565,6 +669,7 @@ def to_business_brief(d: Decision, metrics: dict, *, title: str = "Business brie
     """The brief as HTML: a full document, or (standalone=False) a fragment for a host that adds the document skeleton."""
     s: Summary = executive_summary(d, metrics, title)
     m = metrics
+    lib = SqlLibrary(build_cells(d))      # the engine's own statements: every chart and card points at the ones it came from
     rows = m.get("period_table") or []
     main = m.get("main_measure", "revenue")
     money = main == "revenue"
@@ -583,12 +688,12 @@ def to_business_brief(d: Decision, metrics: dict, *, title: str = "Business brie
     # ── Key figures: the hero number and the tiles ───────────────────────
     if s.tiles:
         hero, rest = s.tiles[0], s.tiles[1:7]
-        hero_html = (f'<div class="hero-figure"><span class="eyebrow">{esc(hero.label)} · {esc(s.period)}</span>'
+        hero_html = (f'<div class="hero-figure" data-ev="tile:{esc(hero.key)}"><span class="eyebrow">{esc(hero.label)} · {esc(s.period)}</span>'
                      f'<span class="value">{esc(compact(hero.value, hero.unit == "money"))}</span>'
                      f'<span class="meta">{esc(full(hero.value, hero.unit))}</span>{_delta_html(hero, s.compared_with)}'
                      + (f'<span class="meta">{m["yoy"]["pct"]:+.1f}% on the same {esc(d.period)} a year earlier</span>' if m.get("yoy") else "")
                      + "</div>")
-        tiles = "".join(f'<div class="tile"><span class="label">{esc(t.label)}</span><span class="value">{esc(tile_value(t))}'
+        tiles = "".join(f'<div class="tile" data-ev="tile:{esc(t.key)}"><span class="label">{esc(t.label)}</span><span class="value">{esc(tile_value(t))}'
                         + (' <small>days</small>' if t.unit == "days" else "") + f"</span>{_delta_html(t, s.compared_with)}</div>"
                         for t in rest)
         sections.append(f'<section class="section" aria-label="Key figures"><div class="hero">{hero_html}<div class="tiles">{tiles}</div></div>'
@@ -596,10 +701,12 @@ def to_business_brief(d: Decision, metrics: dict, *, title: str = "Business brie
                            "Green means better for the business (fewer days to ship is better), red means worse; <b>within noise</b> means the "
                            "change's 95% confidence interval includes zero, so it could be normal variation. Hover a change for its interval.</p>"
                            if s.compared_with else "")
+                        + lib.details([("kpi_by_period", "kpi_by_period")], "SQL behind the key figures")
                         + "</section>")
 
     # ── Context: what the data is ────────────────────────────────────────
-    facts = "".join(f"<div><dt>{esc(a)}</dt><dd>{prose(b)}</dd></div>" for a, b in _context(d, m))
+    facts = "".join(f'<div data-ev="fact:{slug(a)}"><dt>{esc(a)}{lib.link(FACT_STEPS.get(a, []))}</dt><dd>{prose(b)}</dd></div>'
+                    for a, b in _context(d, m))
     sections.append(_section("data", "Context", "What this data is", "", f'<dl class="facts">{facts}</dl>'))
     nav.append(("data", "Data"))
 
@@ -625,7 +732,8 @@ def to_business_brief(d: Decision, metrics: dict, *, title: str = "Business brie
                        (f"Grey: {esc(', '.join(partial))} is partial, shown but never compared." if partial else ""),
                        period_columns(rows, main, unit, f"{main} per {d.period}"),
                        table(["Period", main.capitalize(), "Status"],
-                             [[r["period"], full(float(r.get(main) or 0), unit), r.get("period_status", "complete")] for r in rows]))]
+                             [[r["period"], full(float(r.get(main) or 0), unit), r.get("period_status", "complete")] for r in rows]),
+                       ev="chart:trend", sql=lib.details(PERIOD_SQL))]
         driver_key = next((k for k in (f"avg_{d.lead_name}", "late_pct", "avg_rating") if any(r.get(k) is not None for r in rows)), None)
         if driver_key:
             label = {"late_pct": "Late shipments", "avg_rating": "Average rating"}.get(driver_key, f"Average {d.lead_name.replace('_', ' ')}")
@@ -634,7 +742,8 @@ def to_business_brief(d: Decision, metrics: dict, *, title: str = "Business brie
             if chart:
                 cards.append(_card(f"{label}: the suspected driver", "The same periods on its own scale; read it against the revenue chart.",
                                    chart, table(["Period", label], [[r["period"], full(float(r[driver_key]), dunit)]
-                                                                   for r in rows if r.get(driver_key) is not None])))
+                                                                   for r in rows if r.get(driver_key) is not None]),
+                                   ev="chart:driver", sql=lib.details(PERIOD_SQL)))
         sections.append(_section("trend", "Trend", "What happened", "", f'<div class="grid2">{"".join(cards)}</div>'))
         nav.append(("trend", "Trend"))
 
@@ -650,12 +759,14 @@ def to_business_brief(d: Decision, metrics: dict, *, title: str = "Business brie
                        waterfall(dict(split, before_value=before_value), split["from"], split["to"]),
                        table(["Step", "Amount"], [[split["from"], full(before_value)], ["Number of orders", f"{split['volume']:+,.2f}"],
                                                   ["Average order value", f"{split['order_value']:+,.2f}"],
-                                                  [split["to"], full(before_value + split["delta"])]]))]
+                                                  [split["to"], full(before_value + split["delta"])]]),
+                       ev="chart:waterfall", sql=lib.details([("driver_tree", "tree")]))]
         for col, seg in list((m.get("segment_changes") or {}).items())[:3]:
             cards.append(_card(f"Change by {col.replace('_', ' ')}", "Blue bars added revenue, red bars removed it; biggest movers first.",
                                diverging_bars(seg, f"Revenue change by {col}"),
                                table([col, split["from"], split["to"], "Change"],
-                                     [[r["segment"], full(r["before"]), full(r["after"]), f"{r['change']:+,.2f}"] for r in seg])))
+                                     [[r["segment"], full(r["before"]), full(r["after"]), f"{r['change']:+,.2f}"] for r in seg]),
+                               ev=f"chart:segment:{col}", sql=lib.details([("driver_tree", f"by_{col}")])))
         sections.append(_section("drivers", "Drivers", "Why it moved",
                                  f"The change from {esc(split['from'])} to {esc(split['to'])}, split exactly into its two drivers "
                                  "(the steps add up to the total) and by segment.", f'<div class="grid2">{"".join(cards)}</div>'))
@@ -669,14 +780,17 @@ def to_business_brief(d: Decision, metrics: dict, *, title: str = "Business brie
                           f"Class A, the customers making up the first 80% of revenue: {pareto['a_entities']} customers "
                           f"({pareto['a_entities_pct']:.0f}% of them).",
                           concentration_curve(pareto["curve"], pareto["top20_revenue_pct"], "customers"),
-                          table(["% of customers", "% of revenue"], [[f"{a:.1f}%", f"{b:.1f}%"] for a, b in pareto["curve"]])))
+                          table(["% of customers", "% of revenue"], [[f"{a:.1f}%", f"{b:.1f}%"] for a, b in pareto["curve"]]),
+                          ev="chart:pareto", sql=lib.details([("pareto", "curve_customers"), ("pareto", "abc_customers")])))
     rfm = m.get("rfm") or {}
     if rfm:
         order = sorted(rfm.items(), key=lambda kv: -kv[1]["revenue_pct"])
-        cust.append(_card("Revenue by customer segment", "RFM: recency, frequency and money, each scored 1–5 with NTILE(5).",
+        cust.append(_card("Revenue by customer segment",
+                          "RFM: recency, frequency and money, each scored 1–5 with CEIL(5 × CUME_DIST()), so equal values always get equal scores.",
                           single_hbars([(k, v["revenue_pct"], f"{k}: {v['revenue_pct']:.1f}% of revenue, {v['customers']} customers")
                                         for k, v in order], "Revenue share by RFM segment"),
-                          table(["Segment", "Customers", "% of revenue"], [[k, str(v["customers"]), f"{v['revenue_pct']:.1f}%"] for k, v in order])))
+                          table(["Segment", "Customers", "% of revenue"], [[k, str(v["customers"]), f"{v['revenue_pct']:.1f}%"] for k, v in order]),
+                          ev="chart:rfm", sql=lib.details([("rfm", None)])))
     if cust:
         gaps = m.get("purchase_gaps") or {}
         intro = ""
@@ -702,10 +816,13 @@ def to_business_brief(d: Decision, metrics: dict, *, title: str = "Business brie
                                        single_hbars([(b["band"], b["given"], f"{b['band']}: {b['given']:,.2f} given away on {b['lines_pct']:.1f}% "
                                                       f"of lines, {b['qty']:.1f} units per line") for b in bands], "Discount given by band", "money"),
                                        table(["Band", "% of lines", "Given away", "Units per line"],
-                                             [[b["band"], f"{b['lines_pct']:.1f}%", full(b["given"]), f"{b['qty']:.1f}"] for b in bands]))
+                                             [[b["band"], f"{b['lines_pct']:.1f}%", full(b["given"]), f"{b['qty']:.1f}"] for b in bands]),
+                                       ev="chart:discount-bands", sql=lib.details([("discounts", "discounts")]))
                                  + _card("Units per line, by discount band", "Does a bigger discount come with bigger orders?",
                                          single_hbars([(b["band"], b["qty"], f"{b['band']}: {b['qty']:.1f} units per line") for b in bands],
-                                                      "Units per line by discount band", "score"), "") + "</div>"))
+                                                      "Units per line by discount band", "score"),
+                                         table(["Band", "Units per line"], [[b["band"], f"{b['qty']:.1f}"] for b in bands]),
+                                         ev="chart:discount-units", sql=lib.details([("discounts", "discounts")])) + "</div>"))
         nav.append(("pricing", "Pricing"))
 
     # ── Trust ────────────────────────────────────────────────────────────
@@ -714,7 +831,7 @@ def to_business_brief(d: Decision, metrics: dict, *, title: str = "Business brie
     for x in t.dimensions:
         cls, icon, word = _status(x.score)
         meters.append(f'<div class="meter"><span class="name"><span class="st {cls}" aria-hidden="true">{icon}</span>{esc(x.name)}'
-                      f'<span class="w">weight {TRUST_WEIGHTS[x.name]:.0%}</span></span>'
+                      f'<span class="w">weight {TRUST_WEIGHTS[x.name]:.0%}</span>{lib.link(TRUST_STEPS.get(x.name, []))}</span>'
                       f'<div class="track" role="img" aria-label="{esc(x.name)}: {_score(x.score)} of 100, {word}">'
                       f'<div class="fill {cls}" style="width:{max(2.0, x.score):.1f}%"></div></div>'
                       f'<span class="num">{_score(x.score)}</span><span class="detail">{prose(x.detail)}</span></div>')
@@ -722,7 +839,7 @@ def to_business_brief(d: Decision, metrics: dict, *, title: str = "Business brie
     sections.append(_section("trust", "Data quality", "Can we trust these numbers?",
                              "Five checks run in SQL before any KPI is computed. The score is their weighted average: 90+ is high, 75–90 usable "
                              "with the caveats listed, below 75 use with care. A failed reconciliation, or any check below 60, caps the grade "
-                             "whatever the average.", f'<div class="card meters">{capped}{"".join(meters)}</div>'))
+                             "whatever the average.", f'<div class="card meters" data-ev="trust">{capped}{"".join(meters)}</div>'))
     nav.append(("trust", "Trust"))
 
     # ── Method ───────────────────────────────────────────────────────────
@@ -738,15 +855,25 @@ def to_business_brief(d: Decision, metrics: dict, *, title: str = "Business brie
                              + table(["KPI", "Definition", "SQL"], [[x.name, x.definition, x.formula] for x in used], "Show the definitions")
                              + "</div></div>"))
     nav.append(("method", "Method"))
+
+    # ── SQL: the full code of every step this page pointed at (built last, once every card has said which steps it uses) ──
+    steps = lib.appendix()
+    if steps:
+        sections.append(_section("sql", "SQL", "The SQL behind every figure",
+                                 "Each step below is the full code the analysis ran, in MySQL 8 and PostgreSQL. Every chart shows its own "
+                                 "statements under it; the project ZIP from the app holds all of them as scripts you can run on your database.",
+                                 f'<div class="steps">{steps}</div>'))
+        nav.append(("sql", "SQL"))
     sections.append(f'<footer class="end">Generated by AutoSQL Explorer from {esc(source)}. Every figure is printed by a SQL step that reruns on '
                     "MySQL 8 or PostgreSQL (download the project ZIP from the app). Hover or focus a mark to read its value; every chart has a "
-                    "table view.</footer>")
+                    "table view and the SQL it was computed from.</footer>")
 
     links = "".join(f'<a href="#{a}">{esc(b)}</a>' for a, b in nav)
     sections[0] = sections[0].replace("NAV", f'<nav class="toc" aria-label="Sections">{links}</nav>')
-    body = f'<main class="page">{"".join(sections)}</main><div id="tip" role="tooltip" hidden></div><script>{SCRIPT}</script>'
+    body = (f'<main class="page" data-dialect="mysql">{"".join(sections)}</main><div id="tip" role="tooltip" hidden></div>'
+            f"<script>{SCRIPT}</script>")
     head = (f"<title>{esc(title)}</title>\n" + ('<meta name="claude:viewport-fit-sides" content="cover">\n' if not standalone else "")
-            + f"<style>{CSS}</style>\n")
+            + f"<style>{CSS}</style>\n<noscript><style>.sql-postgres {{ display: block !important; }}</style></noscript>\n")
     if not standalone:
         return head + body + "\n"
     return ('<!doctype html>\n<html lang="en">\n<head>\n<meta charset="utf-8">\n'

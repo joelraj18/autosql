@@ -5,10 +5,26 @@ from html.parser import HTMLParser
 import pytest
 
 from autosql import build_cells, run_cells
+from autosql.briefsql import highlight
 from autosql.report import compact, nice_ticks, period_parts, to_business_brief
 from conftest import analyse, catalog_from
 from datasets import sweep_cases
+from htmltree import parse_tree
 from test_codegen_runs import build, business_rules_frames
+
+# Which statements each chart is made from (the spec the page must follow): (step, statement label)
+CHART_SQL = {
+    "chart:trend": [("kpi_by_period", "kpi_by_period")],
+    "chart:driver": [("kpi_by_period", "kpi_by_period")],
+    "chart:waterfall": [("driver_tree", "tree")],
+    "chart:segment:customer_country": [("driver_tree", "by_customer_country")],
+    "chart:segment:category_name": [("driver_tree", "by_category_name")],
+    "chart:segment:employee_last_name": [("driver_tree", "by_employee_last_name")],
+    "chart:pareto": [("pareto", "curve_customers"), ("pareto", "abc_customers")],
+    "chart:rfm": [("rfm", "rfm_view"), ("rfm", "rfm_scores"), ("rfm", "rfm_segments")],
+    "chart:discount-bands": [("discounts", "discounts")],
+    "chart:discount-units": [("discounts", "discounts")],
+}
 
 
 class Checker(HTMLParser):
@@ -72,7 +88,61 @@ def test_tooltips_never_inject_html(nw):
     d, m = nw
     page = to_business_brief(d, m, title="<script>alert(1)</script>")
     assert "<script>alert(1)</script>" not in page and "&lt;script&gt;" in page
-    assert "tip.textContent" in page and "innerHTML" not in page
+    assert 't.textContent = el.getAttribute("data-tip")' in page and "innerHTML" not in page and "insertAdjacentHTML" not in page
+
+
+def test_every_chart_shows_the_engines_sql_in_both_dialects(nw):
+    d, m = nw
+    cells = {c.id: c for c in build_cells(d)}
+    tree = parse_tree(to_business_brief(d, m, title="Northwind Traders"))
+    on_page = {n.attrs["data-ev"] for n in tree.find_all("div", cls="card") if n.attrs.get("data-ev", "").startswith("chart:")}
+    assert on_page == set(CHART_SQL)                                       # no chart without a spec, no spec without a chart
+    for key, refs in CHART_SQL.items():
+        card = tree.find("div", cls="card", data_ev=key)
+        disclosure = card.find("details", cls="sqlv")
+        assert disclosure is not None and card.find("details", cls="tv") is not None, key   # the SQL sits next to the table view
+        panes = {dialect: disclosure.find("div", cls=f"sql-{dialect}") for dialect in ("mysql", "postgres")}
+        for dialect, pane in panes.items():
+            code = pane.find("code").text()
+            for step, label in refs:
+                statement = next(s for s in cells[step].statements if s.label == label)
+                assert statement.sql[dialect] in code, (key, dialect, label)    # the full statement, character for character
+
+
+def test_the_appendix_holds_every_step_the_page_points_at(nw):
+    d, m = nw
+    cells = {c.id: c for c in build_cells(d)}
+    tree = parse_tree(to_business_brief(d, m, title="Northwind Traders"))
+    steps = {n.attrs["data-step"]: n for n in tree.find_all("details", cls="step")}
+    assert {"kpi_by_period", "driver_tree", "pareto", "rfm", "discounts", "kpis", "grain", "reconcile", "orphans"} <= set(steps)
+    for step, node in steps.items():
+        for dialect in ("mysql", "postgres"):
+            code = node.find("div", cls=f"sql-{dialect}").find("code").text()
+            assert all(st.sql[dialect] in code for st in cells[step].statements), (step, dialect)    # the whole step, not an excerpt
+    links = tree.find_all("a", cls="sqllink")
+    assert links
+    for a in links:                                                                  # every card's SQL link leads somewhere
+        targets = a.attrs["data-sql"].split()
+        assert all(t in steps for t in targets) and a.attrs["href"] == f"#sql-{targets[0]}"
+    facts = {n.attrs["data-ev"]: n for n in tree.find_all("div") if n.attrs.get("data-ev", "").startswith("fact:")}
+    assert all(f.find("a", cls="sqllink") for f in facts.values()) and tree.find("div", cls="meters").find_all("a", cls="sqllink")
+
+
+def test_sql_is_escaped_and_only_comments_are_dimmed():
+    assert highlight("SELECT a < b -- why & how") == 'SELECT a &lt; b <span class="c">-- why &amp; how</span>'
+    assert highlight("SELECT '--' AS dashes") == "SELECT &#x27;--&#x27; AS dashes"           # dashes inside a string are not a comment
+    assert highlight("-- only a comment\nSELECT 1") == '<span class="c">-- only a comment</span>\nSELECT 1'
+
+
+def test_the_sql_views_need_no_script_to_be_complete(nw):
+    d, m = nw
+    page = to_business_brief(d, m, title="Northwind Traders")
+    tree = parse_tree(page)
+    assert "<noscript><style>.sql-postgres { display: block !important; }</style></noscript>" in page.split("</head>")[0]   # both dialects without JS
+    tabs, copies = tree.find_all("div", cls="dialect"), tree.find_all("button", cls="copy")
+    assert tabs and copies and all("hidden" in n.attrs for n in tabs + copies)             # the script reveals them; until then they are not there
+    assert all(p.find("span", cls="lbl") for p in tree.find_all("div", cls="sqlpane"))     # and each pane names its dialect in plain text
+    assert tree.find("main", cls="page").attrs["data-dialect"] == "mysql"                    # MySQL first, as in the app
 
 
 def test_markdown_backticks_never_reach_the_page(nw):
