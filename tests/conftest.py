@@ -30,12 +30,12 @@ def catalog_from(frames: dict[str, pd.DataFrame]):
     return read_files([(f"{name}.csv", as_csv(df)) for name, df in frames.items()])
 
 
-def analyse(catalog, mode="auto", picks=None, accept=()):
+def analyse(catalog, mode="auto", picks=None, accept=(), custom=None):
     profile = profile_catalog(catalog)
     schema = infer_schema(catalog, profile)
     if accept:
         schema = schema.with_accepted(accept)
-    return decide(catalog, profile, schema, mode, picks)
+    return decide(catalog, profile, schema, mode, picks, custom)
 
 
 def new_wheels_frame(seed: int = 0) -> pd.DataFrame:

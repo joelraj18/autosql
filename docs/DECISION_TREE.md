@@ -294,6 +294,29 @@ the `ship_via` link replaces the person with `shippers.company_name` (fulfilment
   | discounts | no discount column |
   | trend signals | fewer than **5** periods (`MIN_PERIODS_FOR_SIGNALS`) |
 
+### D8. Your own assumptions and KPIs (`decide(…, custom=Customization)`, `custom.py`)
+Optional. Nothing here changes what the engine decided; it is kept apart and marked as yours wherever it appears.
+- **Assumptions:** `assumption_items(d)` gives the engine's statements with stable keys (`fact`, `revenue`, `list_price`,
+  `amount_unit`, `line_level`, `periods`, `partial:<period>`, `lead`, `rating`, `recency`, `dedupe:<table>`,
+  `filter:<table>.<column>`, `dimensions`, and `validation_only` when no KPI is computed). `edit` rewords the statement with that key ("… (edited by you)"), `add` appends
+  ("Added by you: …"), and a key that matches nothing becomes a "Not applied" notice listing the keys.
+- **KPIs:** `key` (lower case, ≤ 40), `name`, `definition`, optional `sql`, `unit` (number, money, pct, days, score), `direction`
+  (up, down, context), `why`, `pitfall`, `decision`. Without `sql` a KPI is a definition only.
+- **`sql`** is one aggregate expression over `order_facts`, or an object with `default` and/or `mysql` / `postgres` / `duckdb`
+  (it needs a `default`, or both `mysql` and `postgres`; DuckDB uses its own, then `default`, then PostgreSQL's, then MySQL's).
+- **Checked first, every problem at once:** unknown keys, wrong types, duplicate keys, text over 600 characters (SQL: 1,200),
+  control characters in wording (it ends up in SQL comments), and for the expression: no `;`, `--`, `/* */`, backtick or
+  backslash; quotes and parentheses balance; no `SELECT`, `FROM`, `UNION`, `INTO`, `JOIN`, `WHERE`, `HAVING`, `LIMIT`, `OFFSET`,
+  `FETCH`, `WINDOW`, `RETURNING`, `GROUP` or `ORDER` outside parentheses (`IS DISTINCT FROM` and `WITHIN GROUP` excepted); no
+  call to `PG_SLEEP`, `SLEEP`, `BENCHMARK`, `LOAD_FILE`, `PG_READ_FILE`, `DBLINK`, `NEXTVAL`, `READ_CSV` and the like.
+- **Warnings** (not errors; they appear in the app, the brief and as a `-- Check:` comment in the SQL): a `/` not followed by
+  `NULLIF(` or a decimal literal; for the `default` and `mysql` expressions, every construct in `BANNED` and `::`.
+- **Cell:** `custom_kpis` after `kpi_by_period`, built only when at least one KPI has `sql` and the views exist (not in validate
+  mode). Two **soft** statements per KPI (all periods; per period). A statement that fails is reported next to the KPI; the
+  runner goes on.
+- **Dry run** (`runner.dry_run`): the views and the soft statements on empty copies of the tables. Finds missing columns and
+  unknown functions; an aggregate over no rows returns one row, so an expression that returns none is not an aggregate.
+
 ---
 
 ## Stage C: The generated cells (`codegen.py`)
@@ -315,6 +338,7 @@ that writes the 📌 findings from the result.
 | 10 | `kpis` | KPIs | revenue, orders, AOV = revenue ÷ orders, average line value (contrast), customers, orders per customer, repeat-customer %, units per order, average lead time, late % (with open overdue orders), rating; then the **median and P90** of order value and lead time by rank: `ROW_NUMBER()` + `COUNT(*) OVER ()`, median = the mean of ranks `FLOOR((cnt + 1) / 2.0)` and `FLOOR((cnt + 2) / 2.0)`, P90 = the first rank ≥ `CEIL(0.9 * cnt)` |
 | 11 | `discounts` | KPIs | lines per discount band (`CASE`), gross vs net revenue, discount given, units per line; each band's share of lines with `SUM(COUNT(*)) OVER ()` |
 | 12 | `kpi_by_period` | KPIs | `quarterly` / `monthly` / `weekly` CTE with `period_index = year × 4 + quarter` (× 12 + month; `week_index` for weeks) and `is_partial` → `with_prev`: `CASE WHEN period_index − LAG(period_index) = 1 AND LAG(is_partial) = 0 THEN LAG(revenue) …` (the previous value only when it is a complete calendar neighbour), year over year by `LEFT JOIN … ON y.period_index = p.period_index − 4` (complete year-ago periods only) → `% change` with `100.0 * (new − old) / NULLIF(old, 0)`; per period also `STDDEV_SAMP` of order value, lead time and rating and the late counts, for the 95% intervals |
+| 12b | `custom_kpis` | KPIs | only when you define a KPI with SQL (see D8): per KPI, `SELECT <your expression> AS key FROM order_facts`, then the same with `GROUP BY` the period columns; both **soft** (an error is reported, not fatal) |
 | 13 | `running_total` | Window functions | `SUM() OVER (ORDER BY … ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW)`, share of `SUM() OVER ()` |
 | 14 | `trend_signals` | Window functions | 3-period moving average (`RANGE BETWEEN 2 PRECEDING AND CURRENT ROW` on `period_index`); baseline `AVG` / `STDDEV_SAMP` / `COUNT` over `RANGE BETWEEN 8 PRECEDING AND 1 PRECEDING` of `baseline_value` (NULL for partial periods); z only with ≥ **4** baseline periods; in the check, a straight line through the same baseline (≥ **5** periods) and its prediction interval |
 | 15 | `top_n` | Window functions | `DENSE_RANK()` and `ROW_NUMBER()` `OVER (PARTITION BY group ORDER BY revenue DESC)`, filtered in an outer query (top **3**) |
@@ -364,8 +388,10 @@ growing steadily.
 - **Never generated:** `FILTER (WHERE …)`, `NULLS FIRST/LAST`, `QUALIFY`, `FULL [OUTER] JOIN`, `ILIKE`, `generate_series`,
   `PERCENTILE_CONT`, `COUNT(DISTINCT a, b)`, a reserved word as an alias, `::` in MySQL, a division without `NULLIF` or a
   decimal literal, a `WHERE` filter on a LEFT-joined table other than `IS NULL`.
+- **Your own SQL** (D8) is not generated, so none of this is enforced on it; the constructs above, an unguarded `/` and `::` are
+  named in a warning instead.
 - **Verified on real servers:** `tests/test_live_postgres.py` (PostgreSQL 16) and `tests/test_live_mysql.py` (MySQL 8.4) run the
-  exported project for 19 cases and compare every query result with DuckDB (549 per database). GitHub Actions runs both on
+  exported project for 22 cases and compare every query result with DuckDB (645 per database). GitHub Actions runs both on
   every push, with `AUTOSQL_REQUIRE_LIVE=1` so that a missing server fails the run.
 
 ## Stage I: plain-English summary (`interpret`)
@@ -386,3 +412,6 @@ growing steadily.
 | headline | level of the last complete period, change on the previous one (and per day) and year over year (same period only), "within normal variation" when the interval includes zero, and the larger driver effect when that effect is significant |
 | recommendations | one rule per area (Data, Growth, Drivers, Customers, Operations, Pricing) with priority 1–3 and confidence measured / indicative / needs a test; every rule and threshold is listed in [business_guide.md](business_guide.md#recommendation-rules) |
 | brief charts | one y-axis per chart (the driver gets its own chart), partial periods grey, increases blue and decreases red, totals neutral, a table view per chart |
+| SQL in the brief | every chart, tile row, fact and trust meter links the statements it was computed from (`briefsql.SqlLibrary`); a block is the text of a generated `Statement`, per dialect; the steps used form the appendix |
+| recommendation popups | `Insight.shows` names the `data-ev` cards and charts a recommendation was made from, `Insight.figures` the figures that appear nowhere else; the page copies its own nodes into one `<dialog>`; only evidence the page has is named |
+| your KPIs | tiles and cards in their own section, marked yours; the change is shown without a verdict (`Tile.custom`, no significance test); a failed KPI is a card with its error and its SQL |

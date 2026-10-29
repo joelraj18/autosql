@@ -26,6 +26,7 @@ typed in by hand, and every recommendation names the SQL step that produced its 
 to a query you can rerun on MySQL 8 or PostgreSQL.
 
 - [The business brief, section by section](#the-business-brief-section-by-section)
+- [Your own assumptions and KPIs](#your-own-assumptions-and-kpis)
 - [KPI dictionary](#kpi-dictionary)
 - [The business question behind every SQL step](#the-business-question-behind-every-sql-step)
 - [The data-trust score](#the-data-trust-score)
@@ -36,22 +37,42 @@ to a query you can rerun on MySQL 8 or PostgreSQL.
 ## The business brief, section by section
 
 The brief is one HTML file (`business_brief.html` in the project ZIP, or **⬇ Business brief** in step 4 of the app). It needs
-no internet connection and no software beyond a browser. Every chart has a **Table view** with the exact numbers. Hover over
-a mark, or tab to it with the keyboard, to read its value.
+no internet connection and no software beyond a browser. Every chart has a **Table view** with the exact numbers and the
+**SQL** it was computed from (MySQL 8 and PostgreSQL, with a copy button). Hover over a mark, or tab to it with the keyboard,
+to read its value.
 
 | Section | What it answers | How to read it |
 |---|---|---|
 | **Headline** | What happened, in one sentence | The level in the latest *complete* period, its change on the previous complete period (and per day, when the two differ in length) and on the same period a year earlier, and whether volume or order value drove it. When the change's 95% interval includes zero, the headline says it is within normal variation. A partial period never becomes the headline. |
 | **Data trust stamp** | Can I quote these numbers? | ✓ High · ! Good, with caveats · ✕ Use with care: the grade, after its caps (see below). Details are under *Can we trust these numbers?* |
 | **Key figures** | How big, and which way | The hero number is revenue (or orders when there is no money column). Tiles show the change against the previous complete period. **Green means better for the business, red means worse**, so fewer days to ship is green even though the number fell. A change that could be noise (its 95% interval includes zero) gets a grey **within noise** chip instead; hover to read the interval. Percentages change in *points* (4.4% → 6.7% is +2.3 pts), never in percent of a percent. |
+| **Your KPIs** | What do the measures I defined say? | Only when you added KPIs with SQL: see [Your own assumptions and KPIs](#your-own-assumptions-and-kpis). |
 | **What this data is** | What am I looking at? | Tables and links, what one row is (the grain), orders and customers, the typical (median) order next to the average, the revenue formula, the rows left out as not sales, and how many periods are complete. |
-| **What to do** | What should I act on? | Recommendations ordered by urgency: **Act now** (red dot), **Plan** (amber), **Monitor** (green). Each has the evidence (numbers), the implication (so what) and a next step, plus tags: the business area, the confidence and the SQL step. |
+| **What to do** | What should I act on? | Recommendations ordered by urgency: **Act now** (red dot), **Plan** (amber), **Monitor** (green). Each has the evidence (numbers), the implication (so what) and a next step, plus tags: the business area, the confidence and the SQL step. **Open one** to see what it was made from: a popup with the key figures, the charts and the SQL behind it, so the claim can be checked without hunting through the page. |
 | **What happened** | The trend | Revenue per period; a grey bar is a partial period, shown but never compared. Next to it, the *suspected driver* (days to ship, late %, or rating) on its **own** axis: the two are never drawn on one chart with two scales, which would let the choice of scales invent a relationship. |
 | **Why it moved** | The cause, in money | A waterfall from the previous period to the latest: the effect of the number of orders and the effect of the average order value, each measured at the average of the other, so the two steps add up exactly to the change. Then the change per segment (country, category, salesperson): blue added revenue, red removed it. |
 | **Who brings the revenue** | Dependence and churn | The concentration curve: how much revenue the top x% of customers bring (the diagonal is a perfectly even spread). RFM segments: Champions, Loyal, Needs attention, At risk, Hibernating. Above them, how many repeat customers are overdue. |
 | **What discounts cost** | Margin given away | Revenue given away per discount band, and units per line per band: do bigger discounts come with bigger orders? |
 | **Can we trust these numbers?** | Data quality | Five meters, each with an icon, a score, a weight and the reason for any deduction, and above them any cap on the grade. |
-| **How the numbers were made** | Method | Every assumption (grain, revenue formula, rows left out as not sales, partial periods, recency date, de-duplication) and the KPI definitions with their SQL. |
+| **How the numbers were made** | Method | Every assumption (grain, revenue formula, rows left out as not sales, partial periods, recency date, de-duplication) and the KPI definitions with their SQL. Anything you added or reworded says so. |
+| **The SQL behind every figure** | Where does each number come from? | The full code of every step the page points at, in the order the analysis runs them, each with the business question it answers and who usually asks it. The same code is in the project ZIP as scripts you can run on your database. |
+
+## Your own assumptions and KPIs
+
+The engine can't know how *you* word an assumption, or which KPI is yours. Both are written as data (JSON) and are marked as yours
+wherever they appear. The README has the format; [`examples/northwind/customization.json`](../examples/northwind/customization.json)
+is a complete file.
+
+| Where | What you see |
+|---|---|
+| **Your KPIs** (after the key figures) | A tile per KPI: its value in the latest complete period and the change on the one before. A chart per period, a table view, and the SQL you wrote as it ran. The change is grey with a **not tested** chip: the engine ran no significance test on a measure it didn't define, so it doesn't say better or worse. A KPI that failed is a card with its error and its SQL; a KPI without SQL is listed as defined, not computed. |
+| **How the numbers were made** | Your assumptions, marked *added by you* or *edited by you*, and your KPI definitions, marked *(yours)*, with their SQL. |
+| **The SQL** | The `custom_kpis` step: every statement in MySQL 8 and PostgreSQL. |
+| **KPI dictionary** | Yours follow the engine's, marked *(yours)*. |
+| **Check the SQL** | A warning under a KPI whose SQL divides without `NULLIF` or a decimal, or uses `FILTER (WHERE …)` or `::`, which MySQL can't run, or that would divide whole numbers differently in MySQL and PostgreSQL. |
+
+Read a KPI of your own like any other: its definition and pitfall, the period it describes, and whether the change is bigger
+than the variation in the numbers. That last one the page can't tell you for a measure it didn't define.
 
 ## KPI dictionary
 

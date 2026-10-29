@@ -75,6 +75,7 @@ class Statement:
     title: str                 # shown above the SQL and its result
     sql: dict[str, str]        # dialect -> SQL text (no trailing semicolon)
     run: str = "query"         # query | scratch (run in an empty database) | show (never run: dialect-only demo)
+    soft: bool = False         # an error in this statement is reported, not fatal: it is SQL somebody else wrote (your own KPIs)
 
 
 @dataclass(frozen=True)
@@ -127,8 +128,8 @@ def render(fn: Callable[[Dialect], str]) -> dict[str, str]:
     return {name: fn(Dialect(name)) for name in DIALECTS}
 
 
-def stmt(label: str, title: str, fn: Callable[[Dialect], str], run: str = "query") -> Statement:
-    return Statement(label, title, render(fn), run)
+def stmt(label: str, title: str, fn: Callable[[Dialect], str], run: str = "query", soft: bool = False) -> Statement:
+    return Statement(label, title, render(fn), run, soft)
 
 
 def union_all(parts: list[str]) -> str:
@@ -1724,6 +1725,91 @@ def _kpi_by_period_cell(b: Builder) -> Cell:
                 (stmt("kpi_by_period", f"KPIs per {d.period} with LAG()", sql),), check)
 
 
+def _custom_kpis_cell(b: Builder) -> Cell:
+    """Your own KPIs (see ``autosql.custom``): each expression is run over ``order_facts``, for all periods and for each period, on
+    exactly the rows the standard KPIs use. The statements are *soft*: SQL somebody else wrote may fail, and that is reported next to
+    the KPI instead of stopping the run."""
+    d = b.d
+    kpis = d.custom.runnable_kpis if d.custom else ()
+    statements = []
+    for k in kpis:
+        def overall(D: Dialect, k=k) -> str:
+            checks = "".join(f"-- Check: {w}\n" for w in k.warnings)        # what the engine would not have written itself
+            return f"-- {k.definition}\n{checks}SELECT {k.expression(D.name)} AS {D.ident(k.key)}\nFROM   order_facts"
+
+        statements.append(stmt(f"custom_{k.key}", f"Your KPI: {k.name}, all periods", overall, soft=True))
+        if d.date:
+            def by_period(D: Dialect, k=k) -> str:
+                return (f"SELECT {', '.join(d.period_cols)},\n       {k.expression(D.name)} AS {D.ident(k.key)}\n"
+                        f"FROM   order_facts\nWHERE  {d.year_col} IS NOT NULL\nGROUP  BY {', '.join(d.period_cols)}\n"
+                        f"ORDER  BY {b.period_order()}")
+
+            statements.append(stmt(f"custom_{k.key}_by_period", f"Your KPI: {k.name}, per {d.period}", by_period, soft=True))
+    names = ", ".join(f"“{k.name}”" for k in kpis)
+    story = Step(
+        "custom_kpis",
+        f"You defined {len(kpis)} KPI{'s' if len(kpis) != 1 else ''} with SQL: {names}.",
+        "A KPI is only comparable if it is computed on the same rows as the others. Run over the agreed view, your expression sees "
+        "exactly the orders the standard KPIs see, with the same revenue, the same business rules and the same periods.",
+        f"We run each expression over `order_facts`" + (f" for all periods and for each {d.period}" if d.date else "")
+        + ", and label the result as yours wherever it appears. No significance test is run on it: there is no reason to think that a "
+        "KPI of your own varies the way a count or an average does.",
+        "Each statement is `SELECT <your expression> AS <key> FROM order_facts`" + (f", with `GROUP BY` the {d.period} columns for the "
+        "per-period one" if d.date else "") + ". Your expression is the only part you wrote; everything around it is the engine's. "
+        "If it fails, the error is shown next to the KPI and nothing else is affected.",
+    )
+    check = fill('''
+        KPIS = <<kpis>>
+        unit = <<unit>>
+        done = []
+        status_of = {r["period"]: r.get("period_status", "complete") for r in metrics.get("period_table") or []}
+        for key, name, kind, direction in KPIS:
+            entry = {"key": key, "name": name, "unit": kind, "direction": direction, "value": None, "periods": [], "error": None}
+            done.append(entry)
+            failed = errors.get(f"custom_{key}")
+            if not failed and f"custom_{key}" in outputs and len(outputs[f"custom_{key}"]) != 1:
+                failed = (f"the expression returned {len(outputs[f'custom_{key}'])} rows, not one: a KPI is a single aggregate "
+                          "expression (SUM, COUNT, AVG, ...) over the orders")
+            failed = failed or errors.get(f"custom_{key}_by_period") or (None if f"custom_{key}" in outputs else "the statement did not run")
+            if failed:
+                entry["error"] = failed
+                note(f"⚠️ Your KPI **{name}** could not be computed: {failed.rstrip('.!? ')}. The standard KPIs are not affected.")
+                continue
+            number = lambda v: None if v is None or pd.isna(v) or not np.isfinite(float(v)) else float(v)  # noqa: E731  (NULL, NaN, ±inf: no value)
+            entry["value"] = number(outputs[f"custom_{key}"].iloc[0, -1])
+            by = outputs.get(f"custom_{key}_by_period")
+            if by is not None and len(by):
+                cols = list(by.columns)
+                for _, row in by.iterrows():
+                    label = period_label(unit, row[cols[0]], row[cols[1]] if unit != "year" else 0)
+                    entry["periods"].append({"period": label, "value": number(row[cols[-1]]), "status": status_of.get(label, "complete")})
+            complete = [p for p in entry["periods"] if p["status"] == "complete" and p["value"] is not None]
+            fmt = lambda v: f"{v:,.0f}" if float(v).is_integer() else f"{v:,.2f}"  # noqa: E731
+            text = "no value (every row is NULL or there are no rows)" if entry["value"] is None else f"**{fmt(entry['value'])}** over all periods"
+            if len(complete) >= 2:
+                a, b = complete[-2], complete[-1]
+                text += f"; {b['period']}: {fmt(b['value'])} against {fmt(a['value'])} in {a['period']}"
+            elif len(complete) == 1:
+                text += f"; {complete[0]['period']}: {fmt(complete[0]['value'])}"
+            note(f"Your KPI **{name}**: {text}. It is not tested for significance.")
+        metrics["custom_kpis"] = done
+        shown = [e for e in done if len(e["periods"]) >= 2][:6]
+        if shown:
+            fig, axes = plt.subplots(len(shown), 1, figsize=(10, 2.6 * len(shown) + 0.4), squeeze=False)
+            for ax, e in zip(axes[:, 0], shown):
+                valid = [p for p in e["periods"] if p["value"] is not None]
+                ax.bar([p["period"] for p in valid], [p["value"] for p in valid], width=0.6,
+                       color=[C_SERIES if p["status"] == "complete" else C_MUTED for p in valid])
+                ax.set_title(f"{e['name']} (yours) per {unit}" + (" (grey = partial period)" if any(p["status"] != "complete" for p in valid) else ""),
+                             loc="left")
+                ax.tick_params(axis="x", labelrotation=45)
+            plt.tight_layout(); plt.show()
+    ''', kpis="KPI_LIST", unit=repr(d.period))
+    # the names are yours: put them in after fill(), which refuses text that looks like one of its own placeholders
+    check = check.replace("KPI_LIST", repr([(k.key, k.name, k.unit, k.direction) for k in kpis]), 1)
+    return Cell("custom_kpis", "Your own KPIs", SECTIONS[4], story, tuple(statements), check)
+
+
 # ═════════════════════════════════════════════════════════════════════════
 # 5 · Window functions
 # ═════════════════════════════════════════════════════════════════════════
@@ -2868,7 +2954,7 @@ BUILDERS: dict[str, Callable[[Builder], Cell]] = {
     "schema": _schema_cell, "grain": _grain_cell, "cardinality": _cardinality_cell,
     "duplicates": _duplicates_cell, "nulls": _nulls_cell, "date_range": _date_range_cell, "orphans": _orphans_cell,
     "base": _base_cell, "reconcile": _reconcile_cell,
-    "kpis": _kpis_cell, "discounts": _discounts_cell, "kpi_by_period": _kpi_by_period_cell,
+    "kpis": _kpis_cell, "discounts": _discounts_cell, "kpi_by_period": _kpi_by_period_cell, "custom_kpis": _custom_kpis_cell,
     "running_total": _running_total_cell, "trend_signals": _trend_signals_cell, "top_n": _top_n_cell, "pareto": _pareto_cell,
     "latest_record": _latest_record_cell, "purchase_gaps": _purchase_gaps_cell, "rfm": _rfm_cell,
     "driver_tree": _driver_tree_cell, "drilldown": _drilldown_cell, "cohort": _cohort_cell,
@@ -2881,45 +2967,72 @@ def build_cells(d: Decision) -> list[Cell]:
     if d.halted:
         return []
     b = Builder(d)
-    return [BUILDERS[cid](b) for cid in ORDER if cid not in d.skipped]
+    # the cell for your own KPIs exists only when you wrote some with SQL, and needs the view they read
+    return [BUILDERS[cid](b) for cid in ORDER if cid not in d.skipped
+            and (cid != "custom_kpis" or (d.custom is not None and d.custom.runnable_kpis and "base" not in d.skipped))]
 
 
-def assumptions(d: Decision) -> list[str]:
-    """Everything a reader must know to trust the numbers, in plain words (app step 4 and the .sql header)."""
+def assumption_items(d: Decision) -> list[tuple[str, str]]:
+    """What a reader must know to trust the numbers, in plain words, as (key, statement). The key is what a customization edits."""
     if not d.kpi:
-        return ["Validation only: no KPI was computed."]
+        return [("validation_only", "Validation only: no KPI was computed.")]
     b = Builder(d)
-    out = [f"Fact table: `{d.fact}` ({d.profile[d.fact].grain})."]
-    out.append(f"Revenue = {b.revenue_formula()}" + (" (net of discount; gross is shown in the reconciliation)." if d.revenue.discount else "."))
+    out = [("fact", f"Fact table: `{d.fact}` ({d.profile[d.fact].grain}).")]
+    out.append(("revenue", f"Revenue = {b.revenue_formula()}" + (" (net of discount; gross is shown in the reconciliation)." if d.revenue.discount else ".")))
     if d.revenue.price_rel:
-        out.append(f"The price comes from `{d.revenue.price_rel.parent_table}` (a list price), not from the sale itself.")
+        out.append(("list_price", f"The price comes from `{d.revenue.price_rel.parent_table}` (a list price), not from the sale itself."))
     money_col = d.revenue.amount or d.revenue.price
     if money_col:
         table = d.revenue.price_rel.parent_table if d.revenue.price_rel and not d.revenue.amount else d.revenue.table
         unit = d.profile.col(table, money_col).unit
         if unit and unit not in ("%", "mixed"):
-            out.append(f"Amounts are in {unit}, as written next to the numbers in `{money_col}`.")
+            out.append(("amount_unit", f"Amounts are in {unit}, as written next to the numbers in `{money_col}`."))
     if d.line_level:
-        out.append(f"`order_facts` has one row per order (`{d.order_key}`); `line_facts` one row per line. AOV = revenue ÷ distinct orders.")
+        out.append(("line_level", f"`order_facts` has one row per order (`{d.order_key}`); `line_facts` one row per line. AOV = revenue ÷ distinct orders."))
     if d.date:
-        out.append(f"Periods are {'ISO weeks (Monday to Sunday)' if d.period == 'week' else d.period + 's'} of `{d.date[0]}.{d.date[1]}`.")
+        out.append(("periods", f"Periods are {'ISO weeks (Monday to Sunday)' if d.period == 'week' else d.period + 's'} of `{d.date[0]}.{d.date[1]}`."))
     for p in d.partial_periods:
-        out.append(f"{d.label(p)} is partial ({p.coverage:.0%} of its days have data) and is excluded from period-over-period verdicts.")
+        out.append((f"partial:{d.label(p)}", f"{d.label(p)} is partial ({p.coverage:.0%} of its days have data) and is excluded from period-over-period verdicts."))
     if d.lead:
-        out.append(f"{d.lead_name} = {d.lead[2]} − {d.lead[1]}, in days; orders without `{d.lead[2]}` are left out of its averages.")
+        out.append(("lead", f"{d.lead_name} = {d.lead[2]} − {d.lead[1]}, in days; orders without `{d.lead[2]}` are left out of its averages."))
     if d.rating and d.rating.scale:
-        out.append("rating_score maps " + ", ".join(f"'{label}' = {score}" for label, score in d.rating.scale) + ".")
+        out.append(("rating", "rating_score maps " + ", ".join(f"'{label}' = {score}" for label, score in d.rating.scale) + "."))
     if d.customer:
-        out.append("Recency is measured to the last date in the data, not to today.")
+        out.append(("recency", "Recency is measured to the last date in the data, not to today."))
     for t, (keys, order) in d.dedupe.items():
-        out.append(f"`{t}` keeps one row per {', '.join(keys)} ({'latest by ' + order if order else 'an arbitrary copy'}).")
+        out.append((f"dedupe:{t}", f"`{t}` keeps one row per {', '.join(keys)} ({'latest by ' + order if order else 'an arbitrary copy'})."))
     for f in d.row_filters:
         if f.kind == "currency":
-            out.append(f"Only amounts in {f.kept} are counted: {f.rows:,} row(s) of `{f.table}` in {f.shown()} are left out; "
-                       f"rows with no `{f.column}` are assumed to be {f.kept}.")
+            out.append((f"filter:{f.table}.{f.column}", f"Only amounts in {f.kept} are counted: {f.rows:,} row(s) of `{f.table}` in {f.shown()} are left out; "
+                                                      f"rows with no `{f.column}` are assumed to be {f.kept}."))
         else:
             whole = " (with all their lines)" if f.table == d.header and d.line_level else ""
-            out.append(f"Rows where `{f.table}.{f.column}` is {f.shown()} are not sales and are left out{whole}: {f.rows:,} of {f.total:,}.")
+            out.append((f"filter:{f.table}.{f.column}",
+                        f"Rows where `{f.table}.{f.column}` is {f.shown()} are not sales and are left out{whole}: {f.rows:,} of {f.total:,}."))
     if d.dimensions:
-        out.append("Dimensions are joined with LEFT JOIN; a missing match is labelled 'Unknown'.")
+        out.append(("dimensions", "Dimensions are joined with LEFT JOIN; a missing match is labelled 'Unknown'."))
     return out
+
+
+def tagged_assumptions(d: Decision) -> list[tuple[str, str, str]]:
+    """(key, statement, origin): the engine's statements with a customization applied. The origin is 'engine', 'edited' (your wording),
+    'yours' (an addition) or 'notice' (an edit that names no assumption: said out loud, never silently dropped)."""
+    items = assumption_items(d)
+    custom = d.custom
+    if custom is None:
+        return [(k, text, "engine") for k, text in items]
+    edits = custom.edits
+    out = [(k, edits[k], "edited") if k in edits else (k, text, "engine") for k, text in items]
+    out += [("added", text, "yours") for text in custom.assumptions_add]
+    unknown = [k for k in edits if k not in dict(items)]
+    if unknown:
+        out.append(("not_applied", f"Not applied: no assumption has the key {', '.join(repr(k) for k in unknown)}. The keys are "
+                                   + ", ".join(k for k, _ in items) + ".", "notice"))
+    return out
+
+
+def assumptions(d: Decision) -> list[str]:
+    """Everything a reader must know to trust the numbers, in plain words (app step 4, the .sql header, the project README).
+    What you added or edited says so."""
+    marks = {"yours": lambda t: f"Added by you: {t}", "edited": lambda t: f"{t} (edited by you)"}
+    return [marks.get(origin, lambda t: t)(text) for _, text, origin in tagged_assumptions(d)]

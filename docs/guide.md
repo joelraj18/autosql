@@ -36,7 +36,7 @@ quarter-over-quarter change. `tests/test_new_wheels_shape.py` checks it on a syn
 
 ```
 upload ─▶ loading.py ─▶ profiling.py ─▶ schema.py ─▶ decision.py ─▶ codegen.py ─▶ runner.py ─▶ narrative.interpret()
-          text first,    roles, keys,    foreign keys   fact, revenue,  24 cells ×      DuckDB, then   plain-English
+          text first,    roles, keys,    foreign keys   fact, revenue,  25 cells ×      DuckDB, then   plain-English
           then types;    grain           (1 or 2 cols), business rules, 3 dialects      each cell's    summary
           snake_case                     cardinality,   periods,        (dialect.py)    check → 📌           │
                                          fan-out        drivers, dims         │              ▲                ▼
@@ -53,7 +53,7 @@ Design choices worth defending:
   constructs all three accept, and `BANNED` lists what is never generated: `FILTER`, `NULLS LAST`, `QUALIFY`, `FULL JOIN`,
   `PERCENTILE_CONT`… Transpiling with a library would drop the comments that document assumptions.
 - **Run here, prove there.** DuckDB is in-process, so the app needs no server. Because DuckDB is not PostgreSQL (its `/`
-  never truncates), the tests export the project, run it on real PostgreSQL and MySQL, and compare 549 query results per
+  never truncates), the tests export the project, run it on real PostgreSQL and MySQL, and compare 645 query results per
   database with DuckDB. GitHub Actions does this on every push, and fails (rather than skips) when a database is missing.
 - **Stories next to code.** Each cell's six-part story lives next to its SQL in `codegen.py`. The 📌 findings are written by a
   small Python check from the actual result, so the text can't drift from the numbers.
@@ -216,8 +216,48 @@ names a driver only when its change is real.
 - **The brief:** one offline HTML page with inline SVG charts (no chart library): KPI tiles, the revenue waterfall, change by
   segment, the concentration curve, RFM and discount bands, the trust meters. One y-axis per chart, a table view per chart,
   keyboard tooltips, light and dark themes.
+- **The SQL under every figure.** Each chart, tile row, fact and trust meter points at the statements it was computed from
+  (`briefsql.py`), shown in MySQL 8 and PostgreSQL with a copy button and a tab the reader's choice sticks to; the full code of
+  every step used is in an appendix. Nothing is written for the page: a block is the text of a `Statement` that `build_cells`
+  generated, so what you copy is what produced the number (a test compares them character for character).
+- **A recommendation opens what it was made from.** Each one names the cards and charts that carry its numbers (`Insight.shows`)
+  and the figures that appear nowhere else on the page (`Insight.figures`); the page's own nodes are copied into a popup, so
+  nothing is drawn twice. A test pins the evidence of every recommendation for Northwind, re-derived from the raw CSVs, and a
+  contract test on every case checks that a recommendation never names a chart the page doesn't have.
 
-### 3.13 Fast and correct
+### 3.13 Your own assumptions and KPIs
+A user knows things the engine can't (the currency, a definition of their own), and wants a KPI the dictionary doesn't have.
+The answer is data, not a plugin: a `Customization` (JSON a person can write by hand) passed to `decide(..., custom=…)`.
+- **Kept apart from what was decided.** The engine's assumptions get stable keys (`fact`, `revenue`, `periods`, …); `edit`
+  rewords the one with that key, `add` appends. Everything you changed says so wherever it appears (*edited by you*, *added by
+  you*), and an edit whose key matches nothing is a visible notice, never a silent drop. A KPI of yours is a tile with its own
+  chart in a section of its own, and its change is shown **without a verdict**: no significance test was run on it, so the page
+  doesn't claim "better" or "worse".
+- **Computed on the same rows.** Your `sql` is one aggregate expression. The engine writes the statement around it
+  (`SELECT <yours> AS key FROM order_facts`, then the same with `GROUP BY` the period columns), so it sees exactly the orders,
+  revenue, business rules and periods the standard KPIs do. It is a cell of its own (`custom_kpis`) in the scripts and the
+  notebook, built only when there is SQL to run.
+- **Soft statements.** SQL somebody else wrote may fail. Normally a failing statement fails its cell and the runner skips
+  everything after it; yours are marked `soft`: the error is kept next to the KPI (the notebook catches it too) and nothing
+  else changes. A test runs a misspelt column and a non-aggregate beside a good KPI and compares every standard number with a
+  run without them.
+- **A dry run finds mistakes without reading a row.** The views and your statements run on tables with the same columns and no
+  rows. A misspelt column or an unknown function fails at once; and an expression that isn't an aggregate is caught by a
+  property of SQL: an aggregate over no rows is still one row, anything else is none.
+- **Checked before it runs.** One expression: no `;`, `--`, `/* */`, backtick or backslash; quotes and parentheses balance; no
+  `SELECT`, `FROM`, `UNION`, `WHERE`… outside parentheses (a sub-query inside them is fine, and so are `WITHIN GROUP (ORDER BY …)`
+  and `IS DISTINCT FROM`); no call that waits, writes or reads files. Names and definitions are one line, because they end up in
+  SQL comments, where a newline would start a statement. This is a guard against mistakes; the sandbox that matters is the
+  locked in-memory DuckDB (`enable_external_access = false`), which a test attacks with `read_csv`, `COPY` and `ATTACH`.
+- **The traps the engine avoids in its own SQL are named in yours.** The number shown here comes from DuckDB; your database will
+  run the text later. `/` without `NULLIF(…, 0)` or a decimal stops PostgreSQL on a zero divisor and divides whole numbers
+  differently (5 / 2 is 2.5 in MySQL, 2 in PostgreSQL); `FILTER (WHERE …)` and `::` don't exist in MySQL. These are warnings in
+  the app, the brief and a `-- Check:` comment in the script, because the expression still runs. `sql` can also be an object with
+  one expression per dialect (DuckDB uses PostgreSQL's), which the tests run on real PostgreSQL.
+- **Proof:** each KPI is compared with a pandas calculation on the raw CSVs (per quarter and overall); the three customized
+  cases run through every contract test and the live PostgreSQL and MySQL suites; the notebook executes with a failing KPI in it.
+
+### 3.14 Fast and correct
 | Point | Measured on Northwind |
 |---|---|
 | `NOT IN` vs `NOT EXISTS` (employees who manage nobody; `reports_to` has one NULL) | **0 vs 7** |
@@ -248,7 +288,8 @@ names a driver only when its change is real.
 
 ### Tests
 - `pytest -q`: over 200 tests, about 4 minutes with the live databases.
-- **Every generated cell runs** on 20 cases: 17 datasets, some also in validate mode or with a suggested link ticked.
+- **Every generated cell runs** on 23 cases: 17 datasets, some also in validate mode, with a suggested link ticked, or with
+  assumptions and KPIs of your own.
 - **A golden snapshot** records what loading, profiling and schema inference return for every test dataset (types, a hash
   of every column's values, roles, keys, relationships). Speed work must leave it unchanged.
 - **Statistics are tested:** the t tables against a numerical integration of the t density, each interval on a worked case,
@@ -262,7 +303,7 @@ names a driver only when its change is real.
   - no `WHERE` on a LEFT-joined table.
 - The exported **notebook executes**, and the **Streamlit page** is driven headlessly.
 - **Live databases:** the exported project runs on **PostgreSQL 16** (`test_live_postgres.py`) and **MySQL 8.4 in Docker**
-  (`test_live_mysql.py`) for 19 cases: 549 query results per database are compared with DuckDB, and all match. GitHub
+  (`test_live_mysql.py`) for 22 cases: 645 query results per database are compared with DuckDB, and all match. GitHub
   Actions runs both on every push.
 - **The docs are tested:** every Northwind figure with three or more digits in this guide's section 3, the README's worked
   example, the example README, the business guide's read-aloud and the roadmap's Northwind cards must appear in what the
@@ -460,6 +501,21 @@ Not proven. First check the direction: shipping can explain a fall only if it go
 it can't be the cause, and the app says so. If the direction fits, it is a candidate cause, labelled "needs a test". The next
 step is a controlled test, such as a faster shipping promise for a random half of orders. New Wheels was exactly this case: a
 60% rise in shipping time alongside a 39% revenue fall, and I proposed a 25-day SLA with a test.
+
+**Q: A user wants to add their own KPI. How do you let them without letting them break the analysis?**
+Treat it as data, check it before it runs, and run it where it can only fail by itself. It is one aggregate expression that
+the engine wraps in its own `SELECT … FROM order_facts`, so it sees the same orders and rules as every other KPI. The text is
+validated (one expression, balanced, no second query, no call that waits or reads files), it runs in a locked in-memory
+database, and its statements are *soft*: if it fails, the error shows next to that KPI and every other number is unchanged,
+which a test proves by comparing a run with a broken KPI to a run without. It is labelled as theirs and its change is shown
+without a verdict, because nobody tested it. And since the number is computed in DuckDB but the SQL is shipped to MySQL or
+PostgreSQL, I warn about the traps I avoid in my own SQL: a division without `NULLIF`, `FILTER`, `::`.
+
+**Q: Can a user change the assumptions?**
+The wording, yes: `assumptions.edit` rewords any statement by key, `add` appends one, and both are marked as theirs. What the
+numbers *are* (the fact table, the revenue formula, the date, the rows left out) they change by choosing it in manual mode,
+and the assumptions follow, because the assumptions are written from the decision. Letting a free-text edit change a formula
+would make the page say one thing and the SQL another.
 
 **Q: How do you make a KPI trustworthy for people who can't read SQL?**
 Write down the definition, the formula, which direction is good and the classic pitfall (the KPI dictionary). Reconcile the

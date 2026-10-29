@@ -10,10 +10,12 @@ import pandas as pd
 import streamlit as st
 import streamlit.components.v1 as components
 
-from autosql import (GLOSSARY, LABELS, assumptions, build_cells, decide, infer_schema, interpret, link_roles, profile_catalog,
-                     read_files, read_folder, run_cells, to_dot)
+from autosql import (GLOSSARY, LABELS, Customization, CustomizationError, assumption_items, assumptions, build_cells, decide, dry_run,
+                     infer_schema, interpret, link_roles, profile_catalog, read_files, read_folder, run_cells, to_dot)
 from autosql.business import (BUSINESS_QUESTIONS, KPI_DICTIONARY, TILE_SPECS, data_dictionary, data_dictionary_markdown,
                                executive_summary, kpi_dictionary_markdown)
+from autosql.codegen import tagged_assumptions
+from autosql.custom import example
 from autosql.exports import to_notebook, to_project_zip, to_sql_script
 from autosql.report import tile_value, to_business_brief
 
@@ -56,9 +58,15 @@ def get_profile_and_schema(key: tuple, _catalog):
 
 
 @st.cache_data(show_spinner="Deciding the analysis…", max_entries=10)
-def get_decision(key: tuple, mode: str, picks: tuple, ticked: tuple, _catalog, _profile, _schema):
-    # (files, mode, picks, ticked links) fully determine the decision, so the objects can stay out of the cache key
-    return decide(_catalog, _profile, _schema.with_accepted(ticked), mode, dict(picks) if picks else None)
+def get_decision(key: tuple, mode: str, picks: tuple, ticked: tuple, custom_json: str, _catalog, _profile, _schema):
+    # (files, mode, picks, ticked links, your customization) fully determine the decision, so the objects can stay out of the cache key
+    custom = Customization.from_json(custom_json) if custom_json else None
+    return decide(_catalog, _profile, _schema.with_accepted(ticked), mode, dict(picks) if picks else None, custom)
+
+
+@st.cache_data(show_spinner="Checking your SQL on empty copies of the tables…", max_entries=10)
+def get_dry_run(key: tuple, mode: str, picks: tuple, ticked: tuple, custom_json: str, _catalog, _decision):
+    return dry_run(build_cells(_decision), _catalog)
 
 
 ui_style()
@@ -151,7 +159,7 @@ mode = st.radio("How should we choose what to measure?", list(MODES), format_fun
                      "check data quality.")
 picks: tuple = ()
 if mode == "manual":
-    auto = get_decision(key, "auto", (), ticked, catalog, profile, schema.with_accepted(ticked))
+    auto = get_decision(key, "auto", (), ticked, "", catalog, profile, schema.with_accepted(ticked))
     accepted = schema.with_accepted(ticked)
     names = list(profile.tables)
     c1, c2, c3 = st.columns(3)
@@ -198,7 +206,56 @@ if mode == "manual":
             chosen_picks["row_filters"] = False
     picks = tuple(sorted(chosen_picks.items()))
 
-decision = get_decision(key, mode, picks, ticked, catalog, profile, schema)
+# ── Your own assumptions and KPIs (optional) ──────────────────────────────
+base = get_decision(key, mode, picks, ticked, "", catalog, profile, schema)     # the engine's decision, before anything of yours
+custom_json = ""
+if not base.halted and base.kpi:
+    text_key = f"custom-{key}"
+    with st.expander("✏️ Customize: change assumptions, add KPI definitions with SQL (optional)",
+                     expanded=bool((st.session_state.get(text_key) or "").strip())):
+        st.markdown("The engine can't know your currency, your fiscal year or a KPI of your own. Write them as **JSON** below: what you "
+                    "add or edit is marked *yours* everywhere it appears, and each KPI that has `sql` is computed over the same orders as "
+                    "the standard KPIs. *What* the numbers are (the fact table, the revenue formula, the date, the rules that leave rows "
+                    "out) is chosen above, in **I'll choose**; the assumptions follow it.")
+        views = get_dry_run(key, mode, picks, ticked, "", catalog, base).columns
+        left, right = st.columns(2)
+        with left:
+            st.markdown("**Assumptions you can reword** (`assumptions.edit`, by key)")
+            st.markdown("\n".join(f"- `{key}`: {text}" for key, text in assumption_items(base)))
+        with right:
+            st.markdown("**Columns your `sql` can use** (the view `order_facts`: one row per order)")
+            st.dataframe(pd.DataFrame(views.get("order_facts", []), columns=["column", "type"]), hide_index=True, width="stretch")
+        st.button("Insert an example", on_click=lambda: st.session_state.update({text_key: example("revenue" in dict(views.get("order_facts", []))).to_json()}),
+                  help="A valid starting point: one assumption and one KPI. Edit it or replace it.")
+        text = st.text_area("customization.json", key=text_key, height=260, label_visibility="collapsed",
+                            placeholder='{\n  "assumptions": {"add": ["Figures are in US dollars."], "edit": {"revenue": "Revenue = ..."}},\n'
+                                        '  "kpis": [{"key": "freight_share", "name": "Freight share", "definition": "Freight as a share of revenue.",\n'
+                                        '            "sql": "100.0 * SUM(freight) / NULLIF(SUM(revenue), 0)", "unit": "pct", "direction": "down"}]\n}')
+        try:
+            custom = Customization.from_json(text)
+        except CustomizationError as error:
+            custom = None
+            st.error("Not applied yet:\n\n" + "\n".join(f"- {problem}" for problem in error.problems))
+        if custom is not None and not custom.empty:
+            custom_json = custom.to_json()
+            checked = get_decision(key, mode, picks, ticked, custom_json, catalog, profile, schema)
+            dry = get_dry_run(key, mode, picks, ticked, custom_json, catalog, checked)
+            for k in custom.runnable_kpis:
+                problem = dry.errors.get(f"custom_{k.key}") or dry.errors.get(f"custom_{k.key}_by_period")
+                st.markdown(f"{'❌' if problem else '✅'} **{k.name}**" + (f": {problem}" if problem else " runs on the shape of your data"))
+                for warning in k.warnings:
+                    st.markdown(f"⚠️ **{k.name}**: {warning}")
+            for k in custom.kpis:
+                if not k.runnable:
+                    st.markdown(f"📝 **{k.name}**: a definition only (no `sql`): it appears in the KPI dictionary and the brief, but isn't computed.")
+            for _, statement, origin in tagged_assumptions(checked):
+                if origin == "notice":
+                    st.warning(statement)
+            st.caption("The check runs your SQL on empty copies of the tables, so it finds a column or a function that doesn't exist, not "
+                       "a division by zero hiding in the data: that appears next to the KPI after you press **Run all SQL**.")
+            st.download_button("⬇ customization.json", custom_json, file_name="customization.json", mime="application/json")
+
+decision = get_decision(key, mode, picks, ticked, custom_json, catalog, profile, schema)
 if beginner:
     focus = next((s for s in decision.steps if s.key.startswith("focus_")), None)
     if focus:
@@ -216,6 +273,9 @@ with st.sidebar:
         for k in KPI_DICTIONARY:
             better = {"up": "higher is better", "down": "lower is better"}.get(k.direction, "context, not a target")
             st.markdown(f"**{k.name}**: {k.definition} *({better})*  \n`{k.formula}`")
+        for k in (decision.custom.kpis if decision.custom else ()):
+            better = {"up": "higher is better", "down": "lower is better"}.get(k.direction, "context, not a target")
+            st.markdown(f"**{k.name}** (yours): {k.definition} *({better})*  \n`{k.formula()}`")
 
 if decision.halted:
     st.error(decision.steps[-1].markdown())
@@ -249,7 +309,7 @@ if beginner:
 
 # ── Step 3: the SQL ───────────────────────────────────────────────────────
 cells = build_cells(decision)
-run_key = (key, mode, picks, ticked)
+run_key = (key, mode, picks, ticked, custom_json)
 run = st.session_state.get("run")
 if run and run["key"] != run_key:
     run = None
@@ -325,6 +385,8 @@ for i, cell in enumerate(cells):
     for sr in res.statements:
         if sr.run == "show":
             st.caption(f"*{sr.title}*: not run here; this one is for your {LABELS[dialect]} database.")
+        elif sr.error:
+            st.warning(f"**{sr.title}** could not be computed: {sr.error}")
         elif sr.frame is not None and len(sr.frame.columns):
             label = f"**{sr.title}**: {sr.rows:,} row(s)" + (" (first 200 shown)" if sr.rows > 200 else "")
             label += " · ran on an empty database (syntax check)" if sr.run == "scratch" else ""
@@ -365,6 +427,18 @@ if run:
                                  + (" pts" if t.unit == "pct" else "%") + (". It includes zero, so the change could be noise." if noise else ".")
                                  if t.ci else None))
 
+    if summary.custom_tiles:
+        st.markdown("##### Your KPIs")
+        st.caption("Defined by you, over the same orders as the figures above. Their changes carry no verdict: no test was run on them.")
+        for row in range(0, len(summary.custom_tiles), 4):
+            for col, t in zip(st.columns(4), summary.custom_tiles[row:row + 4]):
+                delta = None if t.delta_pct is None else (f"{t.delta_pct:+.1f} pts" if t.unit == "pct" else f"{t.delta_pct:+.1f}%")
+                col.metric(f"{t.label} (yours)", tile_value(t) + (" days" if t.unit == "days" else ""), delta, delta_color="off", border=True,
+                           help=t.note or None)
+        for e in metrics.get("custom_kpis") or []:
+            if e.get("error"):
+                st.warning(f"**{e['name']}** (yours) could not be computed: {e['error']}")
+
     st.markdown("#### What to do")
     names = {1: "🔴 Act now", 2: "🟠 Plan", 3: "🟢 Monitor"}
     for ins in summary.insights:
@@ -383,7 +457,7 @@ if run:
     c1, c2, c3 = st.columns(3)
     c1.download_button("⬇ Business brief (.html)", brief, file_name=f"{stem}_business_brief.html", mime="text/html", type="primary",
                        help="One self-contained page with the KPIs, recommendations, charts and data trust. Opens offline in any browser.")
-    c2.download_button("⬇ KPI dictionary (.md)", "# KPI dictionary\n\n" + kpi_dictionary_markdown(), file_name="kpi_dictionary.md",
+    c2.download_button("⬇ KPI dictionary (.md)", "# KPI dictionary\n\n" + kpi_dictionary_markdown(decision.custom), file_name="kpi_dictionary.md",
                        mime="text/markdown")
     c3.download_button("⬇ Data dictionary (.md)", data_dictionary_markdown(decision), file_name="data_dictionary.md", mime="text/markdown",
                        key="dd-step4")

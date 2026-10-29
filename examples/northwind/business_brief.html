@@ -103,6 +103,12 @@ svg path[data-tip]:focus-visible, svg circle[data-tip]:focus-visible { stroke: v
 .tags { display: flex; flex-wrap: wrap; gap: 6px; }
 .tag { font: 500 0.72rem/1 var(--sans); padding: 4px 7px; border-radius: 999px; background: var(--chip); color: var(--ink-2); }
 .tag.mono { font-family: var(--mono); }
+.tag.yours, .tag.edited { background: var(--series-wash); color: var(--ink); }
+.tag.notice { background: var(--chip); color: var(--bad); }
+.tile.yours { border-left: 3px solid var(--series); }
+.tile .label .tag { margin-left: 6px; vertical-align: 1px; }
+.problem { color: var(--bad); font-size: 0.9rem; overflow-wrap: anywhere; }
+.problem b { font-weight: 650; }
 .meters { display: grid; gap: 12px; }
 .cap { display: flex; gap: 8px; align-items: baseline; margin: 0; font-weight: 600; }
 .meter { display: grid; grid-template-columns: 11rem minmax(0, 1fr) 2.6rem; gap: 4px 12px; align-items: center; }

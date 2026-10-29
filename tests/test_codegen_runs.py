@@ -6,7 +6,7 @@ import pandas as pd
 import pytest
 import sqlglot
 
-from autosql import build_cells, run_cells
+from autosql import Customization, build_cells, run_cells
 from autosql.dialect import BANNED, RESERVED
 from autosql.report import to_business_brief
 from conftest import NORTHWIND, analyse, catalog_from, new_wheels_frame, shop_frames
@@ -156,6 +156,30 @@ def signed_amounts_frame():
                          "is_test": rng.choice(["false", "true"], n, p=[.95, .05])})
 
 
+# Your own assumptions and KPIs on three different shapes: quarters with money and a header table, ISO weeks, and no money at all. Every
+# generic test below (the cells run, the dialect rules, sqlglot, the brief's promises) and the live PostgreSQL / MySQL suites then cover
+# the statements written from them. Each KPI is valid on all three databases; the SQL that fails is in tests/test_custom.py.
+CUSTOM_NORTHWIND = {
+    "assumptions": {"add": ["Figures are in US dollars."],
+                    "edit": {"revenue": "Revenue = price × quantity × (1 − discount); freight is not included."}},
+    "kpis": [
+        {"key": "freight_share", "name": "Freight share of revenue", "definition": "Freight charged as a share of revenue.",
+         "sql": "100.0 * SUM(freight) / NULLIF(SUM(revenue), 0)", "unit": "pct", "direction": "down"},
+        {"key": "big_orders", "name": "Orders over 1,000", "definition": "Orders worth more than 1,000.",
+         "sql": "SUM(CASE WHEN revenue > 1000 THEN 1 ELSE 0 END)", "unit": "number", "direction": "up",
+         "why": "Large orders carry the revenue.", "pitfall": "The 1,000 threshold is a round number, not a finding."},
+        {"key": "days_covered", "name": "Days between first and last order", "definition": "The span of order dates within the period.",
+         "sql": {"mysql": "DATEDIFF(MAX(order_date), MIN(order_date))", "postgres": "MAX(order_date) - MIN(order_date)"},
+         "unit": "days", "direction": "context"},
+        {"key": "only_words", "name": "Only a definition", "definition": "A KPI with words and no SQL."},
+    ],
+}
+CUSTOM_WEEKS = {"kpis": [{"key": "revenue_per_customer", "name": "Revenue per customer", "definition": "Revenue per distinct customer.",
+                          "sql": "SUM(revenue) / NULLIF(COUNT(DISTINCT customer_id), 0)", "unit": "money", "direction": "up"}]}
+CUSTOM_TICKETS = {"assumptions": ["A ticket is one request, whoever opened it."],
+                  "kpis": [{"key": "tickets_per_customer", "name": "Tickets per customer", "definition": "Tickets ÷ distinct customers.",
+                            "sql": "1.0 * COUNT(*) / NULLIF(COUNT(DISTINCT customer_id), 0)", "unit": "number", "direction": "down"}]}
+
 CASES = {
     "northwind": (None, "auto", ()),
     "northwind_validate": (None, "validate", ()),
@@ -177,18 +201,21 @@ CASES = {
     "composite_fk_ticked": (composite_key_with_orphans, "auto", ("sales.(region, store_no) → stores.(region, store_no)",)),
     "business_rules": (business_rules_frames, "auto", ()),
     "signed_amounts": ({"orders": signed_amounts_frame}, "auto", ()),
+    "northwind_custom": (None, "auto", (), CUSTOM_NORTHWIND),
+    "ten_weeks_custom": ({"orders": ten_weeks_frame}, "auto", (), CUSTOM_WEEKS),
+    "tickets_custom": ({"tickets": tickets_frame}, "auto", (), CUSTOM_TICKETS),
 }
 
 
 def build(case, northwind_catalog):
-    frames, mode, accept = CASES[case]
+    frames, mode, accept, *custom = CASES[case]
     if frames is None:
         catalog = northwind_catalog
     elif callable(frames):
         catalog = catalog_from(frames())
     else:
         catalog = catalog_from({name: make() for name, make in frames.items()})
-    d = analyse(catalog, mode=mode, accept=accept)
+    d = analyse(catalog, mode=mode, accept=accept, custom=Customization.from_dict(custom[0]) if custom else None)
     return catalog, d, build_cells(d)
 
 

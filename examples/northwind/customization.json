@@ -1,0 +1,50 @@
+{
+  "assumptions": {
+    "add": [
+      "Figures are in US dollars."
+    ],
+    "edit": {
+      "revenue": "Revenue = unit price × quantity × (1 − discount). Freight is not included."
+    }
+  },
+  "kpis": [
+    {
+      "key": "freight_share",
+      "name": "Freight share of revenue",
+      "definition": "Freight charged as a share of revenue.",
+      "sql": "100.0 * SUM(freight) / NULLIF(SUM(revenue), 0)",
+      "unit": "pct",
+      "direction": "down",
+      "why": "Freight is a cost of selling that the price of the goods does not show.",
+      "pitfall": "Freight is charged per order, not per line, so it is summed once per order (order_facts has one row per order).",
+      "decision": "Free-shipping thresholds, carrier contracts."
+    },
+    {
+      "key": "big_orders",
+      "name": "Orders over 1,000",
+      "definition": "Orders worth more than 1,000 in net revenue.",
+      "sql": "SUM(CASE WHEN revenue > 1000 THEN 1 ELSE 0 END)",
+      "unit": "number",
+      "direction": "up",
+      "pitfall": "The threshold is a round number, not a finding."
+    },
+    {
+      "key": "days_covered",
+      "name": "Days between first and last order",
+      "definition": "The span of order dates inside the period.",
+      "sql": {
+        "mysql": "DATEDIFF(MAX(order_date), MIN(order_date))",
+        "postgres": "MAX(order_date) - MIN(order_date)"
+      },
+      "unit": "days",
+      "direction": "context"
+    },
+    {
+      "key": "gross_margin",
+      "name": "Gross margin",
+      "definition": "Revenue less the cost of the goods sold, as a share of revenue. This data has no cost column, so it is defined here and computed once one is added.",
+      "unit": "pct",
+      "direction": "up"
+    }
+  ]
+}

@@ -18,7 +18,7 @@ import re
 
 from .briefsql import SqlLibrary
 from .business import KPI_BY_KEY, TRUST_WEIGHTS, Summary, effect_shares, executive_summary
-from .codegen import Builder, assumptions, build_cells
+from .codegen import Builder, build_cells, tagged_assumptions
 from .decision import Decision
 
 W = 400          # SVG user units: charts sit in half-width cards (desktop) or full width (phone), so text scales ~0.85-1.15x
@@ -56,6 +56,8 @@ def full(v: float, unit: str = "money") -> str:
         return f"{v:.1f} days"
     if unit == "score":
         return f"{v:.2f}"
+    if unit == "number":          # a KPI of your own: a whole number stays whole, anything else keeps two decimals
+        return f"{v:,.0f}" if float(v).is_integer() else f"{v:,.2f}"
     return f"{v:,.0f}"
 
 
@@ -195,12 +197,12 @@ def period_line(rows: list[dict], key: str, unit: str, title: str) -> str:
     plot_w, plot_h = W - left - 8, h - top - bottom
     lo, hi = min(v for _, v in pts), max(v for _, v in pts)
     pad = (hi - lo) * 0.25 or max(abs(hi) * 0.1, 1)
-    ticks = nice_ticks(hi + pad, max(0.0, lo - pad), 4)
+    ticks = nice_ticks(hi + pad, lo - pad if lo < 0 else max(0.0, lo - pad), 4)      # a series that goes below zero keeps its negatives
     ymin, ymax = ticks[0], ticks[-1]
     band = plot_w / max(n, 1)
     xs = [left + band * i + band / 2 for i in range(n)]
     y = lambda v: top + plot_h * (1 - (v - ymin) / ((ymax - ymin) or 1))  # noqa: E731
-    fmt = (lambda t: f"{t:g}%") if unit == "pct" else (lambda t: f"{t:g}")
+    fmt = (lambda t: f"{t:g}%") if unit == "pct" else (lambda t: compact(t, unit == "money") if abs(t) >= 1e4 else f"{t:g}")
     parts = [_ygrid(ticks, y, left, fmt=fmt)]
     solid = [(i, v) for i, v in pts if not _partial(rows[i])]
     if len(solid) >= 2:
@@ -430,6 +432,12 @@ svg path[data-tip]:focus-visible, svg circle[data-tip]:focus-visible { stroke: v
 .tags { display: flex; flex-wrap: wrap; gap: 6px; }
 .tag { font: 500 0.72rem/1 var(--sans); padding: 4px 7px; border-radius: 999px; background: var(--chip); color: var(--ink-2); }
 .tag.mono { font-family: var(--mono); }
+.tag.yours, .tag.edited { background: var(--series-wash); color: var(--ink); }
+.tag.notice { background: var(--chip); color: var(--bad); }
+.tile.yours { border-left: 3px solid var(--series); }
+.tile .label .tag { margin-left: 6px; vertical-align: 1px; }
+.problem { color: var(--bad); font-size: 0.9rem; overflow-wrap: anywhere; }
+.problem b { font-weight: 650; }
 .meters { display: grid; gap: 12px; }
 .cap { display: flex; gap: 8px; align-items: baseline; margin: 0; font-weight: 600; }
 .meter { display: grid; grid-template-columns: 11rem minmax(0, 1fr) 2.6rem; gap: 4px 12px; align-items: center; }
@@ -690,13 +698,16 @@ SCRIPT = """
 
 def _delta_html(t, compared: str) -> str:
     if t.delta_pct is None:
-        return ""
+        return f'<span class="delta flat"><span class="vs">{esc(t.note)}</span></span>' if t.custom and t.note else ""
     if abs(t.delta_pct) < 0.05:
         return f'<span class="delta flat"><span class="num">● no change</span><span class="vs">vs {esc(compared)}</span></span>'
     arrow = "▲" if t.delta_pct > 0 else "▼"
     suffix = " pts" if t.unit == "pct" else "%"
     text = f"{t.delta_pct:+.1f}{suffix}" + (f" {t.note}" if t.note else "")
     ci = f"95% confidence interval {t.ci[0]:+.1f} to {t.ci[1]:+.1f}{suffix}" if t.ci else ""
+    if t.custom:                 # your own KPI: no test was run, so no verdict either way
+        return (f'<span class="delta flat" title="Your KPI: no significance test was run on it, so the change is shown without a verdict">'
+                f'<span class="num">{arrow} {esc(text)}</span><span class="noise">not tested</span><span class="vs">vs {esc(compared)}</span></span>')
     if t.significant is False:   # could be noise: neither green nor red
         return (f'<span class="delta flat" title="{esc(ci)}: the change could be noise"><span class="num">{arrow} {esc(text)}</span>'
                 f'<span class="noise">within noise</span><span class="vs">vs {esc(compared)}</span></span>')
@@ -765,6 +776,57 @@ def _recommendations(insights, present: set[str], lib: SqlLibrary) -> str:
 DIALOG = ('<dialog id="evidence" class="ev" aria-labelledby="ev-title"><div class="evhead"><div><p class="eyebrow" id="ev-eyebrow"></p>'
           '<h2 id="ev-title"></h2></div><button type="button" class="evclose" aria-label="Close">✕</button></div>'
           '<div class="evbody"></div><div class="tip" role="tooltip" hidden></div></dialog>')
+
+
+DIRECTION_WORDS = {"up": "Higher is better.", "down": "Lower is better.", "context": "Which way is good depends."}
+
+
+def _your_kpis(d: Decision, s: Summary, m: dict, lib: SqlLibrary) -> str:
+    """The KPIs you defined, kept apart from the engine's: tiles with a neutral change, a chart and the SQL you wrote for each, the ones
+    that failed with their error, and the ones that are only a definition. Empty when you defined none."""
+    if d.custom is None or not d.custom.kpis:
+        return ""
+    done = {e["key"]: e for e in m.get("custom_kpis") or []}
+    plain = lambda text: text.replace("`", "")      # your wording may carry the markdown marks the app renders; a page has no use for them  # noqa: E731
+    tiles = "".join(
+        f'<div class="tile yours" data-ev="tile:custom:{esc(t.key.split(":", 1)[1])}"><span class="label">{esc(plain(t.label))}</span>'
+        f'<span class="value">{esc(tile_value(t))}</span>{_delta_html(t, s.compared_with)}</div>' for t in s.custom_tiles)
+    cards, problems = [], []
+    for k in d.custom.runnable_kpis:
+        e, name = done.get(k.key), plain(k.name)
+        sql = lib.details([("custom_kpis", f"custom_{k.key}"), ("custom_kpis", f"custom_{k.key}_by_period")], "The SQL you wrote, as it ran")
+        if e is None or e.get("error"):
+            why = e["error"] if e else "the analysis stopped before this step"
+            problems.append(f'<div class="card"><h3>{esc(name)}</h3><p class="problem"><b>Could not be computed:</b> {prose(why)}</p>'
+                            f'<p class="sub">{prose(k.definition)}</p><div class="views">{sql}</div></div>')
+            continue
+        rows = [{"period": p["period"], "value": p["value"], "period_status": p["status"]} for p in e["periods"]]
+        chart = period_line(rows, "value", k.unit, f"{name} per {d.period}") if d.period and rows else ""
+        tv = table(["Period", name], [[r["period"] + (" (partial)" if r["period_status"] != "complete" else ""),
+                                       "no value" if r["value"] is None else full(r["value"], k.unit)] for r in rows]) if rows else ""
+        overall = (f' Over all periods: {esc(full(e["value"], k.unit))}.' if e["value"] is not None else "")
+        checks = "".join(f'<span class="problem"><b>Check the SQL:</b> {prose(w)}</span>' for w in k.warnings)
+        cards.append(_card(name, f"{prose(k.definition)} {esc(DIRECTION_WORDS[k.direction])}{overall}" + (f"<br>{checks}" if checks else ""),
+                           chart, tv, ev=f"chart:custom:{k.key}" if chart else "", sql=sql))
+    defs = [k for k in d.custom.kpis if not k.runnable]
+    only = ('<div class="card"><h3>Defined, not computed</h3><p class="sub">These have a definition but no SQL, so they appear here and in the '
+            'KPI dictionary only.</p><ul class="plain">' + "".join(f"<li><b>{esc(plain(k.name))}</b>: {prose(k.definition)}</li>" for k in defs)
+            + "</ul></div>") if defs else ""
+    shown = "".join(cards) + "".join(problems) + only
+    return _section("yours", "Defined by you", "Your KPIs",
+                    "Measures you wrote in SQL. Each runs over the same orders as the figures above (the view order_facts), for all periods and "
+                    "for each one, so it is computed on exactly the rows they are. Their changes are shown without a verdict: no test was run "
+                    "on them.",
+                    (f'<div class="tiles yours-tiles">{tiles}</div>' if tiles else "") + (f'<div class="grid2">{shown}</div>' if shown else ""))
+
+
+ORIGIN_CHIPS = {"yours": "added by you", "edited": "edited by you", "notice": "not applied"}
+
+
+def _assumption(text: str, origin: str) -> str:
+    """One assumption; what you added or edited says so, and an edit that matched nothing says that too."""
+    chip = f' <span class="tag {origin}">{ORIGIN_CHIPS[origin]}</span>' if origin in ORIGIN_CHIPS else ""
+    return f"<li>{prose(text)}{chip}</li>"
 
 
 def _section(anchor: str, eyebrow: str, heading: str, intro: str, body: str) -> str:
@@ -849,6 +911,12 @@ def to_business_brief(d: Decision, metrics: dict, *, title: str = "Business brie
                            if s.compared_with else "")
                         + lib.details([("kpi_by_period", "kpi_by_period")], "SQL behind the key figures")
                         + "</section>")
+
+    # ── Your KPIs ────────────────────────────────────────────────────────
+    yours = _your_kpis(d, s, m, lib)
+    if yours:
+        sections.append(yours)
+        nav.append(("yours", "Yours"))
 
     # ── Context: what the data is ────────────────────────────────────────
     facts = "".join(f'<div data-ev="fact:{slug(a)}"><dt>{esc(a)}{lib.link(FACT_STEPS.get(a, []), title=a)}</dt><dd>{prose(b)}</dd></div>'
@@ -990,9 +1058,12 @@ def to_business_brief(d: Decision, metrics: dict, *, title: str = "Business brie
     used = [x for x in KPI_BY_KEY.values() if x.key in have]
     sections.append(_section("method", "Method", "How the numbers were made", "",
                              '<div class="grid2"><div class="card"><h3>Assumptions</h3><ul class="plain">'
-                             + "".join(f"<li>{prose(a)}</li>" for a in assumptions(d))
+                             + "".join(_assumption(text, origin) for _, text, origin in tagged_assumptions(d))
                              + '</ul></div><div class="card"><h3>KPI definitions</h3><p class="sub">What each figure means and the SQL behind it.</p>'
-                             + table(["KPI", "Definition", "SQL"], [[x.name, x.definition, x.formula] for x in used], "Show the definitions")
+                             + table(["KPI", "Definition", "SQL"], [[x.name, x.definition, x.formula] for x in used]
+                                     + [[f"{x.name} (yours)".replace("`", ""), x.definition.replace("`", ""), x.formula()]
+                                        for x in (d.custom.kpis if d.custom else ())],
+                                     "Show the definitions")
                              + "</div></div>"))
     nav.append(("method", "Method"))
 

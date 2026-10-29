@@ -422,12 +422,13 @@ _DUCK_TYPES = {"integer": "BIGINT", "decimal": "DOUBLE", "float": "DOUBLE", "boo
                "date": "DATE", "timestamp": "TIMESTAMP", "text": "VARCHAR"}
 
 
-def build_database(catalog: Catalog) -> duckdb.DuckDBPyConnection:
-    """A fresh in-memory DuckDB with one table per uploaded table, locked so that queries can't read local files."""
+def build_database(catalog: Catalog, empty: bool = False) -> duckdb.DuckDBPyConnection:
+    """A fresh in-memory DuckDB with one table per uploaded table, locked so that queries can't read local files. ``empty``: the same
+    tables and column types with no rows, to check SQL against the shape of the data without reading it."""
     con = duckdb.connect(":memory:")
     duck = Dialect("duckdb")
     for table in catalog.tables.values():
-        con.register("_upload", table.df)
+        con.register("_upload", table.df.iloc[:0] if empty else table.df)
         columns = ", ".join(f"CAST({duck.ident(c)} AS {_DUCK_TYPES[table.types[c]]}) AS {duck.ident(c)}" for c in table.df.columns)
         con.execute(f"CREATE TABLE {duck.ident(table.name)} AS SELECT {columns} FROM _upload")
         con.unregister("_upload")

@@ -1,6 +1,6 @@
 # AutoSQL Explorer
 
-Upload your tables (CSV, Excel or a ZIP of them). AutoSQL Explorer then does five things:
+Upload your tables (CSV, Excel or a ZIP of them). AutoSQL Explorer then does six things:
 
 1. **It learns the schema.** For every table it finds the key and the grain (what one row is: an order, an order line, a
    customer), every foreign key, and how many rows join to one.
@@ -14,7 +14,12 @@ Upload your tables (CSV, Excel or a ZIP of them). AutoSQL Explorer then does fiv
    comes with a 95% confidence interval, so "+8% order value" is labelled *within normal variation* when it could be noise.
 5. **It turns the results into a business brief**: a one-page infographic with the headline KPIs, prioritised
    recommendations (each with its evidence, a confidence level and the SQL step behind it), the charts that explain *why*
-   revenue moved, and a data-trust score. It downloads as a single HTML file that works offline.
+   revenue moved, and a data-trust score. Every chart has its full SQL under it, and the key figures, the facts and the trust
+   checks point at the SQL they were computed from (MySQL 8 and PostgreSQL, copyable). A recommendation opens a popup with the
+   charts, figures and SQL it was made from. It downloads as a single HTML file that works offline.
+6. **It lets you change what it assumed and add KPIs of your own**, as plain JSON: your wording for an assumption, a KPI
+   written in SQL. What you add is marked as yours wherever it appears, and your SQL runs on the same orders as the standard
+   KPIs (see [Your own assumptions and KPIs](#your-own-assumptions-and-kpis)).
 
 The app is built for learners and for anyone who has to trust a number. Every decision the engine makes comes with a three-part explanation:
 
@@ -60,13 +65,57 @@ Then upload your files, or press **🧭 Try the Northwind example**.
 | **6. Drill down to the root cause** | the revenue change split exactly into orders × average order value (a Shapley split: each effect at the average of the other, so nothing is left over to assign) and customers × orders per customer, then by segment with conditional aggregation; the suspected driver next to the symptom, per period and per segment, with correlations on levels *and* on period-to-period changes, each with a 95% interval; cohorts | `driver_tree`, `drilldown`, `cohort` |
 | **7. Keep it fast and correct** | `EXPLAIN` read for you; a non-sargable `YEAR(date) = …` vs a sargable range; `CREATE INDEX` proposals; `NOT IN` vs `NOT EXISTS` with a NULL, `COUNT(col)` skipping NULLs, integer division in PostgreSQL; every assumption written down | `explain`, `null_traps` |
 
+## Your own assumptions and KPIs
+
+The engine can't know your currency, your fiscal year or a KPI of your own. Write them as data (JSON, or the `Customization`
+object) and they appear everywhere the engine's own appear, marked as yours:
+
+```json
+{
+  "assumptions": {
+    "add":  ["Figures are in US dollars."],
+    "edit": {"revenue": "Revenue = unit price × quantity × (1 − discount). Freight is not included."}
+  },
+  "kpis": [
+    {"key": "freight_share", "name": "Freight share of revenue", "definition": "Freight charged as a share of revenue.",
+     "sql": "100.0 * SUM(freight) / NULLIF(SUM(revenue), 0)", "unit": "pct", "direction": "down"}
+  ]
+}
+```
+
+- **In the app**, open **✏️ Customize** under *What should we measure?*. It lists the keys of the assumptions you can reword and the
+  columns of `order_facts` your SQL can use, says everything that is wrong with your JSON at once, and runs each KPI on empty
+  copies of your tables, so a misspelt column is found in a fraction of a second, before you press **Run**.
+- **In code:** `decide(catalog, profile, schema, custom=Customization.from_json(text))` (or `Customization.from_dict(…)`). A
+  complete file for Northwind is
+  [`examples/northwind/customization.json`](examples/northwind/customization.json); the project ZIP carries yours as
+  `customization.json`.
+- **Assumptions.** `edit` rewords the engine's statement with that key (the app lists the keys); `add` appends your own. A
+  reworded statement says *edited by you*, an addition *added by you*, and an edit whose key matches nothing is said out loud
+  rather than dropped. The text is documentation: *what* the numbers are (the fact table, the revenue formula, the date, the
+  rows left out) is chosen in **I'll choose**, and the assumptions follow it.
+- **KPIs.** `sql` is one aggregate expression over `order_facts` (one row per order), or an object with a `default` expression
+  and one for `mysql` or `postgres` where the dialects differ. It is run for all periods and for each period, on exactly the
+  rows the standard KPIs use, as a cell of its own (`custom_kpis`) in the SQL scripts and the notebook. The brief shows it apart
+  from the engine's KPIs ("Your KPIs") with a chart, a table view and the SQL you wrote. Its change carries no verdict (green or
+  red) because no test was run on it. Without `sql`, a KPI is a definition only: it appears in the KPI dictionary and the brief.
+- **A KPI that fails can't take the analysis down.** A misspelt column, or an expression that isn't an aggregate, is reported
+  next to the KPI; every other number stays exactly what it was.
+- **The text is checked before anything runs:** one expression (no `;`, comment, backtick or backslash, quotes and parentheses
+  balanced, no second query), no call that waits or reads files, one line of plain text for every name and definition (they end
+  up in SQL comments). That is a guard against mistakes, not a security boundary: the app runs your SQL on a locked in-memory
+  copy of your own files either way (`enable_external_access = false`).
+- **Your SQL is yours, so the traps are named.** DuckDB shows the number here; MySQL or PostgreSQL will run it for you later.
+  The engine warns when your expression divides without `NULLIF` or a decimal (PostgreSQL stops on a zero divisor, and whole
+  numbers divide differently), or uses `FILTER (WHERE …)` or `::` where MySQL can't.
+
 ## What you can download
 
 | Download | Contents |
 |---|---|
-| **Business brief `.html`** | one self-contained page for a manager: headline, KPI tiles with deltas, what to do (Act now / Plan / Monitor), the revenue trend with the suspected driver on its own axis, an exact revenue waterfall (orders × order value), change by segment, revenue concentration, RFM and discount charts, the trust score and the method. Every chart has a table view and keyboard tooltips; light and dark themes; works offline. See [`examples/northwind/business_brief.html`](examples/northwind/business_brief.html) |
+| **Business brief `.html`** | one self-contained page for a manager: headline, KPI tiles with deltas, what to do (Act now / Plan / Monitor), the revenue trend with the suspected driver on its own axis, an exact revenue waterfall (orders × order value), change by segment, revenue concentration, RFM and discount charts, the trust score and the method. Every chart has a table view, its SQL (both dialects, with a copy button) and keyboard tooltips; a recommendation opens a popup with the charts, figures and SQL it was made from; light and dark themes; works offline. See [`examples/northwind/business_brief.html`](examples/northwind/business_brief.html) |
 | `.sql` script | every step in MySQL 8 or PostgreSQL, with its explanation as comments and the assumptions at the top |
-| **Project `.zip`** | `01_schema.sql` (CREATE TABLE with keys), `02_load.sql` (`LOAD DATA LOCAL INFILE … NULLIF(@col, '')` or `\copy`), `03_validate.sql`, `04_analysis.sql`, `05_performance.sql`, the cleaned `data/*.csv` (snake_case headers, ISO dates, empty = NULL), `analysis.ipynb`, `docs/data_dictionary.md`, `docs/kpi_dictionary.md`, the business brief (after a run) and a README. Rerunnable on a real database |
+| **Project `.zip`** | `01_schema.sql` (CREATE TABLE with keys), `02_load.sql` (`LOAD DATA LOCAL INFILE … NULLIF(@col, '')` or `\copy`), `03_validate.sql`, `04_analysis.sql`, `05_performance.sql`, the cleaned `data/*.csv` (snake_case headers, ISO dates, empty = NULL), `analysis.ipynb`, `docs/data_dictionary.md`, `docs/kpi_dictionary.md`, the business brief (after a run), your `customization.json` (when you added something) and a README. Rerunnable on a real database |
 | Notebook `.ipynb` | the same steps in Python + DuckDB, with every explanation |
 | Data dictionary `.md` | every column: original name, type, role, key, % filled, distinct values and what the analysis uses it for |
 | KPI dictionary `.md` | every KPI: definition, SQL, which direction is good, why it matters, its pitfall and the decision it informs |
@@ -82,10 +131,12 @@ Then upload your files, or press **🧭 Try the Northwind example**.
 | `autosql/decision.py` | the decision engine: focus → fact table and grain → revenue → business rules → time → drivers → dimensions → correctness. Every choice is recorded as a `Step` |
 | `autosql/checklib.py` | period labels and the statistics (t quantiles, confidence intervals, the trend prediction interval). One source, used by the engine, the app and the exported notebook |
 | `autosql/dialect.py` | the places where MySQL 8, PostgreSQL and DuckDB differ (quoting, dates, rounding, division, types) and the constructs never generated |
-| `autosql/codegen.py` | turns a decision into up to 24 self-explaining SQL cells, each rendered for the three dialects, with its techniques and dialect differences |
-| `autosql/runner.py` | runs the cells on DuckDB (with a timeout), then their checks, and captures results, charts and findings |
+| `autosql/codegen.py` | turns a decision into up to 25 self-explaining SQL cells (the 25th only when you define a KPI with SQL), each rendered for the three dialects, with its techniques and dialect differences |
+| `autosql/custom.py` | your own assumptions and KPIs as data: parsing, every check on the text, the traps named for your SQL, JSON in and out |
+| `autosql/runner.py` | runs the cells on DuckDB (with a timeout), then their checks, and captures results, charts and findings; a statement of yours that fails is reported, not fatal; `dry_run` checks your SQL on empty copies of the tables |
 | `autosql/business.py` | the business layer: KPI dictionary, the business question per step, the trust score, recommendations, the executive summary and the data dictionary |
 | `autosql/report.py` | the business brief: one HTML page with inline SVG charts (no network, no chart library) |
+| `autosql/briefsql.py` | the SQL shown in the brief: every block is the text of a statement the engine generated, in both dialects |
 | `autosql/exports.py` | the `.sql` script, the project ZIP and the notebook |
 | `autosql/narrative.py` | all the wording: `TEMPLATES` (found / why / action), `GLOSSARY`, and `interpret()`, which turns results into sentences |
 
@@ -197,25 +248,29 @@ pip install -r requirements-dev.txt
 pytest -q
 ```
 
-The tests (220, about 5 minutes with the live databases):
+The tests (about 5 minutes with the live databases):
 - check loading, column roles, keys and every decision branch, and a **golden snapshot** of what loading and profiling
   return for every test dataset, so speed work can't change a result;
 - prove that the relationships inferred for Northwind match the 8 FOREIGN KEY constraints in Microsoft's script;
-- **run every generated cell** on 20 cases (17 datasets, some also in validate mode or with a suggested link ticked),
+- **run every generated cell** on 23 cases (17 datasets, some also in validate mode, with a suggested link ticked, or with
+  assumptions and KPIs of your own),
   including reserved-word names, timestamps, list prices, orphans, duplicates, a missing quarter, ten weeks of data,
   count-only data, double-loaded rows, a two-column key, cancelled / test / euro orders and impossible values;
 - check the statistics against known values (t quantiles by numerical integration, each confidence interval on a worked
   case) and that every number quoted in the Northwind docs appears in what the code prints (`tests/test_docs_claims.py`);
 - check the business layer: the headline, tiles, trust score and recommendations on Northwind and the New Wheels shape,
   wording that follows the sign of the data, and that pure noise is not flagged as an unusual period;
-- check the brief: self-contained (no external resources), a table view per chart, every mark focusable, escaped text;
+- check the brief: self-contained (no external resources), a table view and the engine's own SQL per chart, every mark
+  focusable, escaped text, and that a recommendation names only evidence the page has and the figures it quotes are right;
+- check your own assumptions and KPIs: every way the text can be wrong, your KPIs against a pandas oracle on the raw files, a
+  KPI that fails leaving every other number unchanged, and the brief, scripts and notebook that carry them;
 - parse every MySQL and PostgreSQL statement with `sqlglot`;
 - enforce the dialect rules;
 - execute the exported notebook;
 - drive the Streamlit page headlessly.
 
-Two suites run the **exported project on real databases** for 19 cases and compare every query result with DuckDB
-(549 results per database):
+Two suites run the **exported project on real databases** for 22 cases and compare every query result with DuckDB
+(645 results per database):
 
 ```bash
 pytest tests/test_live_postgres.py   # starts a throw-away PostgreSQL from a local install (or uses AUTOSQL_PG_URL)

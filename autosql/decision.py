@@ -21,6 +21,7 @@ from dataclasses import dataclass, field
 import pandas as pd
 
 from . import checklib
+from .custom import Customization
 from .loading import Catalog
 from .narrative import Step, story
 from .profiling import CatalogProfile, ColumnProfile, TableProfile, singular
@@ -182,6 +183,7 @@ class Decision:
     skipped: dict[str, str] = field(default_factory=dict)
     quality: dict[str, int] = field(default_factory=dict)       # counts the trust score uses (unparsed dates, …)
     steps: list[Step] = field(default_factory=list)
+    custom: Customization | None = None         # your own assumptions and KPIs, kept apart from everything the engine decided
 
     @property
     def halted(self) -> bool:
@@ -297,9 +299,33 @@ def _halt(d: Decision, key: str, **values) -> Decision:
 
 
 # ── Engine ───────────────────────────────────────────────────────────────
-def decide(catalog: Catalog, profile: CatalogProfile, schema: Schema, mode: str = "auto", picks: dict | None = None) -> Decision:
-    """``picks`` (manual mode): fact, measure (price_qty | amount | count), price, quantity, discount, amount,
-    date ("table.column"), order_key, customer ("table.column"), dimensions (["table.column", ...])."""
+def _custom_summary(custom: Customization) -> str:
+    parts = []
+    if custom.assumptions_add:
+        parts.append(f"{len(custom.assumptions_add)} assumption(s) of your own")
+    if custom.assumptions_edit:
+        parts.append(f"{len(custom.assumptions_edit)} edit(s) to the engine's assumptions")
+    if custom.kpis:
+        computed = len(custom.runnable_kpis)
+        parts.append(f"{len(custom.kpis)} KPI definition(s)" + (f", {computed} of them computed from your SQL" if computed else ""))
+    return " and ".join([", ".join(parts[:-1]), parts[-1]] if len(parts) > 1 else parts)
+
+
+def decide(catalog: Catalog, profile: CatalogProfile, schema: Schema, mode: str = "auto", picks: dict | None = None,
+           custom: Customization | None = None) -> Decision:
+    """The decision for these tables: what to measure, and why. ``picks`` (manual mode): fact, measure (price_qty | amount | count),
+    price, quantity, discount, amount, date ("table.column"), order_key, customer ("table.column"), dimensions (["table.column", ...]),
+    row_filters (False: keep every row). ``custom``: your own assumptions and KPIs (see ``autosql.custom``): they are kept apart from
+    what the engine decided and marked as yours wherever they appear."""
+    d = _decide(catalog, profile, schema, mode, picks)
+    if custom is not None and not custom.empty:
+        d.custom = custom
+        if not d.halted:
+            d.steps.append(story("custom", what=_custom_summary(custom)))
+    return d
+
+
+def _decide(catalog: Catalog, profile: CatalogProfile, schema: Schema, mode: str, picks: dict | None) -> Decision:
     if mode not in FOCUS_MODES:
         raise ValueError(f"mode must be one of {FOCUS_MODES}, not {mode!r}")
     picks = picks or {}

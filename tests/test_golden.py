@@ -69,8 +69,8 @@ def snapshot(catalog) -> dict:
 def all_snapshots() -> dict:
     from test_codegen_runs import CASES
     shots = {"northwind": snapshot(read_folder(NORTHWIND, "*.csv"))}
-    for name, (frames, _, _) in CASES.items():
-        if frames is None or name.endswith("_validate"):
+    for name, (frames, *_) in CASES.items():
+        if frames is None or name.endswith(("_validate", "_custom")):      # your own KPIs change no table, type or key
             continue
         made = frames() if callable(frames) else {n: make() for n, make in frames.items()}
         shots[f"case:{name}"] = snapshot(catalog_from(made))

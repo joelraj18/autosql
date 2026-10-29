@@ -311,6 +311,14 @@ TEMPLATES: dict[str, dict[str, str]] = {
         "why": "{why}",
         "action": "We stop here. Please pick a different column.",
     },
+    # (not a halt) your own assumptions and KPIs
+    "custom": {
+        "found": "You added {what}.",
+        "why": "The engine can't know your business: your currency or fiscal year, your wording for a definition, a KPI of your own. "
+               "What you add is kept apart from what the engine decided, so that nobody mistakes one for the other.",
+        "action": "We mark everything you added or edited as yours wherever it appears, and run each KPI that has SQL over the same "
+                  "agreed view as the standard KPIs, so that it is computed on exactly the same rows.",
+    },
 }
 
 

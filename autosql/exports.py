@@ -30,7 +30,7 @@ from .report import to_business_brief
 FILES = {
     "01_schema.sql": ("schema",),
     "03_validate.sql": ("grain", "cardinality", "duplicates", "nulls", "date_range", "orphans"),
-    "04_analysis.sql": ("base", "reconcile", "kpis", "discounts", "kpi_by_period", "running_total", "trend_signals", "top_n",
+    "04_analysis.sql": ("base", "reconcile", "kpis", "discounts", "kpi_by_period", "custom_kpis", "running_total", "trend_signals", "top_n",
                         "pareto", "latest_record", "purchase_gaps", "rfm", "driver_tree", "drilldown", "cohort"),
     "05_performance.sql": ("explain", "null_traps"),
 }
@@ -144,6 +144,8 @@ def readme(d: Decision, dialect: str, source: str, brief: bool = False) -> str:
         "| `docs/data_dictionary.md` | every column: type, role, key, NULLs, distinct values and what the analysis uses it for |",
         "| `docs/kpi_dictionary.md` | every KPI: definition, SQL, which direction is good, how to read it |",
         *(["| `business_brief.html` | the one-page business brief: KPIs, what to do, charts, data trust (open in any browser) |"] if brief else []),
+        *(["| `customization.json` | the assumptions and KPIs you added: paste it into the app's Customize panel, or pass it to `decide(..., custom=...)` |"]
+          if d.custom is not None and not d.custom.empty else []),
         ""])
 
 
@@ -155,7 +157,9 @@ def to_project_zip(cells: list[Cell], d: Decision, catalog: Catalog, dialect: st
     with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as z:
         z.writestr("README.md", readme(d, dialect, source, brief=metrics is not None))
         z.writestr("docs/data_dictionary.md", data_dictionary_markdown(d))
-        z.writestr("docs/kpi_dictionary.md", "# KPI dictionary\n\n" + kpi_dictionary_markdown())
+        z.writestr("docs/kpi_dictionary.md", "# KPI dictionary\n\n" + kpi_dictionary_markdown(d.custom))
+        if d.custom is not None and not d.custom.empty:
+            z.writestr("customization.json", d.custom.to_json() + "\n")
         if metrics is not None:
             z.writestr("business_brief.html", to_business_brief(d, metrics, title=title, source=source))
         for name in catalog.names:
@@ -244,14 +248,20 @@ def to_notebook(cells: list[Cell], d: Decision, catalog: Catalog, source: str = 
         shown = "".join(f"\n\n<details><summary>{LABELS[x]}</summary>\n\n```sql\n{cell.code(x)}```\n</details>" for x in ("mysql", "postgres"))
         nb.append(new_markdown_cell(f"## {i}. {cell.title}\n\n*{cell.section}*\n\n{cell.story.markdown()}\n\n"
                                     f"🛠 **What this SQL does:** {cell.story.code}{shown}"))
-        lines = ["outputs = {}"]
+        lines = ["outputs = {}"] + (["errors = {}   # your own SQL may fail: the error is kept here and shown by the check below"]
+                                    if any(st.soft for st in cell.statements) else [])
         for st in cell.statements:
             if st.run == "show":
                 continue
             db = ", scratch" if st.run == "scratch" else ""
-            lines.append(f"# {st.title}\noutputs[{st.label!r}] = sql({_py_string(st.sql['duckdb'])}{db})")
-            if st.run == "query":
-                lines.append(f"display(outputs[{st.label!r}].head(20))")
+            assign = f"outputs[{st.label!r}] = sql({_py_string(st.sql['duckdb'])}{db})"
+            show = f"display(outputs[{st.label!r}].head(20))" if st.run == "query" else ""
+            if st.soft:     # the SQL's own lines stay at the left edge: only the first line of the string is indented
+                run = ("try:\n    " + assign + (f"\n    {show}" if show else "") + "\nexcept Exception as error:\n"
+                       f"    errors[{st.label!r}] = f\"{{type(error).__name__}}: {{str(error).strip().splitlines()[0]}}\"")
+            else:
+                run = assign + (f"\n{show}" if show else "")
+            lines.append(f"# {st.title}\n{run}")
         lines.append("result = list(outputs.values())[-1] if outputs else pd.DataFrame()")
         lines.append("# 📌 What we found\n" + cell.check)
         nb.append(new_code_cell("\n".join(lines)))

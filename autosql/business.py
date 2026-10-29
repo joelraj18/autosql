@@ -16,6 +16,7 @@ from dataclasses import dataclass, field
 
 import pandas as pd
 
+from .custom import Customization
 from .decision import Decision
 
 
@@ -105,6 +106,7 @@ BUSINESS_QUESTIONS: dict[str, tuple[str, str]] = {
     "kpis": ("How big is the business?", "Leadership, Finance"),
     "discounts": ("What do discounts cost, and do they pay off?", "Pricing, Sales"),
     "kpi_by_period": ("Are we growing, and is operations keeping up?", "Leadership, Operations"),
+    "custom_kpis": ("What do the measures we defined ourselves say?", "Whoever defined them"),
     "running_total": ("How fast does the year build up?", "Finance"),
     "trend_signals": ("Was the last period normal, or a break?", "Finance, Analytics"),
     "top_n": ("What leads in each group?", "Category / account managers"),
@@ -120,11 +122,16 @@ BUSINESS_QUESTIONS: dict[str, tuple[str, str]] = {
 }
 
 
-def kpi_dictionary_markdown() -> str:
+def kpi_dictionary_markdown(custom: Customization | None = None) -> str:
+    """The KPI dictionary as a table; the KPIs you defined follow the engine's, marked as yours."""
     lines = ["| KPI | Definition | SQL | Good direction | Why it matters | Pitfall | Informs |", "|---|---|---|---|---|---|---|"]
     arrow = {"up": "↑ higher", "down": "↓ lower", "context": "depends"}
     for k in KPI_DICTIONARY:
         lines.append(f"| **{k.name}** | {k.definition} | `{k.formula}` | {arrow[k.direction]} | {k.why} | {k.pitfall} | {k.decision} |")
+    for k in (custom.kpis if custom else ()):
+        formula = k.formula()
+        lines.append(f"| **{k.name}** (yours) | {k.definition} | " + (f"`{formula}`" if k.runnable else formula)
+                     + f" | {arrow[k.direction]} | {k.why or '—'} | {k.pitfall or '—'} | {k.decision or '—'} |")
     return "\n".join(lines)
 
 
@@ -581,6 +588,7 @@ class Tile:
     note: str = ""
     significant: bool | None = None   # is the change bigger than normal variation (its 95% interval excludes zero)?
     ci: tuple[float, float] | None = None   # that 95% interval, in the delta's units
+    custom: bool = False              # a KPI you defined: its change is shown without a verdict, because none was tested
 
 
 @dataclass
@@ -593,12 +601,35 @@ class Summary:
     insights: list[Insight] = field(default_factory=list)
     trust: TrustScore | None = None
     coverage: str = ""
+    custom_tiles: list[Tile] = field(default_factory=list)      # the KPIs you defined, kept apart from the engine's
 
 
 TILE_SPECS = (("revenue", "Revenue", "money", "up"), ("orders", "Orders", "count", "up"), ("avg_order_value", "Average order value", "money", "up"),
               ("customers", "Active customers", "count", "up"), ("avg_ship_days", "Days to ship", "days", "down"),
               ("avg_delivery_days", "Days to deliver", "days", "down"), ("late_pct", "Late shipments", "pct", "down"),
               ("avg_rating", "Average rating", "score", "up"))
+
+
+def custom_tiles(metrics: dict, period: str = "", compared_with: str = "") -> list[Tile]:
+    """The KPIs you defined as tiles: their value in the period the other tiles describe, and the change from the period before it.
+    No verdict (better or worse) and no significance: the engine can't know which way is good for a measure it didn't define, and a
+    KPI of your own has no variance model. A KPI with no value in that period shows its value over all periods, and says so."""
+    out = []
+    for e in metrics.get("custom_kpis") or []:
+        if e.get("error"):
+            continue
+        by = {p["period"]: p["value"] for p in e.get("periods") or [] if p["value"] is not None}
+        if period in by:
+            value, base, note = by[period], by.get(compared_with), ""
+        elif e.get("value") is not None:
+            value, base, note = e["value"], None, "all periods"
+        else:
+            continue
+        delta = None
+        if base is not None:
+            delta = value - base if e["unit"] == "pct" else (100 * (value - base) / base if base else None)
+        out.append(Tile(f"custom:{e['key']}", e["name"], float(value), e["unit"], delta, None, note, None, None, True))
+    return out
 
 
 def executive_summary(d: Decision, metrics: dict, title: str = "Business brief") -> Summary:
@@ -614,7 +645,7 @@ def executive_summary(d: Decision, metrics: dict, title: str = "Business brief")
         k = m.get("kpis") or {}
         tiles = [Tile(key, label, float(k[key]), unit) for key, label, unit, _ in TILE_SPECS if k.get(key) is not None]
         return Summary(title, "all data", "", "Validation only: no KPI per period." if not d.kpi else "KPIs over the whole period.",
-                       tiles, found, trust, coverage)
+                       tiles, found, trust, coverage, custom_tiles(m))
     last, prev = rows[-1], (rows[-2] if len(rows) >= 2 else None)
     q = m.get("qoq_last_complete") if (m.get("qoq_last_complete") or {}).get("to") == last["period"] else None
     per_day = calendar_adjusted(q)
@@ -657,7 +688,8 @@ def executive_summary(d: Decision, metrics: dict, title: str = "Business brief")
             driver = "bigger orders" if split["order_value"] > 0 else "smaller orders"
         if significance.get("orders" if volume_led else "avg_order_value", {}).get("significant", True):
             headline += f" Most of the movement came from {driver}."
-    return Summary(title, last["period"], prev["period"] if prev else "", headline, tiles, found, trust, coverage)
+    return Summary(title, last["period"], prev["period"] if prev else "", headline, tiles, found, trust, coverage,
+                   custom_tiles(m, last["period"], prev["period"] if prev else ""))
 
 
 # ═════════════════════════════════════════════════════════════════════════
