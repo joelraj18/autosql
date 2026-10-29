@@ -5,7 +5,7 @@ Microsoft's Northwind sample: a small food importer with **8 tables**, 91 custom
 
 | File | What it is |
 |---|---|
-| `Northwind_sales_analysis.ipynb` | **The worked example**, already run so the outputs are saved. Part 1 runs four classic SQL mistakes next to the correct query. Part 2 is the full AutoSQL Explorer analysis, with the MySQL 8 and PostgreSQL version of every query. Part 3 is the business reading: headline, KPI tiles, recommendations and the data-trust score |
+| `Northwind_sales_analysis.ipynb` | **The worked example**, already run so the outputs and charts are saved. Part 1 runs four classic SQL mistakes next to the correct query. Part 2 is the full AutoSQL Explorer analysis, with the MySQL 8 and PostgreSQL version of every query. Part 3 is the business reading: headline, KPI tiles, recommendations and the data-trust score |
 | `business_brief.html` | **The one-page business brief** the notebook (and the app) writes: open it in any browser, offline |
 | `build_notebook.py` | regenerates and runs the notebook: `python examples/northwind/build_notebook.py` (needs `requirements-dev.txt`) |
 | `build_data.py` | rebuilds the CSVs from Microsoft's install script at a pinned commit |

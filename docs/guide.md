@@ -319,6 +319,7 @@ regular expression on every row of every text column, and loading stripped each 
 | a segment that moved against the total read "moved most (−22% of the change)" | writing the docs, on the New Wheels-shaped drill-down | a negative share is never printed: the note says "against the overall fall" |
 | the driver tree's note said the textbook split values order value "at the new number of orders", but its numbers (15,126.16 ≈ 120 × 126.05) use the old one | checking the note's arithmetic by hand | the note says "each effect at the old value of the other" |
 | `table.column` marks written for the app showed as literal backticks in the HTML brief ("most gaps in \`orders.shipped_date\`") | opening the brief in a browser | `prose()` drops them from every sentence on the page, and a test reads four briefs for stray ones |
+| the Northwind notebook never showed a chart: its setup imports `autosql`, which selects matplotlib's non-interactive Agg backend, so all nine `plt.show()` calls drew nothing | counting the image outputs of the committed notebook | `%matplotlib inline` after the import; the notebooks the app exports don't import `autosql` and always had their charts |
 
 ---
 
